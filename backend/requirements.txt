@@ -1,0 +1,33 @@
+# ─────────────────────────────────────────────────────────────────
+#  Doneswari AI Telecaller — Backend Dependencies
+#  Install: pip install -r requirements.txt
+# ─────────────────────────────────────────────────────────────────
+
+# Web framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+
+# Environment & config
+python-dotenv>=1.0.1
+
+# AI / LLM
+groq>=0.9.0
+
+# Text-to-Speech
+edge-tts>=6.1.12
+
+# Data validation
+pydantic>=2.9.0
+pydantic-settings>=2.0.0
+
+# File uploads & multipart
+python-multipart>=0.0.9
+
+# Async file I/O
+aiofiles>=23.2.1
+
+# HTTP client
+httpx>=0.27.0
+
+# Scheduling (session cleanup)
+apscheduler>=3.10.4

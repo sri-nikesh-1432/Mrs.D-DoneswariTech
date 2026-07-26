@@ -1,0 +1,14 @@
+{
+  "name": "doneswari-ai-telecaller-frontend",
+  "version": "2.0.0",
+  "description": "Doneswari AI Telecaller — Frontend (Vite dev server on port 5175)",
+  "private": true,
+  "scripts": {
+    "dev": "vite --port 5175 --host localhost",
+    "build": "vite build",
+    "preview": "vite preview --port 5175"
+  },
+  "devDependencies": {
+    "vite": "^8.1.5"
+  }
+}
