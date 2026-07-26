@@ -79,7 +79,7 @@ async def chat_completion(
                 model=settings.GROQ_LLM_MODEL,
                 messages=messages,
                 temperature=0.7,
-                max_tokens=1024,
+                max_tokens=2048,
                 stream=False,
             )
             answer = response.choices[0].message.content.strip()

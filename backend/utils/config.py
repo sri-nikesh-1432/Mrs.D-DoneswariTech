@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     # ── Text-to-Speech ────────────────────────────────────────────
     TTS_VOICE: str = Field(default="te-IN-ShrutiNeural")
-    TTS_RATE: str = Field(default="+50%")
+    TTS_RATE: str = Field(default="+25%")
 
     # Multilingual voice map: lang_code → Edge-TTS voice name
     TTS_VOICE_MAP: dict = {

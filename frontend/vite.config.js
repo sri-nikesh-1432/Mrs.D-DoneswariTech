@@ -21,6 +21,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
       },
+      // Proxy /static/* for audio file serving
+      "/static": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+      },
     },
   },
 
