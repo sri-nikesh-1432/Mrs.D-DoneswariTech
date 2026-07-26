@@ -361,6 +361,23 @@ body {
   animation: mic-btn-pulse 1s ease-in-out infinite;
 }
 
+/* Speaking state — mic is enabled for barge-in/interruption */
+.mic-btn.speaking-active {
+  background: linear-gradient(135deg, #10B981, #059669);
+  box-shadow: 0 8px 32px rgba(16, 185, 129, 0.5);
+  animation: speaking-mic-pulse 1.5s ease-in-out infinite;
+  cursor: pointer;
+}
+@keyframes speaking-mic-pulse {
+  0%, 100% { box-shadow: 0 8px 32px rgba(16, 185, 129, 0.4); }
+  50% { box-shadow: 0 8px 48px rgba(16, 185, 129, 0.7); }
+}
+.mic-btn.speaking-active:hover {
+  background: linear-gradient(135deg, #EF4444, #DC2626);
+  box-shadow: 0 8px 32px rgba(239, 68, 68, 0.6);
+  transform: scale(1.08);
+}
+
 @keyframes mic-glow-pulse {
   0%, 100% { opacity: 0.4; transform: scale(1); }
   50% { opacity: 0.8; transform: scale(1.1); }
@@ -375,6 +392,12 @@ body {
 .mic-icon { width: 32px; height: 32px; }
 
 .mic-hint { font-size: 0.75rem; color: var(--text-muted); text-align: center; }
+/* During speaking, hint shows interrupt instruction */
+.mic-hint.interrupt-hint { color: #EF4444; font-weight: 600; animation: hint-pulse 1.5s ease-in-out infinite; }
+@keyframes hint-pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
 
 /* ── Session Controls ──────────────────────────────────────────── */
 .session-controls { display: flex; gap: 10px; width: 100%; }

@@ -1,8 +1,21 @@
 /**
  * Doneswari AI Telecaller — Frontend Script
  *
- * Fully automatic voice conversation pipeline:
- *   Listening → (VAD silence detection) → Thinking → Speaking → Listening
+ * REAL-TIME INTERRUPTIBLE VOICE CONVERSATION (BARGE-IN)
+ * =====================================================
+ * Features:
+ * - Persistent microphone for continuous VAD monitoring
+ * - Barge-in: user can interrupt AI speaking by just speaking
+ * - Single active state: Listening → Thinking → Speaking → Listening
+ * - Request ID tracking to cancel stale responses
+ * - Like ChatGPT Voice Mode / Gemini Live
+ *
+ * Architecture:
+ *   When voice mode starts → acquire mic (persistent for VAD)
+ *     Listening:   MediaRecorder records chunks, VAD detects silence → submit
+ *     Thinking:    Audio sent to backend, waiting for response
+ *     Speaking:    Audio plays, VAD monitors for user speech → barge-in
+ *     Barge-in:    Stop audio, cancel request, restart listening
  *
  * Backend: proxied via Vite /api/* → http://localhost:8000
  * Frontend: http://localhost:5175
@@ -10,7 +23,6 @@
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 const CONFIG = {
-  // Use relative path so Vite proxy handles /api/* → backend
   API_BASE:              "/api",
   STATIC_BASE:           "/static",
   SILENCE_TIMEOUT_MS:    1200,    // 1.2 s silence → auto-submit
@@ -18,39 +30,41 @@ const CONFIG = {
   MAX_RECORDING_MS:      30_000,  // safety cap per recording
   HEALTH_CHECK_INTERVAL: 10_000,  // poll backend every 10 s
   MIN_AUDIO_BYTES:       500,     // ignore recordings smaller than this
-  VAD_THRESHOLD:         10,      // RMS threshold for speech detection
+  VAD_THRESHOLD:         10,      // RMS threshold for speech detection (listening)
+  VAD_BARGE_THRESHOLD:   12,      // RMS threshold for barge-in during playback
   RECONNECT_DELAY_MS:    1000,    // delay before re-listening after error
 };
 
 // ── State Machine ─────────────────────────────────────────────────────────────
-const State = {
-  IDLE:      "idle",
-  LISTENING: "listening",
-  THINKING:  "thinking",
-  SPEAKING:  "speaking",
-};
-
+const State = { IDLE: "idle", LISTENING: "listening", THINKING: "thinking", SPEAKING: "speaking" };
 let currentState    = State.IDLE;
 let voiceModeActive = false;
 let backendOnline   = false;
+let sessionId       = _generateSessionId();
 
-// ── Session ───────────────────────────────────────────────────────────────────
-let sessionId = _generateSessionId();
+// ── Request Tracking (for barge-in stale-response cancellation) ─────────────
+let requestCounter   = 0;
+let currentRequestId = 0;
+let abortController  = null;
 
-// ── Recording ─────────────────────────────────────────────────────────────────
-let mediaRecorder  = null;
-let audioChunks    = [];
+// ─── PERSISTENT MIC STREAM (for continuous VAD across all states) ──────────
+// Acquired once when voice mode starts, released when voice mode stops.
+let persistentStream = null;
+let persistentAudioCtx = null;
+let persistentAnalyser = null;
+let persistentVadActive = false;
+let persistentVadRafId = null;
+
+// ── Recording (uses persistent mic stream) ──────────────────────────────────
+let mediaRecorder = null;
+let audioChunks   = [];
 let recordingTimer = null;
 let silenceTimer   = null;
 let speechDetected = false;
 let vadReady       = false;
 let isRecording    = false;
-
-// ── Audio Context / VAD ───────────────────────────────────────────────────────
-let audioContext = null;
-let analyser     = null;
-let micStream    = null;
-let vadActive    = false;
+// Track if current VAD data is during "listening" mode vs "speaking" mode
+let vadMode = "listening"; // "listening" | "speaking"
 
 // ── Playback ──────────────────────────────────────────────────────────────────
 let currentAudio = null;
@@ -78,43 +92,28 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(_checkBackendHealth, CONFIG.HEALTH_CHECK_INTERVAL);
   _setupEventListeners();
   _setState(State.IDLE);
-  console.log("🔧 Doneswari AI Telecaller frontend initialized");
+  console.log("🔧 Doneswari AI Telecaller — Interruptible Voice Mode");
   console.log(`🔧 API_BASE: ${CONFIG.API_BASE}, Session: ${sessionId}`);
 });
 
 // ── Event Listeners ───────────────────────────────────────────────────────────
 function _setupEventListeners() {
-  micBtn.addEventListener("click", (e) => {
-    _createRipple(e, micBtn);
-    _handleMicToggle();
-  });
-
-  inlineMicBtn.addEventListener("click", (e) => {
-    _createRipple(e, inlineMicBtn);
-    _handleMicToggle();
-  });
-
+  micBtn.addEventListener("click", (e) => { _createRipple(e, micBtn); _handleMicToggle(); });
+  inlineMicBtn.addEventListener("click", (e) => { _createRipple(e, inlineMicBtn); _handleMicToggle(); });
   voiceToggleBtn?.addEventListener("click", _handleMicToggle);
-
   sendBtn.addEventListener("click", () => _sendTextMessage());
   textInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      _sendTextMessage();
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); _sendTextMessage(); }
   });
-
   textInput.addEventListener("input", () => {
     textInput.style.height = "auto";
     textInput.style.height = Math.min(textInput.scrollHeight, 120) + "px";
-    charCount.textContent  = `${textInput.value.length} / 2000`;
+    charCount.textContent = `${textInput.value.length} / 2000`;
   });
-
   resetBtn.addEventListener("click", async () => {
     if (voiceModeActive) _stopVoiceMode();
     await _resetSession();
   });
-
   clearBtn.addEventListener("click", () => {
     chatMessages.innerHTML = "";
     _renderWelcomeMessage();
@@ -128,25 +127,111 @@ function _handleMicToggle() {
     _showToast("⚠️ Backend is offline. Please start the server first.", "error");
     return;
   }
+  if (currentState === State.SPEAKING) { _bargeIn(); return; }
+  if (voiceModeActive) { _stopVoiceMode(); }
+  else { _startVoiceMode(); }
+}
 
-  if (currentState === State.SPEAKING) {
-    _interruptSpeaking();
-    return;
-  }
+// ═══════════════════════════════════════════════════════════════════════════
+//  PERSISTENT MICROPHONE (acquired once, stays alive for continuous VAD)
+// ═══════════════════════════════════════════════════════════════════════════
 
-  if (voiceModeActive) {
-    _stopVoiceMode();
-  } else {
-    _startVoiceMode();
+async function _acquirePersistentMic() {
+  if (persistentStream) return true; // Already acquired
+  try {
+    persistentStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false,
+    });
+    // Set up persistent audio context & analyser for continuous VAD
+    persistentAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    persistentAnalyser = persistentAudioCtx.createAnalyser();
+    persistentAnalyser.fftSize = 512;
+    persistentAnalyser.smoothingTimeConstant = 0.7;
+    persistentAudioCtx.createMediaStreamSource(persistentStream).connect(persistentAnalyser);
+    persistentVadActive = true;
+    _startPersistentVAD();
+    console.log("🎤 Persistent mic acquired for continuous VAD");
+    return true;
+  } catch (err) {
+    console.error("❌ Microphone error:", err);
+    if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+      _showToast("❌ Microphone access denied. Please allow microphone permission in browser settings.", "error");
+    } else if (err.name === "NotFoundError") {
+      _showToast("❌ No microphone found. Please connect a microphone.", "error");
+    } else {
+      _showToast(`❌ Microphone error: ${err.message}`, "error");
+    }
+    return false;
   }
 }
 
-// ── Voice Mode (hands-free loop) ──────────────────────────────────────────────
+function _releasePersistentMic() {
+  persistentVadActive = false;
+  if (persistentVadRafId) { cancelAnimationFrame(persistentVadRafId); persistentVadRafId = null; }
+  persistentStream?.getTracks().forEach(t => t.stop());
+  persistentStream = null;
+  persistentAudioCtx?.close().catch(() => {});
+  persistentAudioCtx = null;
+  persistentAnalyser = null;
+  console.log("🎤 Persistent mic released");
+}
+
+function _startPersistentVAD() {
+  if (!persistentVadActive || !persistentAnalyser) return;
+
+  const data = new Uint8Array(persistentAnalyser.frequencyBinCount);
+  persistentAnalyser.getByteFrequencyData(data);
+  const rms = Math.sqrt(data.reduce((s, v) => s + v * v, 0) / data.length);
+
+  const nowState = currentState;
+
+  if (nowState === State.SPEAKING) {
+    // ── BARGE-IN MODE: if user speaks during AI playback, interrupt ──
+    if (rms > CONFIG.VAD_BARGE_THRESHOLD) {
+      console.log(`🗣️ BARGE-IN: User speech detected during playback (RMS: ${rms.toFixed(1)})`);
+      _bargeIn();
+      // VAD will continue after barge-in restarts listening
+    }
+  } else if (nowState === State.LISTENING && isRecording) {
+    // ── SILENCE DETECTION MODE: auto-submit after silence ──
+    const isSpeaking = rms > CONFIG.VAD_THRESHOLD;
+    if (isSpeaking) {
+      speechDetected = true;
+      clearTimeout(silenceTimer);
+      silenceTimer = null;
+    } else if (vadReady && speechDetected && !silenceTimer) {
+      silenceTimer = setTimeout(() => {
+        if (isRecording && currentState === State.LISTENING) {
+          console.log("🔇 Silence detected, stopping recording");
+          _stopRecording();
+        }
+      }, CONFIG.SILENCE_TIMEOUT_MS);
+    }
+  }
+
+  if (persistentVadActive) {
+    persistentVadRafId = requestAnimationFrame(_startPersistentVAD);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  VOICE MODE
+// ═══════════════════════════════════════════════════════════════════════════
+
 async function _startVoiceMode() {
   if (voiceModeActive) return;
   console.log("🎤 Starting voice mode...");
   voiceModeActive = true;
   _updateVoiceToggleUI(true);
+
+  // Acquire persistent mic (for VAD across all states)
+  const micOk = await _acquirePersistentMic();
+  if (!micOk) {
+    _stopVoiceMode();
+    return;
+  }
+
   _showToast("🎤 Voice mode ON — speak naturally!", "info");
   await _startListening();
 }
@@ -157,7 +242,10 @@ function _stopVoiceMode() {
   _updateVoiceToggleUI(false);
   _stopRecordingCleanup();
   _stopCurrentAudio();
+  _cancelPendingRequest();
+  _releasePersistentMic();
   _setState(State.IDLE);
+  document.querySelectorAll('[id^="thinking-"]').forEach(el => el.remove());
   _showToast("⏹ Voice mode OFF", "info");
 }
 
@@ -167,44 +255,32 @@ function _updateVoiceToggleUI(active) {
   voiceToggleBtn.classList.toggle("active", active);
 }
 
-// ── Listening ─────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+//  LISTENING (MediaRecorder using persistent mic)
+// ═══════════════════════════════════════════════════════════════════════════
+
 async function _startListening() {
   if (!voiceModeActive || currentState !== State.IDLE) return;
-  console.log("🎧 Starting listening...");
-
-  try {
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      video: false,
-    });
-  } catch (err) {
-    console.error("❌ Microphone error:", err);
-    if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
-      _showToast("❌ Microphone access denied. Please allow microphone permission in browser settings.", "error");
-    } else if (err.name === "NotFoundError") {
-      _showToast("❌ No microphone found. Please connect a microphone.", "error");
-    } else {
-      _showToast(`❌ Microphone error: ${err.message}`, "error");
-    }
-    _stopVoiceMode();
-    return;
+  if (!persistentStream) {
+    console.warn("No persistent mic stream — reacquiring");
+    const ok = await _acquirePersistentMic();
+    if (!ok) return;
   }
+  console.log("🎧 Starting listening...");
 
   audioChunks    = [];
   speechDetected = false;
   vadReady       = false;
   isRecording    = false;
+  vadMode        = "listening";
 
-  const mimeType  = _getSupportedMimeType();
-  console.log(`🎧 Using MIME type: ${mimeType}`);
-
+  const mimeType = _getSupportedMimeType();
   try {
-    mediaRecorder = new MediaRecorder(micStream, { mimeType });
+    mediaRecorder = new MediaRecorder(persistentStream, { mimeType });
   } catch (e) {
     console.warn(`⚠️ MIME type ${mimeType} not supported, trying fallback`);
-    mediaRecorder = new MediaRecorder(micStream);
+    mediaRecorder = new MediaRecorder(persistentStream);
   }
-
   const actualMimeType = mediaRecorder.mimeType || mimeType;
 
   mediaRecorder.ondataavailable = (e) => {
@@ -212,24 +288,28 @@ async function _startListening() {
   };
 
   mediaRecorder.onstop = async () => {
-    console.log(`⏹ Recording stopped. Chunks: ${audioChunks.length}, Speech detected: ${speechDetected}`);
+    console.log(`⏹ Recording stopped. Chunks: ${audioChunks.length}, Speech: ${speechDetected}`);
     const chunks = audioChunks.slice();
     audioChunks = [];
-    _cleanupMicStream();
+    // Do NOT release persistent mic — keep it alive for VAD
+    // Do NOT call _cleanupMicStream() — that's for non-persistent mode
 
-    if (voiceModeActive && speechDetected && chunks.length > 0) {
+    if (!voiceModeActive) return; // Voice mode turned off
+
+    if (speechDetected && chunks.length > 0) {
       await _processVoiceInput(chunks, actualMimeType);
-    } else if (voiceModeActive) {
+    } else {
       console.log("🔁 No speech detected, restarting listening");
       _setState(State.IDLE);
-      setTimeout(() => { if (voiceModeActive) _startListening(); }, 200);
+      if (voiceModeActive) {
+        setTimeout(() => { if (voiceModeActive && currentState === State.IDLE) _startListening(); }, 200);
+      }
     }
   };
 
   mediaRecorder.onerror = (event) => {
     console.error("❌ MediaRecorder error:", event.error);
     _showToast("❌ Recording error, please try again", "error");
-    _cleanupMicStream();
     if (voiceModeActive) {
       _setState(State.IDLE);
       setTimeout(() => { if (voiceModeActive) _startListening(); }, CONFIG.RECONNECT_DELAY_MS);
@@ -241,7 +321,6 @@ async function _startListening() {
   _setState(State.LISTENING);
 
   setTimeout(() => { vadReady = true; }, CONFIG.SPEECH_START_DELAY_MS);
-  _setupVAD();
 
   recordingTimer = setTimeout(() => {
     if (isRecording && currentState === State.LISTENING) {
@@ -257,7 +336,9 @@ function _stopRecording(discard = false) {
   silenceTimer = null;
   if (discard) speechDetected = false;
   if (mediaRecorder && mediaRecorder.state !== "inactive") {
-    try { mediaRecorder.stop(); } catch (e) { console.warn("MediaRecorder stop error:", e); }
+    const r = mediaRecorder;
+    mediaRecorder = null;
+    try { r.stop(); } catch (e) { console.warn("MediaRecorder stop error:", e); }
   }
   isRecording = false;
 }
@@ -267,77 +348,81 @@ function _stopRecordingCleanup() {
   clearTimeout(silenceTimer);
   silenceTimer = null;
   if (mediaRecorder && mediaRecorder.state !== "inactive") {
-    try { mediaRecorder.stop(); } catch (e) {}
+    const r = mediaRecorder;
+    mediaRecorder = null;
+    try { r.stop(); } catch (e) {}
   }
   isRecording = false;
-  _cleanupMicStream();
 }
 
-function _cleanupMicStream() {
-  micStream?.getTracks().forEach((t) => t.stop());
-  micStream = null;
-  audioContext?.close().catch(() => {});
-  audioContext = null;
-  analyser     = null;
-  vadActive    = false;
-  vadReady     = false;
-}
+// ═══════════════════════════════════════════════════════════════════════════
+//  BARGE-IN: Interrupt AI Speaking
+// ═══════════════════════════════════════════════════════════════════════════
 
-// ── Voice Activity Detection ──────────────────────────────────────────────────
-function _setupVAD() {
-  try {
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    analyser     = audioContext.createAnalyser();
-    analyser.fftSize = 512;
-    analyser.smoothingTimeConstant = 0.7;
-    audioContext.createMediaStreamSource(micStream).connect(analyser);
-    vadActive = true;
-    _detectVoiceActivity();
-  } catch (e) {
-    console.warn("VAD setup failed:", e);
+function _bargeIn() {
+  console.log("⏱️ BARGE-IN: Interrupting AI speech");
+
+  // 1. Stop audio playback immediately
+  _stopCurrentAudio();
+
+  // 2. Cancel any in-flight fetch request
+  _cancelPendingRequest();
+
+  // 3. Clear thinking bubbles / stale UI
+  document.querySelectorAll('[id^="thinking-"]').forEach(el => el.remove());
+
+  // 4. Set state to IDLE then start listening
+  _setState(State.IDLE);
+
+  // 5. Start listening using the persistent mic (still active)
+  if (voiceModeActive) {
+    _showToast("🎤 Listening after interruption...", "info");
+    // Give a tiny moment for state to settle
+    setTimeout(() => {
+      if (voiceModeActive && currentState === State.IDLE) _startListening();
+    }, 150);
   }
 }
 
-function _detectVoiceActivity() {
-  if (!vadActive || !analyser) return;
+// ═══════════════════════════════════════════════════════════════════════════
+//  REQUEST CANCELLATION
+// ═══════════════════════════════════════════════════════════════════════════
 
-  const data = new Uint8Array(analyser.frequencyBinCount);
-  analyser.getByteFrequencyData(data);
-  const rms        = Math.sqrt(data.reduce((s, v) => s + v * v, 0) / data.length);
-  const isSpeaking = rms > CONFIG.VAD_THRESHOLD;
-
-  if (isSpeaking) {
-    speechDetected = true;
-    clearTimeout(silenceTimer);
-    silenceTimer = null;
-  } else if (vadReady && speechDetected && !silenceTimer) {
-    silenceTimer = setTimeout(() => {
-      if (isRecording && currentState === State.LISTENING) {
-        console.log("🔇 Silence detected, stopping recording");
-        _stopRecording();
-      }
-    }, CONFIG.SILENCE_TIMEOUT_MS);
+function _cancelPendingRequest() {
+  requestCounter++;
+  if (abortController) {
+    try { abortController.abort(); } catch (e) { /* ignore */ }
+    abortController = null;
   }
-
-  if (vadActive) requestAnimationFrame(_detectVoiceActivity);
+  console.log(`🛑 Request cancelled. New active request ID: ${requestCounter}`);
 }
 
-// ── Process Voice Input ───────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+//  PROCESS VOICE INPUT
+// ═══════════════════════════════════════════════════════════════════════════
+
 async function _processVoiceInput(chunks, mimeType) {
+  // Create fresh request ID, cancel any pending
+  requestCounter++;
+  const myRequestId = requestCounter;
+  currentRequestId = myRequestId;
+  _cancelPendingRequest();
+  currentRequestId = myRequestId;
+
   _setState(State.THINKING);
-  console.log("🤔 Processing voice input...");
+  console.log(`🤔 [Req #${myRequestId}] Processing voice input...`);
 
   const ext = mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "m4a" : "webm";
   const audioBlob = new Blob(chunks, { type: mimeType });
 
   if (audioBlob.size < CONFIG.MIN_AUDIO_BYTES) {
-    console.log("🔇 Audio too small, skipping");
+    console.log(`🔇 [Req #${myRequestId}] Audio too small (${audioBlob.size} bytes), skipping`);
     _setState(State.IDLE);
-    if (voiceModeActive) setTimeout(() => { if (voiceModeActive) _startListening(); }, 200);
+    if (voiceModeActive) setTimeout(() => { if (voiceModeActive && currentState === State.IDLE) _startListening(); }, 200);
     return;
   }
 
-  console.log(`📤 Sending audio (${(audioBlob.size / 1024).toFixed(1)} KB, type: ${mimeType})`);
+  console.log(`📤 [Req #${myRequestId}] Sending audio (${(audioBlob.size / 1024).toFixed(1)} KB)`);
 
   const formData = new FormData();
   formData.append("audio",      audioBlob, `recording.${ext}`);
@@ -345,19 +430,32 @@ async function _processVoiceInput(chunks, mimeType) {
 
   const thinkingId = _addThinkingBubble();
 
+  abortController = new AbortController();
+  const signal = abortController.signal;
+
   try {
     const response = await fetch(`${CONFIG.API_BASE}/chat`, {
-      method: "POST",
-      body:   formData,
+      method: "POST", body: formData, signal,
     });
+
+    // Stale check: was this request superseded by a barge-in?
+    if (myRequestId !== currentRequestId || !voiceModeActive) {
+      console.log(`⏭️ [Req #${myRequestId}] Stale after fetch (current: #${currentRequestId}), ignoring`);
+      _removeThinkingBubble(thinkingId);
+      return;
+    }
 
     if (!response.ok) {
       let errMsg = `HTTP ${response.status}`;
-      try {
-        const err = await response.json();
-        errMsg = err.detail || errMsg;
-      } catch (e) {}
+      try { const err = await response.json(); errMsg = err.detail || errMsg; } catch (e) {}
       throw new Error(errMsg);
+    }
+
+    // Extra stale check after response parsed
+    if (myRequestId !== currentRequestId || !voiceModeActive) {
+      console.log(`⏭️ [Req #${myRequestId}] Became stale after response headers, ignoring`);
+      _removeThinkingBubble(thinkingId);
+      return;
     }
 
     const transcript = _safeDecodeHeader(response.headers.get("X-Transcript"));
@@ -366,192 +464,168 @@ async function _processVoiceInput(chunks, mimeType) {
 
     _removeThinkingBubble(thinkingId);
 
-    if (transcript) _addMessage("user",      transcript, "voice", lang);
-    if (answer)     _addMessage("assistant", answer,     "voice", lang);
+    if (myRequestId === currentRequestId && voiceModeActive) {
+      if (transcript) _addMessage("user",      transcript, "voice", lang);
+      if (answer)     _addMessage("assistant", answer,     "voice", lang);
+    }
 
-    console.log(`✅ Response received: "${answer?.slice(0, 60)}..."`);
+    console.log(`✅ [Req #${myRequestId}] Response: "${answer?.slice(0, 60)}..."`);
 
     const audioBlob2 = await response.blob();
-    await _playAudioResponse(audioBlob2);
+
+    // Final stale check before playing
+    if (myRequestId !== currentRequestId || !voiceModeActive) {
+      console.log(`⏭️ [Req #${myRequestId}] Stale before playback, ignoring`);
+      return;
+    }
+
+    await _playAudioResponse(audioBlob2, myRequestId);
 
   } catch (err) {
     _removeThinkingBubble(thinkingId);
-    console.error("❌ Voice chat error:", err);
-    let friendlyMsg = "Something went wrong. Please try again.";
-    if (err.message.includes("Failed to fetch") || err.message.includes("TypeError")) {
-      friendlyMsg = "Could not connect to the backend server. Please ensure it's running.";
-    } else if (err.message) {
-      friendlyMsg = err.message;
+    if (err.name === "AbortError") {
+      console.log(`⏭️ [Req #${myRequestId}] Request aborted (barge-in)`);
+      return;
     }
-    _showToast(`❌ ${friendlyMsg}`, "error");
+    console.error(`❌ [Req #${myRequestId}] Error:`, err);
+    let msg = "Something went wrong.";
+    if (err.message.includes("Failed to fetch") || err.message.includes("TypeError")) {
+      msg = "Could not connect to the backend server.";
+    } else if (err.message) { msg = err.message; }
+    _showToast(`❌ ${msg}`, "error");
     _setState(State.IDLE);
-    if (voiceModeActive) setTimeout(() => { if (voiceModeActive) _startListening(); }, CONFIG.RECONNECT_DELAY_MS);
+    if (voiceModeActive) setTimeout(() => { if (voiceModeActive && currentState === State.IDLE) _startListening(); }, CONFIG.RECONNECT_DELAY_MS);
+  } finally {
+    if (abortController && myRequestId === currentRequestId) abortController = null;
   }
 }
 
-// ── Text Chat ─────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+//  TEXT CHAT
+// ═══════════════════════════════════════════════════════════════════════════
+
 async function _sendTextMessage() {
   const message = textInput.value.trim();
   if (!message || currentState === State.THINKING) return;
-
-  if (!backendOnline) {
-    _showToast("⚠️ Backend is offline. Please start the server first.", "error");
-    return;
-  }
-
+  if (!backendOnline) { _showToast("⚠️ Backend offline.", "error"); return; }
   if (voiceModeActive) _stopVoiceMode();
 
-  textInput.value        = "";
-  textInput.style.height = "auto";
-  charCount.textContent  = "0 / 2000";
-
+  textInput.value = ""; textInput.style.height = "auto"; charCount.textContent = "0 / 2000";
   _addMessage("user", message, "text");
   _setState(State.THINKING);
-
   const thinkingId = _addThinkingBubble();
 
   try {
     const response = await fetch(`${CONFIG.API_BASE}/text-chat`, {
-      method:  "POST",
+      method: "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({
-        session_id:   sessionId,
-        message,
-        return_audio: true,
-      }),
+      body: JSON.stringify({ session_id: sessionId, message, return_audio: true }),
     });
-
     if (!response.ok) {
-      let errMsg = `HTTP ${response.status}`;
-      try {
-        const err = await response.json();
-        errMsg = err.detail || errMsg;
-      } catch (e) {}
-      throw new Error(errMsg);
+      let m = `HTTP ${response.status}`;
+      try { const e = await response.json(); m = e.detail || m; } catch (ex) {}
+      throw new Error(m);
     }
-
     const data = await response.json();
     _removeThinkingBubble(thinkingId);
-
-    const fullResponse = data.response;
-    _addMessage("assistant", fullResponse, "text", data.language || "en");
-
+    _addMessage("assistant", data.response, "text", data.language || "en");
     if (data.audio_url) {
-      await _playAudioFromUrl(`${CONFIG.API_BASE}${data.audio_url}`);
-    } else {
-      _setState(State.IDLE);
-    }
-
+      await _playAudioFromUrl(`${CONFIG.API_BASE}${data.audio_url}`, false, 0);
+    } else { _setState(State.IDLE); }
   } catch (err) {
     _removeThinkingBubble(thinkingId);
     console.error("❌ Text chat error:", err);
-    let friendlyMsg = "Something went wrong. Please try again.";
-    if (err.message.includes("Failed to fetch") || err.message.includes("TypeError")) {
-      friendlyMsg = "Could not connect to the backend server.";
-    } else if (err.message) {
-      friendlyMsg = err.message;
-    }
-    _showToast(`❌ ${friendlyMsg}`, "error");
+    _showToast(`❌ ${err.message || "Something went wrong."}`, "error");
     _setState(State.IDLE);
   }
 }
 
-// ── Audio Playback ────────────────────────────────────────────────────────────
-async function _playAudioResponse(blob) {
+// ═══════════════════════════════════════════════════════════════════════════
+//  AUDIO PLAYBACK
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function _playAudioResponse(blob, requestId) {
   const url = URL.createObjectURL(blob);
-  await _playAudioFromUrl(url, true);
+  await _playAudioFromUrl(url, true, requestId);
 }
 
-async function _playAudioFromUrl(url, isObjectUrl = false) {
-  _setState(State.SPEAKING);
-  console.log("🔊 Playing audio response...");
+async function _playAudioFromUrl(url, isObjectUrl = false, requestId = 0) {
+  if (requestId > 0 && requestId !== currentRequestId) {
+    console.log(`⏭️ Audio stale (req #${requestId}), skipping`);
+    if (isObjectUrl) URL.revokeObjectURL(url);
+    return;
+  }
 
-  currentAudio         = new Audio(url);
+  _setState(State.SPEAKING);
+  console.log(`🔊 [Req #${requestId || 'text'}] Playing...`);
+
+  currentAudio = new Audio(url);
   currentAudio.preload = "auto";
 
   currentAudio.onended = () => {
-    console.log("✅ Audio playback finished");
     if (isObjectUrl) URL.revokeObjectURL(url);
     currentAudio = null;
+    console.log("✅ Audio finished");
     _setState(State.IDLE);
-    // Auto-return to listening mode
     if (voiceModeActive) {
-      setTimeout(() => {
-        if (voiceModeActive) _startListening();
-      }, 400);
+      setTimeout(() => { if (voiceModeActive && currentState === State.IDLE) _startListening(); }, 400);
     }
   };
 
   currentAudio.onerror = (e) => {
-    console.error("❌ Audio playback error:", e);
+    console.error("❌ Audio error:", e);
     if (isObjectUrl) URL.revokeObjectURL(url);
     currentAudio = null;
     _setState(State.IDLE);
     if (voiceModeActive) {
-      setTimeout(() => {
-        if (voiceModeActive) _startListening();
-      }, 400);
+      setTimeout(() => { if (voiceModeActive && currentState === State.IDLE) _startListening(); }, 400);
     }
   };
 
-  try {
-    await currentAudio.play();
-  } catch (e) {
+  try { await currentAudio.play(); }
+  catch (e) {
     console.warn("⚠️ Autoplay blocked:", e);
-    _showToast("Tap anywhere to enable audio, then speak again.", "info");
+    _showToast("Tap anywhere to enable audio.", "info");
     _setState(State.IDLE);
-    const resumeHandler = async () => {
-      if (currentAudio) {
-        try { await currentAudio.play(); } catch (err) {}
-      }
-      document.removeEventListener("click", resumeHandler);
-    };
-    document.addEventListener("click", resumeHandler, { once: true });
+    if (isObjectUrl) URL.revokeObjectURL(url);
+    currentAudio = null;
   }
 }
 
 function _stopCurrentAudio() {
   if (currentAudio) {
-    currentAudio.pause();
-    currentAudio.src = "";
-    currentAudio     = null;
+    const a = currentAudio; currentAudio = null;
+    a.pause(); a.src = "";
+    console.log("🛑 Audio stopped (interrupted)");
   }
 }
 
-function _interruptSpeaking() {
-  _stopCurrentAudio();
-  _setState(State.IDLE);
-  _showToast("Interrupted — go ahead!", "info");
-  if (voiceModeActive) {
-    setTimeout(() => {
-      if (voiceModeActive) _startListening();
-    }, 300);
-  }
-}
+// ═══════════════════════════════════════════════════════════════════════════
+//  STATE MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════
 
-// ── State Management ──────────────────────────────────────────────────────────
 function _setState(newState) {
   currentState = newState;
 
-  document
-    .querySelectorAll(".state-idle,.state-listening,.state-thinking,.state-speaking")
-    .forEach((el) => el.classList.remove("active"));
+  document.querySelectorAll(".state-idle,.state-listening,.state-thinking,.state-speaking")
+    .forEach(el => el.classList.remove("active"));
 
   avatarContainer.classList.remove("listening", "speaking", "thinking");
-  micBtn.classList.remove("recording", "disabled");
-  inlineMicBtn.classList.remove("recording");
+  micBtn.classList.remove("recording", "disabled", "speaking-active");
+  inlineMicBtn.classList.remove("recording", "speaking-active");
   interruptBanner.classList.remove("visible");
 
   const hint = document.getElementById("micHint");
+  if (hint) hint.classList.remove("interrupt-hint");
 
   switch (newState) {
     case State.IDLE:
       document.getElementById("stateIdle").classList.add("active");
-      micBtn.title = voiceModeActive ? "Voice mode ON — speak!" : "Click to start voice mode";
+      micBtn.title = voiceModeActive ? "Voice ON — speak!" : "Click to start";
+      micBtn.disabled = false;
       if (hint) hint.textContent = voiceModeActive ? "Waiting to listen..." : "Click to start voice mode";
       inputMode.textContent = voiceModeActive ? "Voice Mode" : "Text Mode";
-      sendBtn.disabled      = false;
-      micBtn.disabled       = false;
+      sendBtn.disabled = false;
       break;
 
     case State.LISTENING:
@@ -563,7 +637,7 @@ function _setState(newState) {
       micBtn.disabled = false;
       if (hint) hint.textContent = "Listening... speak now";
       inputMode.textContent = "Voice Mode";
-      sendBtn.disabled      = true;
+      sendBtn.disabled = true;
       break;
 
     case State.THINKING:
@@ -579,44 +653,40 @@ function _setState(newState) {
       document.getElementById("stateSpeaking").classList.add("active");
       avatarContainer.classList.add("speaking");
       interruptBanner.classList.add("visible");
-      micBtn.classList.add("disabled");
-      micBtn.disabled = true;
-      if (hint) hint.textContent = "Speaking... click to interrupt";
+      // Mic ENABLED during speaking — user can click OR speak to interrupt (VAD monitors)
+      micBtn.classList.remove("disabled");
+      micBtn.classList.add("speaking-active");
+      micBtn.disabled = false;
+      inlineMicBtn.classList.add("speaking-active");
+      if (hint) { hint.textContent = "🔴 Click or speak to interrupt"; hint.classList.add("interrupt-hint"); }
       sendBtn.disabled = true;
       break;
   }
 }
 
-// ── Chat UI ───────────────────────────────────────────────────────────────────
-const LANG_FLAGS = {
-  en: "🇬🇧",
-  te: "🇮🇳 తె",
-  hi: "🇮🇳 हि",
-  ta: "🇮🇳 த",
-};
+// ═══════════════════════════════════════════════════════════════════════════
+//  CHAT UI
+// ═══════════════════════════════════════════════════════════════════════════
+
+const LANG_FLAGS = { en: "🇬🇧", te: "🇮🇳 తె", hi: "🇮🇳 हि", ta: "🇮🇳 த" };
 
 function _addMessage(role, content, inputType = "text", lang = "en") {
   const msg = document.createElement("div");
   msg.className = `message ${role}`;
-
-  const avatar       = document.createElement("div");
-  avatar.className   = "msg-avatar";
+  const avatar = document.createElement("div");
+  avatar.className = "msg-avatar";
   avatar.textContent = role === "user" ? "You" : "D";
-
   const msgContent = document.createElement("div");
   msgContent.className = "msg-content";
-
-  const bubble       = document.createElement("div");
-  bubble.className   = "msg-bubble";
+  const bubble = document.createElement("div");
+  bubble.className = "msg-bubble";
   bubble.textContent = content;
-
-  const meta     = document.createElement("div");
+  const meta = document.createElement("div");
   meta.className = "msg-meta";
-  const now      = new Date();
-  const langBadge = lang !== "en" ? ` · ${LANG_FLAGS[lang] || lang}` : "";
-  const modeBadge = inputType === "voice" ? " · 🎤" : "";
-  meta.textContent = `${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}${modeBadge}${langBadge}`;
-
+  const now = new Date();
+  const lb = lang !== "en" ? ` · ${LANG_FLAGS[lang] || lang}` : "";
+  const mb = inputType === "voice" ? " · 🎤" : "";
+  meta.textContent = `${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}${mb}${lb}`;
   msgContent.appendChild(bubble);
   msgContent.appendChild(meta);
   msg.appendChild(avatar);
@@ -627,22 +697,18 @@ function _addMessage(role, content, inputType = "text", lang = "en") {
 }
 
 function _addThinkingBubble() {
-  const id  = "thinking-" + Date.now();
+  const id = "thinking-" + Date.now();
   const msg = document.createElement("div");
   msg.className = "message assistant typing-indicator";
-  msg.id        = id;
-
-  const avatar       = document.createElement("div");
-  avatar.className   = "msg-avatar";
+  msg.id = id;
+  const avatar = document.createElement("div");
+  avatar.className = "msg-avatar";
   avatar.textContent = "D";
-
   const msgContent = document.createElement("div");
   msgContent.className = "msg-content";
-
-  const bubble     = document.createElement("div");
+  const bubble = document.createElement("div");
   bubble.className = "msg-bubble";
   bubble.innerHTML = '<div class="typing-dots"><span></span><span></span><span></span></div>';
-
   msgContent.appendChild(bubble);
   msg.appendChild(avatar);
   msg.appendChild(msgContent);
@@ -651,135 +717,94 @@ function _addThinkingBubble() {
   return id;
 }
 
-function _removeThinkingBubble(id) {
-  document.getElementById(id)?.remove();
-}
+function _removeThinkingBubble(id) { document.getElementById(id)?.remove(); }
 
 function _renderWelcomeMessage() {
-  const welcome     = document.createElement("div");
-  welcome.className = "welcome-msg";
-  welcome.innerHTML = `
+  const w = document.createElement("div");
+  w.className = "welcome-msg";
+  w.innerHTML = `
     <div class="welcome-icon">🎓</div>
     <h3>Hello! I'm Shruthi</h3>
     <p>Your AI Educational Counselor — available in English, Telugu (తెలుగు), Hindi (हिंदी) &amp; Tamil (தமிழ்).</p>
     <p style="margin-top:0.5rem">Click <strong>🎤 Start Voice</strong> for hands-free conversation, or type below.</p>
-    <p style="margin-top:0.4rem; font-size:0.78rem; color:var(--text-muted)">I'll automatically detect your language and reply in the same language.</p>
-  `;
-  chatMessages.appendChild(welcome);
+    <p style="margin-top:0.4rem; font-size:0.78rem; color:var(--text-muted)">You can interrupt me anytime while I'm speaking — just start talking!</p>`;
+  chatMessages.appendChild(w);
 }
 
-function _scrollToBottom() {
-  chatMessages.scrollTop = chatMessages.scrollHeight;
-}
+function _scrollToBottom() { chatMessages.scrollTop = chatMessages.scrollHeight; }
 
-// ── Session Management ────────────────────────────────────────────────────────
+// ── Session ───────────────────────────────────────────────────────────────────
 async function _resetSession() {
+  _cancelPendingRequest();
   try {
-    const response = await fetch(`${CONFIG.API_BASE}/reset-session/${sessionId}`, { method: "POST" });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    chatMessages.innerHTML = "";
-    sessionId = _generateSessionId();
-    _renderWelcomeMessage();
-    _showToast("Session reset — fresh start!", "success");
-  } catch (err) {
-    console.error("Reset session error:", err);
-    // Still reset locally even if backend fails
-    sessionId = _generateSessionId();
-    chatMessages.innerHTML = "";
-    _renderWelcomeMessage();
-    _showToast("Session reset locally", "info");
-  }
+    const r = await fetch(`${CONFIG.API_BASE}/reset-session/${sessionId}`, { method: "POST" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  } catch (err) { console.error("Reset error:", err); }
+  chatMessages.innerHTML = "";
+  sessionId = _generateSessionId();
+  _renderWelcomeMessage();
+  _showToast("Session reset — fresh start!", "success");
 }
 
-// ── Backend Health Check ──────────────────────────────────────────────────────
+// ── Health ────────────────────────────────────────────────────────────────────
 async function _checkBackendHealth() {
   try {
-    const res = await fetch(`${CONFIG.API_BASE}/health`, {
-      signal: AbortSignal.timeout(5000),
-    });
-
+    const res = await fetch(`${CONFIG.API_BASE}/health`, { signal: AbortSignal.timeout(5000) });
     if (res.ok) {
-      const data  = await res.json();
+      const data = await res.json();
       backendOnline = true;
-
-      if (!data.groq_configured) {
-        _setConnectionStatus(false, "API Key Missing");
-      } else {
-        _setConnectionStatus(true, "Online");
-      }
-
+      _setConnectionStatus(true, data.groq_configured ? "Online" : "API Key Missing");
       document.getElementById("offlineBanner")?.remove();
-    } else {
-      _handleBackendOffline();
-    }
-  } catch (err) {
-    console.warn("Health check failed:", err.message);
-    _handleBackendOffline();
-  }
+    } else { _handleBackendOffline(); }
+  } catch (err) { console.warn("Health check:", err.message); _handleBackendOffline(); }
 }
 
 function _handleBackendOffline() {
   backendOnline = false;
   _setConnectionStatus(false, "Offline");
-
   if (!document.getElementById("offlineBanner")) {
-    const banner     = document.createElement("div");
-    banner.id        = "offlineBanner";
-    banner.className = "offline-banner";
-    banner.innerHTML = `
-      <span>⚠️ Backend is offline.</span>
-      <span>Start the server: <code>cd backend &amp;&amp; python -m uvicorn app:app --reload --port 8000</code></span>
-    `;
-    document.querySelector(".chat-panel")?.prepend(banner);
+    const b = document.createElement("div");
+    b.id = "offlineBanner";
+    b.className = "offline-banner";
+    b.innerHTML = `<span>⚠️ Backend is offline.</span><span>Start: <code>cd backend &amp;&amp; python -m uvicorn app:app --reload --port 8000</code></span>`;
+    document.querySelector(".chat-panel")?.prepend(b);
   }
 }
 
 function _setConnectionStatus(online, label) {
-  statusDot.className  = "status-dot " + (online ? "online" : "offline");
+  statusDot.className = "status-dot " + (online ? "online" : "offline");
   statusText.textContent = label;
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
-function _generateSessionId() {
-  return "sess_" + Math.random().toString(36).slice(2, 11) + "_" + Date.now();
-}
+function _generateSessionId() { return "sess_" + Math.random().toString(36).slice(2, 11) + "_" + Date.now(); }
 
 function _getSupportedMimeType() {
-  const types = [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/ogg;codecs=opus",
-    "audio/mp4",
-  ];
-  return types.find((t) => MediaRecorder.isTypeSupported(t)) || "audio/webm";
+  const t = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+  return t.find(tt => MediaRecorder.isTypeSupported(tt)) || "audio/webm";
 }
 
-function _safeDecodeHeader(val) {
-  if (!val) return "";
-  try { return decodeURIComponent(val); } catch { return val; }
-}
+function _safeDecodeHeader(val) { if (!val) return ""; try { return decodeURIComponent(val); } catch { return val; } }
 
 function _showToast(message, type = "info") {
-  const container = document.getElementById("toastContainer");
-  if (!container) return;
-  const toast     = document.createElement("div");
-  toast.className = `toast ${type}`;
-  toast.textContent = message;
-  container.appendChild(toast);
-  setTimeout(() => {
-    toast.style.animation = "toast-out 0.3s ease forwards";
-    setTimeout(() => toast.remove(), 300);
-  }, 3000);
+  const c = document.getElementById("toastContainer");
+  if (!c) return;
+  const t = document.createElement("div");
+  t.className = `toast ${type}`;
+  t.textContent = message;
+  c.appendChild(t);
+  setTimeout(() => { t.style.animation = "toast-out 0.3s ease forwards"; setTimeout(() => t.remove(), 300); }, 3000);
 }
 
 function _createRipple(event, button) {
-  const ripple  = document.createElement("span");
-  ripple.className = "ripple";
-  const rect    = button.getBoundingClientRect();
-  const size    = Math.max(rect.width, rect.height);
-  ripple.style.cssText = `width:${size}px;height:${size}px;left:${event.clientX - rect.left - size / 2}px;top:${event.clientY - rect.top - size / 2}px;`;
+  const r = document.createElement("span");
+  r.className = "ripple";
+  const rect = button.getBoundingClientRect();
+  const size = Math.max(rect.width, rect.height);
+  r.style.cssText = `width:${size}px;height:${size}px;left:${event.clientX - rect.left - size / 2}px;top:${event.clientY - rect.top - size / 2}px;`;
   button.style.position = "relative";
   button.style.overflow = "hidden";
-  button.appendChild(ripple);
-  setTimeout(() => ripple.remove(), 600);
+  button.appendChild(r);
+  setTimeout(() => r.remove(), 600);
 }
+
