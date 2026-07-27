@@ -3,187 +3,87 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Shruthi — AI Educational Counselor</title>
+  <title>Mrs. D — AI Educational Counselor</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet" />
 </head>
 <body>
-
-  <!-- ── TOP NAVIGATION ─────────────────────────────────────────────────── -->
-  <nav class="navbar">
-    <div class="nav-brand">
-      <div class="nav-logo">
-        <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="20" cy="20" r="20" fill="url(#logoGrad)"/>
-          <path d="M13 20C13 16.13 16.13 13 20 13s7 3.13 7 7v4a2 2 0 01-2 2h-1v-5h2v-1c0-3.31-2.69-6-6-6s-6 2.69-6 6v1h2v5h-1a2 2 0 01-2-2v-4z" fill="white"/>
-          <defs>
-            <linearGradient id="logoGrad" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
-              <stop stop-color="#4F46E5"/>
-              <stop offset="1" stop-color="#06B6D4"/>
-            </linearGradient>
-          </defs>
-        </svg>
+  <!-- ── STATE MODAL OVERLAY ── -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal-backdrop"></div>
+    <!-- Listening -->
+    <div class="modal-popup" id="modalListening">
+      <div class="popup-glow glow-blue"></div>
+      <div class="popup-content">
+        <div class="popup-icon-wrap">
+          <div class="popup-mic-ring"></div>
+          <svg class="popup-mic-icon" viewBox="0 0 44 44" fill="none"><circle cx="22" cy="16" r="10" fill="white" opacity="0.9"/><path d="M8 30c0-7.7 6.3-14 14-14s14 6.3 14 14" fill="white" opacity="0.9"/><rect x="9" y="30" width="26" height="3" rx="1.5" fill="white" opacity="0.9"/></svg>
+          <div class="lwave"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+        <h2 class="popup-title">Listening...</h2>
+        <p class="popup-sub">I'm ready — speak naturally</p>
       </div>
-      <div class="nav-title">
-        <span class="brand-name">Shruthi</span>
-        <span class="brand-sub">AI Educational Counselor</span>
+    <!-- Thinking -->
+    <div class="modal-popup" id="modalThinking">
+      <div class="popup-glow glow-purple"></div>
+      <div class="popup-content">
+        <div class="popup-icon-wrap">
+          <svg class="brain-svg" viewBox="0 0 48 48" fill="none"><circle cx="24" cy="18" r="9" stroke="white" stroke-width="1.5" fill="none" opacity="0.5"/><path d="M16 18c0-4.4 3.6-8 8-8s8 3.6 8 8-3.6 8-8 8-8-3.6-8-8z" stroke="white" stroke-width="1.5" fill="none"/><path d="M12 32c0-6.6 5.4-12 12-12s12 5.4 12 12v3H12v-3z" stroke="white" stroke-width="1.5" fill="none" opacity="0.6"/><circle cx="21" cy="16" r="1.5" fill="white" opacity="0.7"/><circle cx="27" cy="16" r="1.5" fill="white" opacity="0.7"/><path d="M23 20l1 1 1-1" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <div class="tdots"><span></span><span></span><span></span></div>
+        <h2 class="popup-title">Thinking...</h2>
+        <p class="popup-sub">Mrs. D is processing your question</p>
       </div>
+    <!-- Speaking -->
+    <div class="modal-popup" id="modalSpeaking">
+      <div class="popup-glow glow-green"></div>
+      <div class="popup-content">
+        <div class="popup-icon-wrap">
+          <div class="speaking-avatar-wrap"><svg viewBox="0 0 56 56" fill="none"><circle cx="28" cy="28" r="28" fill="url(#spkG)"/><circle cx="28" cy="20" r="9" fill="white" opacity="0.9"/><path d="M10 48c0-10 8-18 18-18s18 8 18 18" fill="white" opacity="0.9"/><defs><linearGradient id="spkG" x1="0" y1="0" x2="56" y2="56"><stop stop-color="#10B981"/><stop offset="1" stop-color="#059669"/></linearGradient></defs></svg></div>
+          <canvas id="audioVisualizer" class="audio-viz" width="140" height="36"></canvas>
+        </div>
+        <h2 class="popup-title">Speaking...</h2>
+        <p class="popup-sub">Mrs. D is responding</p>
+        <div class="interrupt-label">🎤 Speak or tap mic to interrupt</div>
     </div>
-    <div class="nav-right">
-      <button class="voice-toggle-btn" id="voiceToggleBtn">🎤 Start Voice</button>
-      <div class="nav-status">
-        <span class="status-dot" id="statusDot"></span>
-        <span class="status-text" id="statusText">Connecting...</span>
+
+  <!-- ── MAIN APP ── -->
+  <div class="app" id="app">
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="brand-icon"><svg viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="14" fill="url(#bG)"/><path d="M9 13c0-2.8 2.2-5 5-5s5 2.2 5 5v2.5a1.2 1.2 0 01-1.2 1.2h-.8v-3h1v-.7c0-2.2-1.8-4-4-4s-4 1.8-4 4v.7h1v3h-.8A1.2 1.2 0 019 15.5V13z" fill="white"/><defs><linearGradient id="bG" x1="0" y1="0" x2="28" y2="28"><stop stop-color="#4F46E5"/><stop offset="1" stop-color="#06B6D4"/></linearGradient></defs></svg></div>
+        <div class="brand-txt"><span class="brand-n">Mrs. D</span><span class="brand-l">AI Educational Counselor</span></div>
+      <div class="topbar-right">
+        <button class="tb-btn" id="voiceToggleBtn"><svg viewBox="0 0 18 18" fill="none"><path d="M9 1a2.5 2.5 0 00-2.5 2.5v5a2.5 2.5 0 005 0V3.5A2.5 2.5 0 009 1z" fill="currentColor"/><path d="M14 8v1.5a5 5 0 01-10 0V8M9 15v2.5M7 17.5h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span id="voiceBtnLabel">Start Voice</span></button>
+        <div class="conn-stat"><span class="c-dot" id="connDot"></span><span class="c-txt" id="connText">Connecting</span></div>
+    </header>
+
+    <div class="main-area">
+      <div class="hero-center">
+        <div class="hero-avatar-wrap" id="heroAvatar">
+          <div class="hero-rings"><div class="hr hr1"></div><div class="hr hr2"></div><div class="hr hr3"></div>
+          <div class="hero-avatar-circle"><svg viewBox="0 0 72 72" fill="none"><circle cx="36" cy="36" r="36" fill="url(#haG)"/><circle cx="36" cy="24" r="11" fill="white" opacity="0.92"/><path d="M13 62c0-12.7 10.3-23 23-23s23 10.3 23 23" fill="white" opacity="0.92"/><defs><linearGradient id="haG" x1="0" y1="0" x2="72" y2="72"><stop stop-color="#4F46E5"/><stop offset="1" stop-color="#06B6D4"/></linearGradient></defs></svg></div>
+        <div class="hero-titles"><h1 class="hero-h1">Mrs. D</h1><p class="hero-p1">Your AI Educational Counselor</p><p class="hero-langs">English · తెలుగు · हिंदी · தமிழ்</p></div>
+        <div class="mic-block">
+          <button class="mic-hero" id="micBtn" title="Start conversation">
+            <div class="mic-glow-hero" id="micGlow"></div>
+            <div class="mic-icon-hero"><svg viewBox="0 0 26 26" fill="none"><path d="M13 2a3 3 0 00-3 3v7.5a3 3 0 006 0V5a3 3 0 00-3-3z" fill="currentColor"/><path d="M19 10v1.5a6 6 0 01-12 0V10M13 20v3M10.5 23h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+          </button>
+          <p class="mic-label-hero" id="micLabel">Tap to start speaking</p>
+        </div>
+        <div class="status-badge"><span class="sb-dot" id="badgeDot"></span><span class="sb-txt" id="badgeText">Ready</span></div>
+        <div class="text-input-row" id="textArea">
+          <div class="tir"><textarea id="textInput" class="ti" placeholder="Type your question here..." rows="1" maxlength="2000"></textarea><button class="ti-send" id="sendBtn" title="Send"><svg viewBox="0 0 18 18" fill="none"><path d="M16 2L8 10M16 2l-4 14-4-7L1 6l15-4z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+          <div class="tir-footer"><span class="char-c" id="charCount">0 / 2000</span><span class="tir-hint">Type as alternative to voice</span></div>
       </div>
+
+      <!-- Memory Panel -->
+      <div class="memory-panel" id="memoryPanel">
+        <div class="mp-header"><span class="mp-title">Conversation Memory</span><div class="mp-actions"><button class="mp-btn" id="clearBtn">Clear</button><button class="mp-btn" id="resetBtn">Reset</button></div>
+        <div class="mp-messages" id="chatMessages"></div>
     </div>
-  </nav>
 
-  <!-- ── MAIN LAYOUT ────────────────────────────────────────────────────── -->
-  <main class="main-layout">
-
-    <!-- LEFT PANEL: Avatar + Controls -->
-    <aside class="agent-panel">
-      <div class="agent-card glass-card">
-
-        <!-- Avatar -->
-        <div class="avatar-container" id="avatarContainer">
-          <div class="avatar-rings">
-            <div class="ring ring-1"></div>
-            <div class="ring ring-2"></div>
-            <div class="ring ring-3"></div>
-          </div>
-          <div class="avatar-circle" id="avatarCircle">
-            <svg class="avatar-icon" viewBox="0 0 80 80" fill="none">
-              <circle cx="40" cy="40" r="40" fill="url(#avatarGrad)"/>
-              <circle cx="40" cy="30" r="12" fill="white" opacity="0.9"/>
-              <path d="M16 68c0-13.25 10.75-24 24-24s24 10.75 24 24" fill="white" opacity="0.9"/>
-              <defs>
-                <linearGradient id="avatarGrad" x1="0" y1="0" x2="80" y2="80">
-                  <stop stop-color="#4F46E5"/>
-                  <stop offset="1" stop-color="#06B6D4"/>
-                </linearGradient>
-              </defs>
-            </svg>
-          </div>
-        </div>
-
-        <!-- Agent Info -->
-        <div class="agent-info">
-          <h2 class="agent-name">Shruthi</h2>
-          <p class="agent-role">Educational Counselor</p>
-        </div>
-
-        <!-- State Display -->
-        <div class="state-display" id="stateDisplay">
-          <div class="state-idle active" id="stateIdle">
-            <span class="state-icon">👋</span>
-            <span>Ready to help</span>
-          </div>
-          <div class="state-listening" id="stateListening">
-            <div class="mic-wave">
-              <span></span><span></span><span></span><span></span><span></span>
-            </div>
-            <span>Listening...</span>
-          </div>
-          <div class="state-thinking" id="stateThinking">
-            <div class="thinking-dots">
-              <span></span><span></span><span></span>
-            </div>
-            <span>Thinking...</span>
-          </div>
-          <div class="state-speaking" id="stateSpeaking">
-            <div class="speak-wave">
-              <span></span><span></span><span></span><span></span><span></span>
-              <span></span><span></span>
-            </div>
-            <span>Speaking...</span>
-          </div>
-        </div>
-
-        <!-- Microphone Button -->
-        <div class="mic-wrapper">
-          <button class="mic-btn" id="micBtn" title="Hold to speak / Click to toggle">
-            <div class="mic-glow"></div>
-            <svg class="mic-icon" viewBox="0 0 24 24" fill="none">
-              <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" fill="currentColor"/>
-              <path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-          </button>
-          <p class="mic-hint" id="micHint">Click to start speaking</p>
-        </div>
-
-        <!-- Session Controls -->
-        <div class="session-controls">
-          <button class="ctrl-btn" id="resetBtn" title="Reset conversation">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 12a9 9 0 109-9M3 3v6h6" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            Reset
-          </button>
-          <button class="ctrl-btn" id="clearBtn" title="Clear chat display">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/>
-            </svg>
-            Clear
-          </button>
-        </div>
-
-      </div>
-    </aside>
-
-    <!-- RIGHT PANEL: Chat -->
-    <section class="chat-panel">
-
-      <!-- Chat Messages -->
-      <div class="chat-messages" id="chatMessages">
-        <!-- Welcome message injected by JS -->
-      </div>
-
-      <!-- Interrupt Banner -->
-      <div class="interrupt-banner" id="interruptBanner">
-        <span>🎤 Speak or click mic to interrupt Shruthi</span>
-      </div>
-
-      <!-- Input Area -->
-      <div class="input-area glass-card">
-        <div class="input-row">
-          <textarea
-            id="textInput"
-            class="text-input"
-            placeholder="Type your question here..."
-            rows="1"
-            maxlength="2000"
-          ></textarea>
-          <div class="input-actions">
-            <button class="action-btn mic-action" id="inlineMicBtn" title="Voice input">
-              <svg viewBox="0 0 24 24" fill="none">
-                <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" fill="currentColor"/>
-                <path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-              </svg>
-            </button>
-            <button class="action-btn send-action" id="sendBtn" title="Send message">
-              <svg viewBox="0 0 24 24" fill="none">
-                <path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-        <div class="input-footer">
-          <span class="char-count" id="charCount">0 / 2000</span>
-          <span class="input-mode" id="inputMode">Text Mode</span>
-        </div>
-      </div>
-
-    </section>
-  </main>
-
-  <!-- ── AUDIO PLAYER (hidden) ──────────────────────────────────────────── -->
-  <audio id="audioPlayer" style="display:none;"></audio>
-
-  <!-- ── TOAST NOTIFICATIONS ───────────────────────────────────────────── -->
   <div class="toast-container" id="toastContainer"></div>
-
+  <audio id="audioPlayer" style="display:none;"></audio>
   <script src="script.js"></script>
 </body>
 </html>
