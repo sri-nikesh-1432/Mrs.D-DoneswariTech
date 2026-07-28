@@ -1,19 +1,25 @@
 @echo off
-title Doneswari AI Telecaller - Launcher
+cd /d "%~dp0"
 
-echo Starting backend on http://127.0.0.1:8000 ...
-start "Backend" cmd /k "cd /d "%~dp0backend" && python -m uvicorn app:app --host 127.0.0.1 --port 8000"
-
-echo Waiting for backend to start...
-timeout /t 3 /nobreak >nul
-
-echo Starting frontend on http://localhost:3000 ...
-start "Frontend" cmd /k "cd /d "%~dp0frontend" && python -m http.server 3000"
-
-timeout /t 2 /nobreak >nul
+echo ========================================
+echo  Mrs. D - AI Admission Campaign Platform
+echo ========================================
 echo.
-echo  ✅ Frontend URL: http://localhost:3000
-echo  ✅ Backend API:  http://127.0.0.1:8000
-echo  ✅ API Docs:     http://127.0.0.1:8000/docs
+
+:: Start Backend
+echo [1/2] Starting Backend on port 8000...
+start "Mrs.D Backend" cmd /c "cd /d backend && python -m uvicorn app.main:app --reload --host localhost --port 8000"
+
+:: Wait for backend to initialize
+timeout /t 3 /nobreak >/dev/null
+
+:: Start Frontend
+echo [2/2] Starting Frontend on port 5175...
+start "Mrs.D Frontend" cmd /c "cd /d frontend && npx vite --port 5175 --host localhost"
+
 echo.
-start http://localhost:3000
+echo Frontend: http://localhost:5175
+echo Backend:  http://localhost:8000
+echo API Docs: http://localhost:8000/docs
+echo.
+pause
