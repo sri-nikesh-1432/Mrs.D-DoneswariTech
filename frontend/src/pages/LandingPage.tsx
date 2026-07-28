@@ -6,7 +6,7 @@ import {
   Loader2, AlertCircle
 } from "lucide-react";
 import {
-  uploadKnowledge, uploadStudents, createCampaign, getKnowledgeStatus
+  uploadKnowledge, uploadStudents, createCampaign, getKnowledgeStatus, startCampaign
 } from "../services/api";
 
 interface Props {
@@ -105,7 +105,6 @@ export default function LandingPage({ onCampaignCreated }: Props) {
     if (!campaignId || !canStart) return;
     setIsStarting(true);
     try {
-      const { startCampaign } = await import("../services/api");
       await startCampaign(campaignId);
       navigate("/dashboard");
     } catch (e: any) {

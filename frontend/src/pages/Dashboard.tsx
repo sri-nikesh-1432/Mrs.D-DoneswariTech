@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import {
   BarChart3, Users, PhoneCall, CheckCircle2, XCircle,
   TrendingUp, Clock, AlertTriangle, Play, Pause, StopCircle,
-  Activity, Loader2
+  Activity as ActivityIcon, Loader2
 } from "lucide-react";
 import {
   getCampaignStatus, getStudents, startCampaign,
@@ -259,7 +259,7 @@ export default function Dashboard({ campaignId }: Props) {
 
         <div className="glass rounded-2xl p-4 max-h-[500px] overflow-y-auto">
           <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-            <Activity className="w-4 h-4 text-primary-400" />
+            <ActivityIcon className="w-4 h-4 text-primary-400" />
             Activity Feed
           </h2>
           <div className="space-y-3">
