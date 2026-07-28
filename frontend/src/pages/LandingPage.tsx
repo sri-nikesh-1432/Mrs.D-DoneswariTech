@@ -114,10 +114,8 @@ export default function LandingPage({ onCampaignCreated }: Props) {
     if (!campaignId || !canStart) return;
     setIsStarting(true);
     try {
-      await createCampaign({
-        campaign_name: campaignName,
-        institute_name: instituteName,
-      });
+      const { startCampaign } = await import("../services/api");
+      await startCampaign(campaignId);
       navigate("/dashboard");
     } catch (e: any) {
       setError(e.message);

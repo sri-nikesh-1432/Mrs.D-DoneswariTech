@@ -64,7 +64,7 @@ async def get_campaign_status(campaign_id: int):
 
 
 @router.post("/campaign/start")
-async def start_campaign(campaign_id: int):
+async def start_campaign(campaign_id: int = Form(...)):
     """Start the campaign."""
     if not is_knowledge_ready():
         raise HTTPException(status_code=400, detail="Knowledge base is not ready. Upload knowledge documents first.")
@@ -90,7 +90,7 @@ async def resume_campaign():
 
 
 @router.post("/campaign/cancel")
-async def cancel_campaign(campaign_id: int):
+async def cancel_campaign(campaign_id: int = Form(...)):
     """Cancel the campaign."""
     result = await campaign_manager.cancel_campaign(campaign_id)
     return result
