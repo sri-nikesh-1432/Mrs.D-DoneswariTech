@@ -8,7 +8,7 @@ import {
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, PieChart as RePieChart, Pie, Cell,
-  LineChart, Line, Legend
+  Legend
 } from "recharts";
 import { getCampaignSummary, getExportPdfUrl } from "../services/api";
 import type { CampaignStats } from "../types";
@@ -70,7 +70,6 @@ export default function Reports({ campaignId }: Props) {
   const stats = data?.stats;
   const analytics = data?.analytics;
 
-  // Chart Data
   const sentimentData = analytics?.sentiment_distribution
     ? Object.entries(analytics.sentiment_distribution).map(([name, value]) => ({ name, value }))
     : [];
@@ -83,11 +82,10 @@ export default function Reports({ campaignId }: Props) {
 
   return (
     <div className="min-h-screen p-6">
-      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-white">Campaign Reports</h1>
-          <p className="text-sm text-dark-400">{stats?.campaign_name} — Analytics & Insights</p>
+          <p className="text-sm text-dark-400">{stats?.campaign_name} - Analytics and Insights</p>
         </div>
         <div className="flex items-center gap-3">
           {campaignId && (
@@ -99,17 +97,16 @@ export default function Reports({ campaignId }: Props) {
               Export PDF
             </a>
           )}
-          <Link to="/dashboard" className="btn-ghost text-sm">← Dashboard</Link>
+          <Link to="/dashboard" className="btn-ghost text-sm">&larr; Dashboard</Link>
         </div>
       </div>
 
-      {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         {[
           { label: "Total Students", value: stats?.total_students || 0, icon: Users, color: "from-blue-500" },
           { label: "Completed", value: stats?.calls_completed || 0, icon: PhoneCall, color: "from-green-500" },
-          { label: "Completion Rate", value: `${analytics?.completion_rate || 0}%`, icon: TrendingUp, color: "from-purple-500" },
-          { label: "Interest Rate", value: `${analytics?.interest_rate || 0}%`, icon: FileText, color: "from-cyan-500" },
+          { label: "Completion Rate", value: String(analytics?.completion_rate || 0) + "%", icon: TrendingUp, color: "from-purple-500" },
+          { label: "Interest Rate", value: String(analytics?.interest_rate || 0) + "%", icon: FileText, color: "from-cyan-500" },
         ].map((card, i) => (
           <motion.div
             key={card.label}
@@ -120,7 +117,7 @@ export default function Reports({ campaignId }: Props) {
           >
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-dark-400">{card.label}</span>
-              <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${card.color} to-purple-600 flex items-center justify-center`}>
+              <div className={"w-8 h-8 rounded-lg bg-gradient-to-br " + card.color + " to-purple-600 flex items-center justify-center"}>
                 <card.icon className="w-4 h-4 text-white" />
               </div>
             </div>
@@ -129,9 +126,7 @@ export default function Reports({ campaignId }: Props) {
         ))}
       </div>
 
-      {/* Charts Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-        {/* Sentiment Distribution */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -155,7 +150,6 @@ export default function Reports({ campaignId }: Props) {
           </ResponsiveContainer>
         </motion.div>
 
-        {/* Interest Levels */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -178,7 +172,7 @@ export default function Reports({ campaignId }: Props) {
                 dataKey="value"
               >
                 {interestData.map((_, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  <Cell key={"cell-" + index} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
               <Tooltip
@@ -189,7 +183,6 @@ export default function Reports({ campaignId }: Props) {
           </ResponsiveContainer>
         </motion.div>
 
-        {/* Course Distribution */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -209,4 +202,59 @@ export default function Reports({ campaignId }: Props) {
                 <Tooltip
                   contentStyle={{ background: "#1e293b", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8 }}
                 />
-  
+                <Bar dataKey="value" fill="#8B5CF6" radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <p className="text-dark-400 text-center py-8">No course data available</p>
+          )}
+        </motion.div>
+      </div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.3 }}
+        className="glass rounded-2xl p-6"
+      >
+        <h3 className="text-lg font-semibold text-white mb-4">Student Reports</h3>
+        <div className="space-y-2">
+          {data?.students?.slice(0, 10).map((student, i) => (
+            <motion.div
+              key={student.id}
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: i * 0.02 }}
+              className="flex items-center justify-between p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div className={"w-2 h-2 rounded-full " + (
+                  student.status === "completed" ? "bg-green-400" :
+                  student.status === "failed" ? "bg-red-400" :
+                  student.status === "calling" ? "bg-blue-400" : "bg-dark-400"
+                )} />
+                <div>
+                  <p className="text-sm font-medium text-white">{student.name}</p>
+                  <p className="text-xs text-dark-400">{student.phone}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 text-xs text-dark-400">
+                <span>Interest: {student.interest_score}%</span>
+                <span>Duration: {Math.round(student.duration)}s</span>
+                <span className={"capitalize " + (
+                  student.sentiment === "positive" ? "text-green-400" :
+                  student.sentiment === "negative" ? "text-red-400" : "text-dark-400"
+                )}>
+                  {student.sentiment}
+                </span>
+              </div>
+            </motion.div>
+          ))}
+          {(!data?.students || data.students.length === 0) && (
+            <p className="text-dark-400 text-center py-8">No student reports available</p>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
