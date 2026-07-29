@@ -118,3 +118,37 @@ export async function getStudentAnalytics(campaignId: number) {
 export async function getStudentSummary(studentId: number) {
   return request<any>(`/analytics/student/${studentId}/summary`);
 }
+
+// ── Single Call ───────────────────────────────────────────────────
+export async function initiateSingleCall(studentName: string, phoneNumber: string) {
+  const res = await fetch(`${BASE_URL}/single-call/initiate?student_name=${encodeURIComponent(studentName)}&phone_number=${encodeURIComponent(phoneNumber)}`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Call initiation failed");
+  }
+  return res.json();
+}
+
+export async function processSpeech(callId: number, speechText: string) {
+  const res = await fetch(`${BASE_URL}/single-call/process-speech?call_id=${callId}&speech_text=${encodeURIComponent(speechText)}`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Speech processing failed");
+  }
+  return res.json();
+}
+
+export async function endCall(callId: number) {
+  const res = await fetch(`${BASE_URL}/single-call/end-call?call_id=${callId}`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Call ending failed");
+  }
+  return res.json();
+}

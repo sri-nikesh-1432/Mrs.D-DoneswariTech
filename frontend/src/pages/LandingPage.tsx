@@ -19,6 +19,7 @@ import {
   FileSpreadsheet,
   X,
   ArrowRight,
+  Phone,
 } from "lucide-react";
 import {
   uploadKnowledge,
@@ -762,9 +763,19 @@ export default function LandingPage({ onCampaignCreated }: Props) {
           className="mx-auto w-full text-center py-6"
           style={{ maxWidth: 1320 }}
         >
-          <p className="text-xs text-dark-500">
-            Powered by AI · Mrs. D — AI Admission Campaign Platform
-          </p>
+          <div className="flex items-center justify-center gap-4">
+            <button
+              onClick={() => navigate("/single-call")}
+              className="text-xs text-dark-400 hover:text-white transition-colors flex items-center gap-2"
+            >
+              <Phone className="w-4 h-4" />
+              Single Student Call
+            </button>
+            <span className="text-dark-600">|</span>
+            <p className="text-xs text-dark-500">
+              Powered by AI · Mrs. D — AI Admission Campaign Platform
+            </p>
+          </div>
         </footer>
       </div>
     </div>

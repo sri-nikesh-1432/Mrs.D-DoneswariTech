@@ -44,6 +44,7 @@ def generate_embeddings(chunks: List[Dict]) -> np.ndarray:
     logger.info("Generating embeddings for %d chunks...", len(texts))
     embeddings = model.encode(
         texts,
+        batch_size=16,  # Smaller batch for faster processing
         show_progress_bar=False,
         convert_to_numpy=True,
         normalize_embeddings=True,  # For cosine similarity

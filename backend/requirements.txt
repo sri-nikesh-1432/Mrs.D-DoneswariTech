@@ -50,6 +50,9 @@ edge-tts>=6.1.12
 # Speech-to-Text
 openai-whisper>=20231117
 
+# Twilio for phone calls
+twilio>=8.11.0
+
 # Scheduling
 apscheduler>=3.10.4
 

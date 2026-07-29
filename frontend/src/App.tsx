@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import LandingPage from "./pages/LandingPage";
 import Dashboard from "./pages/Dashboard";
 import Reports from "./pages/Reports";
+import SingleCall from "./pages/SingleCall";
 
 function App() {
   const location = useLocation();
@@ -49,6 +50,19 @@ function App() {
                 transition={{ duration: 0.3 }}
               >
                 <Reports campaignId={campaignId} />
+              </motion.div>
+            }
+          />
+          <Route
+            path="/single-call"
+            element={
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+              >
+                <SingleCall />
               </motion.div>
             }
           />

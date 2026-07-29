@@ -83,12 +83,14 @@ from app.api import (
     websocket_router,
     analytics_router
 )
+from app.api.single_call_routes import router as single_call_router
 
 app.include_router(knowledge_router)
 app.include_router(student_router)
 app.include_router(campaign_router)
 app.include_router(websocket_router)
 app.include_router(analytics_router)
+app.include_router(single_call_router)
 
 
 @app.get("/", tags=["Root"])

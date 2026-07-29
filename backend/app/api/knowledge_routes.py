@@ -2,8 +2,9 @@
 Knowledge API Routes - Handle document upload and knowledge base operations.
 """
 
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from typing import Optional
 import pandas as pd
 
@@ -23,7 +24,7 @@ router = APIRouter(prefix="/api/knowledge", tags=["Knowledge"])
 
 @router.post("/upload")
 async def upload_knowledge(
-    campaign_id: int,
+    campaign_id: Optional[int] = Form(None),
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_database)
 ):
@@ -33,6 +34,32 @@ async def upload_knowledge(
     Supports: PDF, DOCX, TXT, CSV
     """
     try:
+        # If no campaign_id provided, create a default campaign
+        if not campaign_id:
+            # Create a default campaign for single student calls
+            campaign = Campaign(
+                campaign_id="default_single_call",
+                campaign_name="Single Student Call Campaign",
+                institute_name="Default Institute",
+                status="pending",
+                language="en",
+                voice="en-US-AriaNeural",
+                total_students=0,
+                calls_completed=0,
+                calls_failed=0,
+                calls_in_progress=0,
+                interested=0,
+                follow_up_required=0,
+                average_duration=0,
+                knowledge_ready=False,
+                progress=0
+            )
+            session.add(campaign)
+            await session.commit()
+            await session.refresh(campaign)
+            campaign_id = campaign.id
+            logger.info(f"Created default campaign {campaign_id} for knowledge upload")
+        
         # Get campaign
         campaign_service = CampaignService()
         campaign = await campaign_service.get_campaign(session, campaign_id)
@@ -72,6 +99,7 @@ async def upload_knowledge(
         return {
             "message": "Document uploaded successfully",
             "knowledge_id": knowledge.id,
+            "campaign_id": campaign_id,
             "status": knowledge.status.value
         }
     
