@@ -85,24 +85,7 @@ class Campaign(Base):
     finished_at = Column(DateTime, nullable=True)
 
     students = relationship("Student", back_populates="campaign", cascade="all, delete-orphan")
-    knowledge_docs = relationship("KnowledgeDocument", back_populates="campaign", cascade="all, delete-orphan")
-
-
-class KnowledgeDocument(Base):
-    __tablename__ = "knowledge_documents"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=False)
-    filename = Column(String(255), nullable=False)
-    file_type = Column(String(10), nullable=False)
-    file_size = Column(Integer, default=0)
-    status = Column(SAEnum(KnowledgeStatus), default=KnowledgeStatus.WAITING)
-    chunk_count = Column(Integer, default=0)
-    text_preview = Column(Text, nullable=True)
-    error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-
-    campaign = relationship("Campaign", back_populates="knowledge_docs")
+    knowledge = relationship("Knowledge", back_populates="campaign", uselist=False, cascade="all, delete-orphan")
 
 
 class Student(Base):

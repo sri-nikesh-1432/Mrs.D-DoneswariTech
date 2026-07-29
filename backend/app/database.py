@@ -58,7 +58,7 @@ def get_session_maker() -> async_sessionmaker[AsyncSession]:
 async def init_db():
     """Create all tables."""
     async with get_engine().begin() as conn:
-        from app.models import Campaign, Student, KnowledgeDocument, CallLog, CallSummary  # noqa
+        from app.database.models import Campaign, Student, Knowledge, CallLog, Summary  # noqa
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables created successfully")
 

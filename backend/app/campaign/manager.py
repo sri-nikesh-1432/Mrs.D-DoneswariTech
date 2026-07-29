@@ -12,9 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.utils.logger import get_logger
-from app.database import get_session_maker
-from app.models import (
-    Campaign, Student, KnowledgeDocument, CallLog, CallStatus, CallState,
+from app.database.connection import AsyncSessionLocal
+from app.database.models import (
+    Campaign, Student, Knowledge, CallLog, CallStatus, CallState,
     CampaignStatus, KnowledgeStatus, Sentiment
 )
 from app.rag.vector_store import vector_store
@@ -80,10 +80,8 @@ class CampaignManager:
 
     async def create_campaign(self, campaign_data: Dict) -> Dict:
         """Create a new campaign in the database."""
-        session_maker = get_session_maker()
-        async with session_maker() as session:
+        async with AsyncSessionLocal() as session:
             campaign = Campaign(
-                campaign_id=campaign_data.get("campaign_id", ""),
                 campaign_name=campaign_data.get("campaign_name", "Untitled Campaign"),
                 institute_name=campaign_data.get("institute_name", "Unknown Institute"),
                 language=campaign_data.get("language", "en"),
@@ -95,8 +93,7 @@ class CampaignManager:
             await session.refresh(campaign)
             logger.info("Campaign created: %s (ID: %d)", campaign.campaign_name, campaign.id)
             return {
-                "id": campaign.id,
-                "campaign_id": campaign.campaign_id,
+                "campaign_id": campaign.id,
                 "campaign_name": campaign.campaign_name,
                 "institute_name": campaign.institute_name,
                 "status": campaign.status.value,
@@ -114,16 +111,15 @@ class CampaignManager:
         """
         from app.rag.document_processor import extract_text, validate_file
 
-        session_maker = get_session_maker()
         doc = None
 
         try:
             # Create knowledge document record
-            async with session_maker() as session:
-                doc = KnowledgeDocument(
+            async with AsyncSessionLocal() as session:
+                doc = Knowledge(
                     campaign_id=campaign_id,
-                    filename=filename,
-                    file_type=file_type,
+                    document_name=filename,
+                    document_type=file_type,
                     file_size=file_size,
                     status=KnowledgeStatus.PROCESSING,
                 )
@@ -135,8 +131,8 @@ class CampaignManager:
             await self._add_activity(f"Processing document: {filename}")
 
             # Step 1: Extract text
-            async with session_maker() as session:
-                doc_obj = await session.get(KnowledgeDocument, doc_id)
+            async with AsyncSessionLocal() as session:
+                doc_obj = await session.get(Knowledge, doc_id)
                 doc_obj.status = KnowledgeStatus.PROCESSING
                 await session.commit()
 
@@ -148,8 +144,8 @@ class CampaignManager:
 
             # Step 3: Chunk
             await self._add_activity(f"Chunking {filename}...")
-            async with session_maker() as session:
-                doc_obj = await session.get(KnowledgeDocument, doc_id)
+            async with AsyncSessionLocal() as session:
+                doc_obj = await session.get(Knowledge, doc_id)
                 doc_obj.status = KnowledgeStatus.CHUNKING
                 await session.commit()
 
@@ -157,8 +153,8 @@ class CampaignManager:
 
             # Step 4: Generate embeddings
             await self._add_activity(f"Generating embeddings for {len(chunks)} chunks...")
-            async with session_maker() as session:
-                doc_obj = await session.get(KnowledgeDocument, doc_id)
+            async with AsyncSessionLocal() as session:
+                doc_obj = await session.get(Knowledge, doc_id)
                 doc_obj.status = KnowledgeStatus.EMBEDDING
                 await session.commit()
 
@@ -169,11 +165,10 @@ class CampaignManager:
             vector_store.build_index(chunks, embeddings)
 
             # Update document status
-            async with session_maker() as session:
-                doc_obj = await session.get(KnowledgeDocument, doc_id)
+            async with AsyncSessionLocal() as session:
+                doc_obj = await session.get(Knowledge, doc_id)
                 doc_obj.status = KnowledgeStatus.READY
-                doc_obj.chunk_count = len(chunks)
-                doc_obj.text_preview = text[:500]
+                doc_obj.chunks_count = len(chunks)
                 await session.commit()
 
             await self._add_activity(f"✅ Knowledge Base Ready — {len(chunks)} chunks indexed", "success")
@@ -189,10 +184,10 @@ class CampaignManager:
         except Exception as e:
             logger.error("Knowledge processing failed: %s", e)
             if doc and doc.id:
-                async with session_maker() as session:
-                    doc_obj = await session.get(KnowledgeDocument, doc.id)
+                async with AsyncSessionLocal() as session:
+                    doc_obj = await session.get(Knowledge, doc.id)
                     if doc_obj:
-                        doc_obj.status = KnowledgeStatus.FAILED
+                        doc_obj.status = KnowledgeStatus.ERROR
                         doc_obj.error_message = str(e)
                         await session.commit()
             await self._add_activity(f"❌ Knowledge processing failed: {str(e)}", "error")
@@ -202,12 +197,11 @@ class CampaignManager:
 
     async def import_students(self, campaign_id: int, students_data: List[Dict]) -> Dict:
         """Import students from uploaded Excel/CSV data."""
-        session_maker = get_session_maker()
         imported = 0
         skipped = 0
         errors = []
 
-        async with session_maker() as session:
+        async with AsyncSessionLocal() as session:
             campaign = await session.get(Campaign, campaign_id)
             if not campaign:
                 return {"success": False, "error": "Campaign not found"}
@@ -270,8 +264,7 @@ class CampaignManager:
         if not is_knowledge_ready():
             return {"success": False, "error": "Knowledge base is not ready"}
 
-        session_maker = get_session_maker()
-        async with session_maker() as session:
+        async with AsyncSessionLocal() as session:
             campaign = await session.get(Campaign, campaign_id)
             if not campaign:
                 return {"success": False, "error": "Campaign not found"}
@@ -298,14 +291,12 @@ class CampaignManager:
     async def _campaign_loop(self, campaign_id: int):
         """Main campaign loop — calls students sequentially."""
         try:
-            session_maker = get_session_maker()
-
             while self._is_running and not self._cancel_flag:
                 # Check pause
                 await self._pause_event.wait()
 
                 # Get next uncalled student
-                async with session_maker() as session:
+                async with AsyncSessionLocal() as session:
                     student = await self._get_next_student(session, campaign_id)
 
                     if student is None:
@@ -331,10 +322,10 @@ class CampaignManager:
                 await self._add_activity(f"📞 Calling {student_data['name']}...")
 
                 try:
-                    result = await self._simulate_call(session_maker, student.id, student_data, campaign_id)
+                    result = await self._simulate_call(student.id, student_data, campaign_id)
 
                     # Update student with call results
-                    async with session_maker() as session:
+                    async with AsyncSessionLocal() as session:
                         db_student = await session.get(Student, student.id)
                         if db_student:
                             db_student.call_status = CallStatus.COMPLETED
@@ -372,14 +363,14 @@ class CampaignManager:
 
                 except Exception as e:
                     logger.error("Call failed for %s: %s", student_data['name'], e)
-                    async with session_maker() as session:
+                    async with AsyncSessionLocal() as session:
                         db_student = await session.get(Student, student.id)
                         if db_student:
                             db_student.call_status = CallStatus.FAILED
                             db_student.call_state = CallState.FAILED
                             await session.commit()
 
-                    async with session_maker() as session:
+                    async with AsyncSessionLocal() as session:
                         campaign = await session.get(Campaign, campaign_id)
                         if campaign:
                             campaign.calls_failed += 1
@@ -410,7 +401,7 @@ class CampaignManager:
         )
         return result.scalar_one_or_none()
 
-    async def _simulate_call(self, session_maker, student_id: int, student_data: Dict, campaign_id: int) -> Dict:
+    async def _simulate_call(self, student_id: int, student_data: Dict, campaign_id: int) -> Dict:
         """
         Simulate a call with the AI counselor.
         In production, this would connect to the telephony layer.
@@ -451,7 +442,7 @@ class CampaignManager:
         summary = await generate_summary(transcript_text)
 
         # Create call log
-        async with session_maker() as session:
+        async with AsyncSessionLocal() as session:
             call_log = CallLog(
                 student_id=student_id,
                 campaign_id=campaign_id,
@@ -497,8 +488,7 @@ class CampaignManager:
         self._cancel_flag = True
         self._is_running = False
 
-        session_maker = get_session_maker()
-        async with session_maker() as session:
+        async with AsyncSessionLocal() as session:
             campaign = await session.get(Campaign, campaign_id)
             if campaign:
                 campaign.status = CampaignStatus.CANCELLED
@@ -509,8 +499,7 @@ class CampaignManager:
 
     async def _complete_campaign(self, campaign_id: int):
         """Mark campaign as completed."""
-        session_maker = get_session_maker()
-        async with session_maker() as session:
+        async with AsyncSessionLocal() as session:
             campaign = await session.get(Campaign, campaign_id)
             if campaign:
                 campaign.status = CampaignStatus.COMPLETED
@@ -525,8 +514,7 @@ class CampaignManager:
 
     async def get_campaign_stats(self, campaign_id: int) -> Dict:
         """Get current campaign statistics."""
-        session_maker = get_session_maker()
-        async with session_maker() as session:
+        async with AsyncSessionLocal() as session:
             campaign = await session.get(Campaign, campaign_id)
             if not campaign:
                 return {"error": "Campaign not found"}
@@ -557,8 +545,7 @@ class CampaignManager:
 
     async def get_students(self, campaign_id: int) -> List[Dict]:
         """Get all students for a campaign."""
-        session_maker = get_session_maker()
-        async with session_maker() as session:
+        async with AsyncSessionLocal() as session:
             from sqlalchemy import select
             result = await session.execute(
                 select(Student).where(Student.campaign_id == campaign_id).order_by(Student.id)
