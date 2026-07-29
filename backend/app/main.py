@@ -14,9 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from app.config import settings
-from app.utils.logger import get_logger
-from app.database import init_db, close_db
+from app.config.settings import settings
+from app.logs.logger import get_logger
+from app.database.connection import init_database
 
 logger = get_logger(__name__)
 
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     """Application startup and shutdown lifecycle."""
     logger.info("🚀 Mrs. D — AI Admission Campaign Platform starting up...")
     _ensure_directories()
-    await init_db()
+    await init_database()
 
     _scheduler.start()
     logger.info("✅ Scheduler started")
@@ -52,7 +52,6 @@ async def lifespan(app: FastAPI):
     yield
 
     _scheduler.shutdown(wait=False)
-    await close_db()
     logger.info("👋 Mrs. D shutting down.")
 
 
@@ -77,19 +76,19 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
 
 # ── Import and include routers ────────────────────────────────────────────────
-from app.api.health import router as health_router
-from app.api.knowledge import router as knowledge_router
-from app.api.students import router as students_router
-from app.api.campaign import router as campaign_router
-from app.api.reports import router as reports_router
-from app.websocket.handler import router as ws_router
+from app.api import (
+    knowledge_router,
+    student_router,
+    campaign_router,
+    websocket_router,
+    analytics_router
+)
 
-app.include_router(health_router, prefix="/api", tags=["Health"])
-app.include_router(knowledge_router, prefix="/api", tags=["Knowledge"])
-app.include_router(students_router, prefix="/api", tags=["Students"])
-app.include_router(campaign_router, prefix="/api", tags=["Campaign"])
-app.include_router(reports_router, prefix="/api", tags=["Reports"])
-app.include_router(ws_router, tags=["WebSocket"])
+app.include_router(knowledge_router)
+app.include_router(student_router)
+app.include_router(campaign_router)
+app.include_router(websocket_router)
+app.include_router(analytics_router)
 
 
 @app.get("/", tags=["Root"])

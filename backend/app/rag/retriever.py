@@ -5,7 +5,7 @@ RAG Retriever — Given a query, retrieves the most relevant knowledge chunks.
 from typing import List, Dict, Optional
 from app.rag.embeddings import generate_embedding
 from app.rag.vector_store import vector_store
-from app.utils.logger import get_logger
+from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
 

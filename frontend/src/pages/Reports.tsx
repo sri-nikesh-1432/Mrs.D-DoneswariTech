@@ -10,7 +10,7 @@ import {
   ResponsiveContainer, PieChart as RePieChart, Pie, Cell,
   Legend
 } from "recharts";
-import { getCampaignSummary, getExportPdfUrl } from "../services/api";
+import { getCampaignAnalytics, getStudentAnalytics } from "../services/api";
 import type { CampaignStats } from "../types";
 
 interface Props {
@@ -22,6 +22,7 @@ const COLORS = ["#4F46E5", "#06B6D4", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6"
 export default function Reports({ campaignId }: Props) {
   const navigate = useNavigate();
   const [data, setData] = useState<CampaignStats | null>(null);
+  const [students, setStudents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -36,8 +37,12 @@ export default function Reports({ campaignId }: Props) {
   const loadData = async () => {
     setLoading(true);
     try {
-      const res = await getCampaignSummary(campaignId!);
-      if (res.success) setData(res.data);
+      const [analyticsRes, studentsRes] = await Promise.all([
+        getCampaignAnalytics(campaignId!),
+        getStudentAnalytics(campaignId!),
+      ]);
+      if (analyticsRes) setData(analyticsRes);
+      if (studentsRes) setStudents(studentsRes.students);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -67,14 +72,14 @@ export default function Reports({ campaignId }: Props) {
     );
   }
 
-  const stats = data?.stats;
-  const analytics = data?.analytics;
+  const stats = data;
+  const analytics = data;
 
   const sentimentData = analytics?.sentiment_distribution
     ? Object.entries(analytics.sentiment_distribution).map(([name, value]) => ({ name, value }))
     : [];
-  const interestData = analytics?.interest_levels
-    ? Object.entries(analytics.interest_levels).map(([name, value]) => ({ name, value }))
+  const interestData = analytics?.course_distribution
+    ? Object.entries(analytics.course_distribution).slice(0, 8).map(([name, value]) => ({ name, value }))
     : [];
   const courseData = analytics?.course_distribution
     ? Object.entries(analytics.course_distribution).slice(0, 8).map(([name, value]) => ({ name, value }))
@@ -88,15 +93,6 @@ export default function Reports({ campaignId }: Props) {
           <p className="text-sm text-dark-400">{stats?.campaign_name} - Analytics and Insights</p>
         </div>
         <div className="flex items-center gap-3">
-          {campaignId && (
-            <a
-              href={getExportPdfUrl(campaignId)}
-              className="btn-primary text-sm flex items-center gap-2"
-            >
-              <Download className="w-4 h-4" />
-              Export PDF
-            </a>
-          )}
           <Link to="/dashboard" className="btn-ghost text-sm">&larr; Dashboard</Link>
         </div>
       </div>
@@ -104,9 +100,9 @@ export default function Reports({ campaignId }: Props) {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         {[
           { label: "Total Students", value: stats?.total_students || 0, icon: Users, color: "from-blue-500" },
-          { label: "Completed", value: stats?.calls_completed || 0, icon: PhoneCall, color: "from-green-500" },
-          { label: "Completion Rate", value: String(analytics?.completion_rate || 0) + "%", icon: TrendingUp, color: "from-purple-500" },
-          { label: "Interest Rate", value: String(analytics?.interest_rate || 0) + "%", icon: FileText, color: "from-cyan-500" },
+          { label: "Completed", value: stats?.completed_calls || 0, icon: PhoneCall, color: "from-green-500" },
+          { label: "Completion Rate", value: String(stats?.completion_rate || 0) + "%", icon: TrendingUp, color: "from-purple-500" },
+          { label: "Interest Rate", value: String(stats?.interest_rate || 0) + "%", icon: FileText, color: "from-cyan-500" },
         ].map((card, i) => (
           <motion.div
             key={card.label}
@@ -219,7 +215,7 @@ export default function Reports({ campaignId }: Props) {
       >
         <h3 className="text-lg font-semibold text-white mb-4">Student Reports</h3>
         <div className="space-y-2">
-          {data?.students?.slice(0, 10).map((student, i) => (
+          {students?.slice(0, 10).map((student: any, i: number) => (
             <motion.div
               key={student.id}
               initial={{ opacity: 0, x: -10 }}
@@ -229,9 +225,9 @@ export default function Reports({ campaignId }: Props) {
             >
               <div className="flex items-center gap-3">
                 <div className={"w-2 h-2 rounded-full " + (
-                  student.status === "completed" ? "bg-green-400" :
-                  student.status === "failed" ? "bg-red-400" :
-                  student.status === "calling" ? "bg-blue-400" : "bg-dark-400"
+                  student.call_status === "completed" ? "bg-green-400" :
+                  student.call_status === "failed" ? "bg-red-400" :
+                  student.call_status === "calling" ? "bg-blue-400" : "bg-dark-400"
                 )} />
                 <div>
                   <p className="text-sm font-medium text-white">{student.name}</p>
@@ -240,7 +236,7 @@ export default function Reports({ campaignId }: Props) {
               </div>
               <div className="flex items-center gap-4 text-xs text-dark-400">
                 <span>Interest: {student.interest_score}%</span>
-                <span>Duration: {Math.round(student.duration)}s</span>
+                <span>Duration: {Math.round(student.call_duration)}s</span>
                 <span className={"capitalize " + (
                   student.sentiment === "positive" ? "text-green-400" :
                   student.sentiment === "negative" ? "text-red-400" : "text-dark-400"
@@ -250,7 +246,7 @@ export default function Reports({ campaignId }: Props) {
               </div>
             </motion.div>
           ))}
-          {(!data?.students || data.students.length === 0) && (
+          {(!students || students.length === 0) && (
             <p className="text-dark-400 text-center py-8">No student reports available</p>
           )}
         </div>

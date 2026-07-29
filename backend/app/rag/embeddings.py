@@ -5,8 +5,8 @@ Uses Sentence Transformers (all-MiniLM-L6-v2) for local embedding generation.
 
 from typing import List, Dict, Optional
 import numpy as np
-from app.config import settings
-from app.utils.logger import get_logger
+from app.config.settings import settings
+from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
 

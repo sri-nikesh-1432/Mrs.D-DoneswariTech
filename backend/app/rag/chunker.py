@@ -4,8 +4,8 @@ Text Chunker — Splits extracted text into overlapping chunks for embedding.
 
 import re
 from typing import List, Dict
-from app.config import settings
-from app.utils.logger import get_logger
+from app.config.settings import settings
+from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
 

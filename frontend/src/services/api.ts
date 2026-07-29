@@ -16,15 +16,14 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 
 // ── Health ─────────────────────────────────────────────────────
 export async function healthCheck() {
-  return request<{ status: string; knowledge_ready: boolean; campaign_running: boolean }>("/health");
+  return request<{ status: string; version: string }>("/");
 }
 
 // ── Knowledge ───────────────────────────────────────────────────
 export async function uploadKnowledge(file: File, campaignId: number): Promise<UploadResponse> {
   const form = new FormData();
   form.append("file", file);
-  form.append("campaign_id", String(campaignId));
-  const res = await fetch(`${BASE_URL}/upload-knowledge`, {
+  const res = await fetch(`${BASE_URL}/knowledge/upload?campaign_id=${campaignId}`, {
     method: "POST",
     body: form,
   });
@@ -35,16 +34,15 @@ export async function uploadKnowledge(file: File, campaignId: number): Promise<U
   return res.json();
 }
 
-export async function getKnowledgeStatus() {
-  return request<{ ready: boolean }>("/knowledge-status");
+export async function getKnowledgeStatus(campaignId: number) {
+  return request<{ status: string; knowledge_id?: number; chunks_count?: number }>(`/knowledge/status/${campaignId}`);
 }
 
 // ── Students ────────────────────────────────────────────────────
 export async function uploadStudents(file: File, campaignId: number): Promise<UploadResponse> {
   const form = new FormData();
   form.append("file", file);
-  form.append("campaign_id", String(campaignId));
-  const res = await fetch(`${BASE_URL}/upload-students`, {
+  const res = await fetch(`${BASE_URL}/students/upload?campaign_id=${campaignId}`, {
     method: "POST",
     body: form,
   });
@@ -56,7 +54,11 @@ export async function uploadStudents(file: File, campaignId: number): Promise<Up
 }
 
 export async function getStudents(campaignId: number) {
-  return request<{ students: Student[]; total: number }>(`/students?campaign_id=${campaignId}`);
+  return request<{ campaign_id: number; students: Student[] }>(`/students/campaign/${campaignId}`);
+}
+
+export async function getStudent(studentId: number) {
+  return request<Student>(`/students/${studentId}`);
 }
 
 // ── Campaign ────────────────────────────────────────────────────
@@ -66,53 +68,53 @@ export async function createCampaign(data: {
   language?: string;
   voice?: string;
 }) {
-  return request<{ success: boolean; message: string; data?: Campaign }>("/campaign/create", {
+  return request<{ message: string; campaign_id: number; campaign_name: string; institute_name: string; status: string }>("/campaigns/", {
     method: "POST",
     body: JSON.stringify(data),
   });
 }
 
 export async function getCampaignStatus(campaignId: number) {
-  return request<{ success: boolean; data: Campaign }>(
-    `/campaign/status?campaign_id=${campaignId}`
-  );
+  return request<any>(`/campaigns/${campaignId}/status`);
+}
+
+export async function getCampaign(campaignId: number) {
+  return request<Campaign>(`/campaigns/${campaignId}`);
 }
 
 export async function startCampaign(campaignId: number) {
-  return request<{ success: boolean; message: string }>("/campaign/start", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ campaign_id: String(campaignId) }),
-  });
-}
-
-export async function pauseCampaign() {
-  return request<{ success: boolean; message: string }>("/campaign/pause", {
+  return request<{ message: string; campaign_id: number }>(`/campaigns/${campaignId}/start`, {
     method: "POST",
   });
 }
 
-export async function resumeCampaign() {
-  return request<{ success: boolean; message: string }>("/campaign/resume", {
+export async function pauseCampaign(campaignId: number) {
+  return request<{ message: string; campaign_id: number }>(`/campaigns/${campaignId}/pause`, {
+    method: "POST",
+  });
+}
+
+export async function resumeCampaign(campaignId: number) {
+  return request<{ message: string; campaign_id: number }>(`/campaigns/${campaignId}/resume`, {
     method: "POST",
   });
 }
 
 export async function cancelCampaign(campaignId: number) {
-  return request<{ success: boolean; message: string }>("/campaign/cancel", {
+  return request<{ message: string; campaign_id: number }>(`/campaigns/${campaignId}/cancel`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ campaign_id: String(campaignId) }),
   });
 }
 
-// ── Reports ─────────────────────────────────────────────────────
-export async function getCampaignSummary(campaignId: number) {
-  return request<{ success: boolean; data: CampaignStats }>(
-    `/reports/campaign-summary?campaign_id=${campaignId}`
-  );
+// ── Analytics ───────────────────────────────────────────────────
+export async function getCampaignAnalytics(campaignId: number) {
+  return request<any>(`/analytics/campaign/${campaignId}`);
 }
 
-export function getExportPdfUrl(campaignId: number) {
-  return `${BASE_URL}/reports/export-pdf?campaign_id=${campaignId}`;
+export async function getStudentAnalytics(campaignId: number) {
+  return request<{ campaign_id: number; students: any[] }>(`/analytics/campaign/${campaignId}/students`);
+}
+
+export async function getStudentSummary(studentId: number) {
+  return request<any>(`/analytics/student/${studentId}/summary`);
 }

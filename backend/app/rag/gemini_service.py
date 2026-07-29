@@ -8,8 +8,8 @@ import asyncio
 from typing import List, Dict, Optional, AsyncGenerator
 import google.generativeai as genai
 
-from app.config import settings
-from app.utils.logger import get_logger
+from app.config.settings import settings
+from app.logs.logger import get_logger
 from app.rag.retriever import retrieve_context, format_context_for_prompt, is_knowledge_ready
 from app.rag.prompt_builder import build_prompt, SYSTEM_PROMPT
 

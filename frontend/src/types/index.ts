@@ -54,16 +54,28 @@ export interface Activity {
 }
 
 export interface CampaignStats {
-  stats: Campaign;
-  students: Student[];
-  analytics: {
-    sentiment_distribution: { positive: number; neutral: number; negative: number };
-    interest_levels: { high: number; medium: number; low: number };
-    course_distribution: Record<string, number>;
-    total_students: number;
-    completion_rate: number;
-    interest_rate: number;
-  };
+  campaign_id: number;
+  campaign_name: string;
+  institute_name: string;
+  status: string;
+  total_students: number;
+  completed_calls: number;
+  failed_calls: number;
+  pending_calls: number;
+  completion_rate: number;
+  interested_students: number;
+  not_interested: number;
+  neutral_students: number;
+  interest_rate: number;
+  sentiment_distribution: Record<string, number>;
+  course_distribution: Record<string, number>;
+  average_call_duration: number;
+  total_call_duration: number;
+  follow_up_required: number;
+  most_asked_questions: Array<[string, number]>;
+  common_objections: Array<[string, number]>;
+  started_at?: string;
+  completed_at?: string;
 }
 
 // API response types
@@ -75,14 +87,12 @@ export interface ApiResponse<T> {
 }
 
 export interface UploadResponse {
-  success: boolean;
   message: string;
-  doc_id?: number;
-  chunk_count?: number;
+  knowledge_id?: number;
   status?: string;
-  knowledge_ready?: boolean;
+  total_students?: number;
   imported?: number;
-  skipped?: number;
+  duplicates_removed?: number;
+  campaign_id?: number;
   errors?: string[];
-  total?: number;
 }

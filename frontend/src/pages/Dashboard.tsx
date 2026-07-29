@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import {
   getCampaignStatus, getStudents, startCampaign,
-  pauseCampaign, resumeCampaign, cancelCampaign
+  pauseCampaign, resumeCampaign, cancelCampaign, getCampaign
 } from "../services/api";
 import { wsService } from "../services/websocket";
 import type { Campaign, Student, Activity } from "../types";
@@ -38,13 +38,13 @@ export default function Dashboard({ campaignId }: Props) {
       },
       onStudentCalling: (student) => {
         setStudents((prev) =>
-          prev.map((s) => (s.id === student.id ? { ...s, status: "calling" as const } : s))
+          prev.map((s) => (s.id === student.id ? { ...s, status: student.status || "calling" as const } : s))
         );
       },
       onStatusChange: (status) => {
         setWsConnected(status === "connected");
       },
-    });
+    }, campaignId);
     return () => { wsService.disconnect(); };
   }, [campaignId]);
 
@@ -56,7 +56,7 @@ export default function Dashboard({ campaignId }: Props) {
         getCampaignStatus(campaignId),
         getStudents(campaignId),
       ]);
-      if (statusRes.success) setCampaign(statusRes.data);
+      if (statusRes) setCampaign(statusRes);
       if (studentsRes) setStudents(studentsRes.students);
     } catch (e: any) {
       setError(e.message);
@@ -72,12 +72,14 @@ export default function Dashboard({ campaignId }: Props) {
   };
 
   const handlePause = async () => {
-    try { await pauseCampaign(); await loadData(); }
+    if (!campaignId) return;
+    try { await pauseCampaign(campaignId); await loadData(); }
     catch (e: any) { setError(e.message); }
   };
 
   const handleResume = async () => {
-    try { await resumeCampaign(); await loadData(); }
+    if (!campaignId) return;
+    try { await resumeCampaign(campaignId); await loadData(); }
     catch (e: any) { setError(e.message); }
   };
 
