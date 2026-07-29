@@ -3,6 +3,9 @@ Prompt Builder — Builds prompts for Gemini with RAG context, conversation memo
 """
 
 from typing import List, Dict, Optional
+from app.logs.logger import get_logger
+
+logger = get_logger(__name__)
 
 SYSTEM_PROMPT = """You are Mrs. D, a Senior Admission Counselor representing the institute whose knowledge has been provided below.
 
@@ -56,12 +59,24 @@ def build_prompt(
     
     Returns a list of messages (system, history, user) for Gemini.
     """
+    logger.info(f"=== STEP 8: PROMPT CONSTRUCTION ===")
+    logger.info(f"Query: {query}")
+    logger.info(f"Retrieved context length: {len(retrieved_context)} characters")
+    logger.info(f"Student info provided: {student_info is not None}")
+    logger.info(f"Conversation history turns: {len(conversation_history) if conversation_history else 0}")
+    
     messages = [{"role": "user", "parts": [SYSTEM_PROMPT]}]
+    logger.info(f"✓ System prompt added (length: {len(SYSTEM_PROMPT)} characters)")
 
     # Add retrieved context as a system message
     if retrieved_context:
-        context_msg = f"## Retrieved Institute Knowledge\n\n{retrieved_context}\n\nUse this information to answer questions. If the answer isn't here, say you don't have confirmed information."
+        context_msg = f"## Retrieved Institute Knowledge\n\n{retrieved_context}\n\nIMPORTANT: Use ONLY the information above to answer questions. Do not use any external knowledge. If the answer is not in the retrieved context, say: 'I don't have confirmed information about that. Please contact the admissions office for details.'"
         messages.append({"role": "user", "parts": [context_msg]})
+        logger.info(f"✓ Retrieved context added (length: {len(context_msg)} characters)")
+        logger.info(f"Context preview (first 200 chars): {context_msg[:200]}...")
+        logger.info(f"✓ Verified: Context will be passed to LLM")
+    else:
+        logger.warning("⚠ No retrieved context provided - LLM will answer without knowledge base")
 
     # Add student info
     if student_info:
@@ -73,6 +88,7 @@ def build_prompt(
             f"City: {student_info.get('city', 'Not specified')}\n"
         )
         messages.append({"role": "user", "parts": [student_msg]})
+        logger.info(f"✓ Student info added: {student_info.get('name', 'Unknown')}")
 
     # Add conversation history
     if conversation_history:
@@ -83,10 +99,27 @@ def build_prompt(
         if history_parts:
             history_msg = "## Recent Conversation\n" + "\n".join(history_parts)
             messages.append({"role": "user", "parts": [history_msg]})
+            logger.info(f"✓ Conversation history added ({len(history_parts)} turns)")
 
     # Add the current query
     messages.append({"role": "user", "parts": [f"## Current Student Message\n\n{query}"]})
+    logger.info(f"✓ Current query added")
 
+    # Log final prompt structure
+    logger.info(f"Total messages in prompt: {len(messages)}")
+    logger.info(f"Total prompt length: {sum(len(str(m.get('parts', ['']))) for m in messages)} characters")
+    
+    # Verify context is actually in the prompt
+    context_in_prompt = any("Retrieved Institute Knowledge" in str(m.get('parts', [''])) for m in messages)
+    if retrieved_context and not context_in_prompt:
+        logger.error("✗ Retrieved context was not added to the prompt")
+        logger.error("STEP 8 FAILED: Context not in prompt")
+        raise ValueError("Retrieved context was not added to the prompt")
+    
+    if retrieved_context:
+        logger.info("✓ Retrieved context is present in the prompt")
+    
+    logger.info(f"=== STEP 8 COMPLETE: PROMPT CONSTRUCTION SUCCESSFUL ===")
     return messages
 
 

@@ -612,6 +612,65 @@ export default function LandingPage({ onCampaignCreated }: Props) {
             </div>
           </motion.section>
 
+          {/* ═══ SINGLE STUDENT CALL SECTION ═══ */}
+          {knowledgeReady && studentsReady && (
+            <motion.section
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.4, ease: [0.175, 0.885, 0.32, 1] }}
+              className="w-full flex justify-center"
+              style={{ marginBottom: 32 }}
+            >
+              <div className="glass-card" style={{ width: 1080, maxWidth: "100%", padding: 32 }}>
+                <div className="flex items-center gap-3 mb-6">
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center"
+                    style={{
+                      background: "linear-gradient(135deg, rgba(34,211,238,0.2), rgba(99,102,241,0.2))",
+                    }}
+                  >
+                    <Phone className="w-5 h-5 text-cyan-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-white font-semibold" style={{ fontSize: 17 }}>
+                      Single Student Call
+                    </h3>
+                    <p className="text-dark-400 text-xs">Make a test call to a single student using uploaded knowledge</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4">
+                  <div className="flex-1">
+                    <label className="block text-xs font-medium text-dark-300 mb-1.5">
+                      Select Student
+                    </label>
+                    <select
+                      className="glass-select"
+                      disabled={!studentsReady}
+                    >
+                      <option value="">-- Select a student --</option>
+                      <option value="1">Student 1 (+91XXXXXXXXXX)</option>
+                      <option value="2">Student 2 (+91XXXXXXXXXX)</option>
+                      <option value="3">Student 3 (+91XXXXXXXXXX)</option>
+                    </select>
+                  </div>
+                  <button
+                    onClick={() => navigate("/single-call")}
+                    className="btn-glow flex items-center gap-2"
+                    style={{ height: 42, padding: "0 24px", fontSize: 14 }}
+                  >
+                    <Phone className="w-4 h-4" />
+                    Initiate Call
+                  </button>
+                </div>
+
+                <p className="text-xs text-dark-500 mt-3">
+                  The AI will use the uploaded knowledge base to answer student questions during the call.
+                </p>
+              </div>
+            </motion.section>
+          )}
+
           {/* ═══ CAMPAIGN CARD ═══ */}
           <motion.section
             initial={{ opacity: 0, y: 30 }}
