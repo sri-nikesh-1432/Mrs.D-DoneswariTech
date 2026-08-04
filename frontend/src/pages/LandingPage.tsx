@@ -172,7 +172,7 @@ export default function LandingPage() {
             
             <button
               onClick={() => navigate("/testing-console")}
-              className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs hover:bg-white/10 transition-colors flex items-center gap-2"
+              className="px-4 py-2 bg-gradient-to-r from-purple-500/20 to-blue-500/20 border border-purple-500/30 rounded-lg text-xs hover:bg-purple-500/30 transition-all flex items-center gap-2"
               title="Testing Console"
             >
               <Terminal className="w-3 h-3" />
