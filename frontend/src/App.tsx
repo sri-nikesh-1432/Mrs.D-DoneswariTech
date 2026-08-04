@@ -5,6 +5,7 @@ import LandingPage from "./pages/LandingPage";
 import CallHistory from "./pages/CallHistory";
 import Analytics from "./pages/Analytics";
 import TestingConsole from "./pages/TestingConsole";
+import ActiveCall from "./pages/ActiveCall";
 
 function App() {
   const location = useLocation();
@@ -36,6 +37,19 @@ function App() {
                 transition={{ duration: 0.3 }}
               >
                 <TestingConsole />
+              </motion.div>
+            }
+          />
+          <Route
+            path="/active-call"
+            element={
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+              >
+                <ActiveCall />
               </motion.div>
             }
           />

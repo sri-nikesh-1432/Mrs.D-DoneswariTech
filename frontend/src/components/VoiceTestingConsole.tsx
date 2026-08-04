@@ -190,57 +190,9 @@ export default function VoiceTestingConsole() {
     }
   };
   
-  const startCall = async () => {
-    setCallStage("thinking");
-    setMessages([]);
-    setDebugInfo(null);
-    setInputText("");
-    
-    try {
-      const params = new URLSearchParams({
-        knowledge_file: knowledgeFile,
-        user_input: "",
-        conversation_id: conversationId.current,
-        include_audio: "true",
-        is_greeting: "true",
-        language: detectedLanguage,
-      });
-      
-      const response = await fetch(`/api/conversation/test?${params}`, {
-        method: "POST",
-      });
-      
-      if (!response.ok) {
-        throw new Error("Failed to start call");
-      }
-      
-      const data = await response.json();
-      
-      setMessages([{
-        role: "ai",
-        content: data.ai_response,
-        timestamp: new Date().toISOString()
-      }]);
-      
-      setDebugInfo(data.debug_info);
-      
-      if (data.audio_data && audioRef.current) {
-        setCallStage("speaking");
-        audioRef.current.src = `data:audio/wav;base64,${data.audio_data}`;
-        audioRef.current.play();
-        audioRef.current.onended = () => {
-          setCallStage("listening");
-          startListening();
-        };
-      } else {
-        setCallStage("listening");
-        startListening();
-      }
-      
-    } catch (error) {
-      console.error("Error starting call:", error);
-      setCallStage("idle");
-    }
+  const startCall = () => {
+    // Navigate to active call page with knowledge file as parameter
+    navigate(`/active-call?knowledge=${knowledgeFile}`);
   };
   
   const endCall = async () => {
