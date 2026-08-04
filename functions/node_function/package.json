@@ -1,0 +1,9 @@
+{
+	"name": "node_function",
+	"version": "1.0.0",
+	"main": "index.js",
+	"author": "dchi.aiml2024@rmd.ac.in",
+	"dependencies": {
+		"zcatalyst-sdk-node": "latest"
+	}
+}

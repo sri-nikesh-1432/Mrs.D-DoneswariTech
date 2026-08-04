@@ -1,14 +1,12 @@
-import React, { useState } from "react";
+import React from "react";
 import { Routes, Route, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import LandingPage from "./pages/LandingPage";
-import Dashboard from "./pages/Dashboard";
-import Reports from "./pages/Reports";
-import SingleCall from "./pages/SingleCall";
+import CallHistory from "./pages/CallHistory";
+import Analytics from "./pages/Analytics";
 
 function App() {
   const location = useLocation();
-  const [campaignId, setCampaignId] = useState<number | null>(null);
 
   return (
     <div className="min-h-screen relative overflow-hidden">
@@ -23,12 +21,12 @@ function App() {
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.3 }}
               >
-                <LandingPage onCampaignCreated={setCampaignId} />
+                <LandingPage />
               </motion.div>
             }
           />
           <Route
-            path="/dashboard"
+            path="/call-history"
             element={
               <motion.div
                 initial={{ opacity: 0 }}
@@ -36,12 +34,12 @@ function App() {
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.3 }}
               >
-                <Dashboard campaignId={campaignId} />
+                <CallHistory />
               </motion.div>
             }
           />
           <Route
-            path="/reports"
+            path="/analytics"
             element={
               <motion.div
                 initial={{ opacity: 0 }}
@@ -49,20 +47,7 @@ function App() {
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.3 }}
               >
-                <Reports campaignId={campaignId} />
-              </motion.div>
-            }
-          />
-          <Route
-            path="/single-call"
-            element={
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.3 }}
-              >
-                <SingleCall />
+                <Analytics />
               </motion.div>
             }
           />

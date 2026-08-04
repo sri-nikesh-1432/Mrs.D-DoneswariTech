@@ -45,7 +45,7 @@ echo  Waiting for backend to start...
 timeout /t 4 /nobreak >nul
 
 :: ── Start Frontend ────────────────────────────────────────────────────────────
-echo  Starting frontend on http://localhost:5175 ...
+echo  Starting frontend on http://localhost:5176 ...
 start "Doneswari Frontend" cmd /k "cd /d "%FRONTEND%" && npm run dev"
 
 :: ── Wait for Vite to start ────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ echo.
 echo  ╔══════════════════════════════════════════════════════════╗
 echo  ║                   Both servers running!                  ║
 echo  ║                                                          ║
-echo  ║  🌐 Frontend:  http://localhost:5175                     ║
+echo  ║  🌐 Frontend:  http://localhost:5176                     ║
 echo  ║  ⚙️  Backend:   http://localhost:8000                     ║
 echo  ║  📖 API Docs:  http://localhost:8000/docs                ║
 echo  ║                                                          ║
@@ -64,6 +64,6 @@ echo  ╚═══════════════════════�
 echo.
 
 :: ── Open browser ─────────────────────────────────────────────────────────────
-start http://localhost:5175
+start http://localhost:5176
 
 pause

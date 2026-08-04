@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import create_engine, event
 from app.config import settings
-from app.utils.logger import get_logger
+from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -58,7 +58,7 @@ def get_session_maker() -> async_sessionmaker[AsyncSession]:
 async def init_db():
     """Create all tables."""
     async with get_engine().begin() as conn:
-        from app.database.models import Campaign, Student, Knowledge, CallLog, Summary  # noqa
+        from app.database.models import Campaign, Student, Knowledge, CallLog, Report  # noqa
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables created successfully")
 

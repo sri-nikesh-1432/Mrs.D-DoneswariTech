@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from app.config import settings
-from app.utils.logger import get_logger
+from app.logs.logger import get_logger
 from app.campaign.manager import campaign_manager
 
 logger = get_logger(__name__)

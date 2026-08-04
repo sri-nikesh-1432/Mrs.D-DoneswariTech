@@ -9,7 +9,7 @@ import traceback
 from typing import Optional
 import pandas as pd
 
-from app.utils.logger import get_logger
+from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
 

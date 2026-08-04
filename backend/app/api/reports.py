@@ -5,7 +5,7 @@ Reports API endpoints — campaign analytics and PDF export.
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from app.campaign.manager import campaign_manager
-from app.utils.logger import get_logger
+from app.logs.logger import get_logger
 
 router = APIRouter()
 logger = get_logger(__name__)

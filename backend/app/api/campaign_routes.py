@@ -1,16 +1,17 @@
 """
-Campaign API Routes - Handle campaign operations.
+Campaign API Routes - Handle campaign CRUD and lifecycle operations.
 """
 
+import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional
 
 from app.database.connection import get_database
-from app.campaign.campaign_service import CampaignService
-from app.campaign.campaign_manager import campaign_manager
-from app.campaign.call_manager import call_manager
+from app.database.models import Campaign, CampaignStatus, KnowledgeStatus, Student, CallStatus
+from app.campaign.manager import campaign_manager
 from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
@@ -22,7 +23,7 @@ class CampaignCreate(BaseModel):
     campaign_name: str
     institute_name: str
     language: str = "en"
-    voice: str = "en-US-AriaNeural"
+    voice: str = "en-IN-NeerjaNeural"
 
 
 class CampaignUpdate(BaseModel):
@@ -32,6 +33,34 @@ class CampaignUpdate(BaseModel):
     voice: Optional[str] = None
 
 
+def _campaign_to_dict(c: Campaign) -> dict:
+    """Convert a Campaign model instance to a consistent API response dict."""
+    total = c.total_students or 0
+    completed = c.calls_completed or 0
+    avg_duration = (
+        round(c.total_duration_seconds / completed, 1) if completed > 0 else 0.0
+    )
+    return {
+        "id": c.id,
+        "campaign_name": c.campaign_name,
+        "institute_name": c.institute_name,
+        "status": c.status.value,
+        "language": c.language,
+        "voice": c.voice,
+        "total_students": total,
+        "completed_calls": completed,
+        "failed_calls": c.calls_failed or 0,
+        "calls_in_progress": c.calls_in_progress or 0,
+        "interested_count": c.interested_count or 0,
+        "follow_up_required": c.follow_up_required or 0,
+        "average_duration": avg_duration,
+        "progress": round((completed + (c.calls_failed or 0)) / max(total, 1) * 100, 1),
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+        "started_at": c.started_at.isoformat() if c.started_at else None,
+        "completed_at": c.completed_at.isoformat() if c.completed_at else None,
+    }
+
+
 @router.post("/")
 async def create_campaign(
     campaign_data: CampaignCreate,
@@ -39,23 +68,26 @@ async def create_campaign(
 ):
     """Create a new campaign."""
     try:
-        campaign_service = CampaignService()
-        campaign = await campaign_service.create_campaign(
-            session=session,
+        campaign = Campaign(
+            campaign_id=f"camp_{uuid.uuid4().hex[:12]}",
             campaign_name=campaign_data.campaign_name,
             institute_name=campaign_data.institute_name,
             language=campaign_data.language,
-            voice=campaign_data.voice
+            voice=campaign_data.voice,
+            status=CampaignStatus.PENDING,
         )
-        
+        session.add(campaign)
+        await session.commit()
+        await session.refresh(campaign)
+
         return {
             "message": "Campaign created successfully",
             "campaign_id": campaign.id,
             "campaign_name": campaign.campaign_name,
             "institute_name": campaign.institute_name,
-            "status": campaign.status.value
+            "status": campaign.status.value,
         }
-    
+
     except Exception as e:
         logger.error(f"Error creating campaign: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -69,29 +101,16 @@ async def list_campaigns(
 ):
     """List all campaigns."""
     try:
-        campaign_service = CampaignService()
-        campaigns = await campaign_service.list_campaigns(session, limit, offset)
-        
-        return {
-            "campaigns": [
-                {
-                    "id": c.id,
-                    "campaign_name": c.campaign_name,
-                    "institute_name": c.institute_name,
-                    "status": c.status.value,
-                    "total_students": c.total_students,
-                    "completed_calls": c.completed_calls,
-                    "failed_calls": c.failed_calls,
-                    "interested_students": c.interested_students,
-                    "average_duration": c.average_duration,
-                    "created_at": c.created_at.isoformat() if c.created_at else None,
-                    "started_at": c.started_at.isoformat() if c.started_at else None,
-                    "completed_at": c.completed_at.isoformat() if c.completed_at else None
-                }
-                for c in campaigns
-            ]
-        }
-    
+        result = await session.execute(
+            select(Campaign)
+            .order_by(Campaign.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        campaigns = result.scalars().all()
+
+        return {"campaigns": [_campaign_to_dict(c) for c in campaigns]}
+
     except Exception as e:
         logger.error(f"Error listing campaigns: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -104,30 +123,16 @@ async def get_campaign(
 ):
     """Get a specific campaign."""
     try:
-        campaign_service = CampaignService()
-        campaign = await campaign_service.get_campaign(session, campaign_id)
-        
+        result = await session.execute(
+            select(Campaign).where(Campaign.id == campaign_id)
+        )
+        campaign = result.scalar_one_or_none()
+
         if not campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
-        
-        return {
-            "id": campaign.id,
-            "campaign_name": campaign.campaign_name,
-            "institute_name": campaign.institute_name,
-            "status": campaign.status.value,
-            "language": campaign.language,
-            "voice": campaign.voice,
-            "total_students": campaign.total_students,
-            "completed_calls": campaign.completed_calls,
-            "failed_calls": campaign.failed_calls,
-            "interested_students": campaign.interested_students,
-            "follow_up_required": campaign.follow_up_required,
-            "average_duration": campaign.average_duration,
-            "created_at": campaign.created_at.isoformat() if campaign.created_at else None,
-            "started_at": campaign.started_at.isoformat() if campaign.started_at else None,
-            "completed_at": campaign.completed_at.isoformat() if campaign.completed_at else None
-        }
-    
+
+        return _campaign_to_dict(campaign)
+
     except HTTPException:
         raise
     except Exception as e:
@@ -143,31 +148,33 @@ async def update_campaign(
 ):
     """Update campaign details."""
     try:
-        campaign_service = CampaignService()
-        
-        # Build update dict with only provided fields
-        update_data = {}
-        if campaign_data.campaign_name is not None:
-            update_data["campaign_name"] = campaign_data.campaign_name
-        if campaign_data.institute_name is not None:
-            update_data["institute_name"] = campaign_data.institute_name
-        if campaign_data.language is not None:
-            update_data["language"] = campaign_data.language
-        if campaign_data.voice is not None:
-            update_data["voice"] = campaign_data.voice
-        
-        campaign = await campaign_service.update_campaign(session, campaign_id, **update_data)
-        
+        result = await session.execute(
+            select(Campaign).where(Campaign.id == campaign_id)
+        )
+        campaign = result.scalar_one_or_none()
+
         if not campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
-        
+
+        if campaign_data.campaign_name is not None:
+            campaign.campaign_name = campaign_data.campaign_name
+        if campaign_data.institute_name is not None:
+            campaign.institute_name = campaign_data.institute_name
+        if campaign_data.language is not None:
+            campaign.language = campaign_data.language
+        if campaign_data.voice is not None:
+            campaign.voice = campaign_data.voice
+
+        await session.commit()
+        await session.refresh(campaign)
+
         return {
             "message": "Campaign updated successfully",
             "campaign_id": campaign.id,
             "campaign_name": campaign.campaign_name,
-            "institute_name": campaign.institute_name
+            "institute_name": campaign.institute_name,
         }
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -182,14 +189,19 @@ async def delete_campaign(
 ):
     """Delete a campaign."""
     try:
-        campaign_service = CampaignService()
-        success = await campaign_service.delete_campaign(session, campaign_id)
-        
-        if not success:
+        result = await session.execute(
+            select(Campaign).where(Campaign.id == campaign_id)
+        )
+        campaign = result.scalar_one_or_none()
+
+        if not campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
-        
+
+        await session.delete(campaign)
+        await session.commit()
+
         return {"message": "Campaign deleted successfully"}
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -204,36 +216,31 @@ async def start_campaign(
 ):
     """Start a campaign."""
     try:
-        # Check if campaign can be started
-        campaign_service = CampaignService()
-        can_start, reason = await campaign_service.can_start_campaign(session, campaign_id)
-        
-        if not can_start:
-            raise HTTPException(status_code=400, detail=reason)
-        
-        # Define call callback
-        async def call_callback(student, campaign):
-            await call_manager.initiate_call(
-                student=student,
-                campaign=campaign,
-                session=session
-            )
-        
-        # Start campaign
-        success = await campaign_manager.start_campaign(
-            campaign_id=campaign_id,
-            session=session,
-            call_callback=call_callback
+        # Check campaign exists
+        result = await session.execute(
+            select(Campaign).where(Campaign.id == campaign_id)
         )
-        
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to start campaign")
-        
-        return {
-            "message": "Campaign started successfully",
-            "campaign_id": campaign_id
-        }
-    
+        campaign = result.scalar_one_or_none()
+
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+
+        # Check knowledge is ready
+        from app.rag.retriever import is_knowledge_ready
+        if not is_knowledge_ready():
+            raise HTTPException(status_code=400, detail="Knowledge base is not ready")
+
+        # Check students exist
+        if campaign.total_students == 0:
+            raise HTTPException(status_code=400, detail="No students loaded")
+
+        # Start via the main campaign manager
+        result = await campaign_manager.start_campaign(campaign_id)
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error", "Failed to start"))
+
+        return {"message": "Campaign started successfully", "campaign_id": campaign_id}
+
     except HTTPException:
         raise
     except Exception as e:
@@ -248,16 +255,11 @@ async def pause_campaign(
 ):
     """Pause a running campaign."""
     try:
-        success = await campaign_manager.pause_campaign(session)
-        
-        if not success:
-            raise HTTPException(status_code=400, detail="No active campaign to pause")
-        
-        return {
-            "message": "Campaign paused successfully",
-            "campaign_id": campaign_id
-        }
-    
+        result = await campaign_manager.pause_campaign()
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error", "No active campaign"))
+        return {"message": "Campaign paused successfully", "campaign_id": campaign_id}
+
     except HTTPException:
         raise
     except Exception as e:
@@ -272,16 +274,11 @@ async def resume_campaign(
 ):
     """Resume a paused campaign."""
     try:
-        success = await campaign_manager.resume_campaign(session)
-        
-        if not success:
-            raise HTTPException(status_code=400, detail="No paused campaign to resume")
-        
-        return {
-            "message": "Campaign resumed successfully",
-            "campaign_id": campaign_id
-        }
-    
+        result = await campaign_manager.resume_campaign()
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error", "No paused campaign"))
+        return {"message": "Campaign resumed successfully", "campaign_id": campaign_id}
+
     except HTTPException:
         raise
     except Exception as e:
@@ -296,16 +293,11 @@ async def cancel_campaign(
 ):
     """Cancel a running campaign."""
     try:
-        success = await campaign_manager.cancel_campaign(session)
-        
-        if not success:
-            raise HTTPException(status_code=400, detail="No active campaign to cancel")
-        
-        return {
-            "message": "Campaign cancelled successfully",
-            "campaign_id": campaign_id
-        }
-    
+        result = await campaign_manager.cancel_campaign(campaign_id)
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error", "No active campaign"))
+        return {"message": "Campaign cancelled successfully", "campaign_id": campaign_id}
+
     except HTTPException:
         raise
     except Exception as e:
@@ -320,13 +312,11 @@ async def get_campaign_status(
 ):
     """Get current campaign status and statistics."""
     try:
-        status = await campaign_manager.get_campaign_status(session, campaign_id)
-        
-        if not status:
-            raise HTTPException(status_code=404, detail="Campaign not found")
-        
-        return status
-    
+        stats = await campaign_manager.get_campaign_stats(campaign_id)
+        if "error" in stats:
+            raise HTTPException(status_code=404, detail=stats["error"])
+        return stats
+
     except HTTPException:
         raise
     except Exception as e:

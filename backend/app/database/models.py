@@ -1,47 +1,23 @@
 """
-Database models for Mrs. D AI Admission Campaign Platform.
+Mrs. D — AI Voice Receptionist Platform
+Database Models for Incoming Call Management
 """
 
-from sqlalchemy import Column, String, Integer, Float, DateTime, Text, Boolean, ForeignKey, Enum as SQLEnum
+from sqlalchemy import (
+    Column, String, Integer, Float, DateTime, Text, Boolean,
+    ForeignKey, Enum as SQLEnum, JSON
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from datetime import datetime
+from datetime import datetime, timezone
 import enum
 
 from app.database.connection import Base
 
 
-class CampaignStatus(str, enum.Enum):
-    """Campaign status enumeration."""
-    PENDING = "pending"
-    RUNNING = "running"
-    PAUSED = "paused"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"
-
-
-class CallStatus(str, enum.Enum):
-    """Call status enumeration."""
-    NOT_CALLED = "not_called"
-    DIALING = "dialing"
-    CONNECTED = "connected"
-    LISTENING = "listening"
-    THINKING = "thinking"
-    SPEAKING = "speaking"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    RETRY = "retry"
-
-
-class Sentiment(str, enum.Enum):
-    """Sentiment enumeration."""
-    POSITIVE = "positive"
-    NEUTRAL = "neutral"
-    NEGATIVE = "negative"
-
+# ── Enums ────────────────────────────────────────────────────────────────────
 
 class KnowledgeStatus(str, enum.Enum):
-    """Knowledge base status enumeration."""
     WAITING = "waiting"
     PROCESSING = "processing"
     CHUNKING = "chunking"
@@ -50,183 +26,187 @@ class KnowledgeStatus(str, enum.Enum):
     ERROR = "error"
 
 
-class Campaign(Base):
-    """Campaign model representing an admission campaign."""
-    
-    __tablename__ = "campaigns"
-    
+class CallStatus(str, enum.Enum):
+    INCOMING = "incoming"
+    ANSWERED = "answered"
+    LISTENING = "listening"
+    THINKING = "thinking"
+    SPEAKING = "speaking"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    MISSED = "missed"
+
+
+class Sentiment(str, enum.Enum):
+    POSITIVE = "positive"
+    NEUTRAL = "neutral"
+    NEGATIVE = "negative"
+    UNKNOWN = "unknown"
+
+
+# ── Institute ───────────────────────────────────────────────────────────────
+
+class Institute(Base):
+    """
+    Institute configuration.
+    Each institute has its own knowledge base and phone number.
+    """
+    __tablename__ = "institutes"
+
     id = Column(Integer, primary_key=True, index=True)
-    campaign_name = Column(String(255), nullable=False)
-    institute_name = Column(String(255), nullable=False)
-    status = Column(SQLEnum(CampaignStatus), default=CampaignStatus.PENDING, nullable=False)
+    institute_id = Column(String(64), unique=True, nullable=False, index=True)
     
-    # Campaign configuration
+    # Institute details
+    name = Column(String(255), nullable=False)
+    phone_number = Column(String(20), nullable=False, unique=True, index=True)
+    
+    # Configuration
     language = Column(String(50), default="en")
-    voice = Column(String(100), default="en-US-AriaNeural")
+    voice = Column(String(100), default="en-IN-NeerjaNeural")
+    greeting_message = Column(Text, nullable=True)
     
     # Statistics
-    total_students = Column(Integer, default=0)
+    total_calls = Column(Integer, default=0)
     completed_calls = Column(Integer, default=0)
-    failed_calls = Column(Integer, default=0)
-    interested_students = Column(Integer, default=0)
-    follow_up_required = Column(Integer, default=0)
-    average_duration = Column(Float, default=0.0)
+    missed_calls = Column(Integer, default=0)
+    total_duration_seconds = Column(Float, default=0.0)
     
     # Timestamps
-    started_at = Column(DateTime(timezone=True), nullable=True)
-    completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relationships
-    students = relationship("Student", back_populates="campaign", cascade="all, delete-orphan")
-    knowledge = relationship("Knowledge", back_populates="campaign", uselist=False, cascade="all, delete-orphan")
-    call_logs = relationship("CallLog", back_populates="campaign", cascade="all, delete-orphan")
+    knowledge = relationship("Knowledge", back_populates="institute", uselist=False, cascade="all, delete-orphan")
+    calls = relationship("CallHistory", back_populates="institute", cascade="all, delete-orphan")
 
 
-class Student(Base):
-    """Student model representing a prospective student."""
-    
-    __tablename__ = "students"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=False)
-    
-    # Student information
-    name = Column(String(255), nullable=False)
-    phone = Column(String(20), nullable=False, index=True)
-    email = Column(String(255), nullable=True)
-    preferred_course = Column(String(255), nullable=True)
-    city = Column(String(100), nullable=True)
-    state = Column(String(100), nullable=True)
-    notes = Column(Text, nullable=True)
-    
-    # Call information
-    call_status = Column(SQLEnum(CallStatus), default=CallStatus.NOT_CALLED, nullable=False)
-    call_duration = Column(Integer, default=0)  # in seconds
-    call_attempts = Column(Integer, default=0)
-    
-    # AI analysis
-    sentiment = Column(SQLEnum(Sentiment), nullable=True)
-    interest_score = Column(Integer, nullable=True)  # 0-100
-    admission_probability = Column(Float, nullable=True)  # 0.0-1.0
-    
-    # Timestamps
-    called_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
-    # Relationships
-    campaign = relationship("Campaign", back_populates="students")
-    call_log = relationship("CallLog", back_populates="student", uselist=False, cascade="all, delete-orphan")
-    summary = relationship("Summary", back_populates="student", uselist=False, cascade="all, delete-orphan")
-
+# ── Knowledge ───────────────────────────────────────────────────────────────
 
 class Knowledge(Base):
-    """Knowledge model representing institute knowledge base."""
-    
+    """
+    Institute knowledge document.
+    Processed through RAG pipeline: Extract → Clean → Chunk → Embed → Store (FAISS).
+    """
     __tablename__ = "knowledge"
-    
+
     id = Column(Integer, primary_key=True, index=True)
-    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=False)
-    
-    # Document information
+    institute_id = Column(Integer, ForeignKey("institutes.id"), nullable=False)
+
     document_name = Column(String(255), nullable=False)
     document_type = Column(String(50), nullable=False)
     file_path = Column(String(500), nullable=False)
-    file_size = Column(Integer, nullable=False)  # in bytes
-    
-    # Processing information
+    file_size = Column(Integer, nullable=False)
+
     status = Column(SQLEnum(KnowledgeStatus), default=KnowledgeStatus.WAITING, nullable=False)
     chunks_count = Column(Integer, default=0)
     embedding_model = Column(String(100), nullable=True)
-    
-    # Processing details
+
     processing_started_at = Column(DateTime(timezone=True), nullable=True)
     processing_completed_at = Column(DateTime(timezone=True), nullable=True)
     error_message = Column(Text, nullable=True)
-    
-    # Timestamps
+
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
-    # Relationships
-    campaign = relationship("Campaign", back_populates="knowledge")
+
+    institute = relationship("Institute", back_populates="knowledge")
 
 
-class CallLog(Base):
-    """Call log model representing individual call records."""
-    
-    __tablename__ = "call_logs"
-    
+# ── Call History ────────────────────────────────────────────────────────────
+
+class CallHistory(Base):
+    """
+    Complete incoming call record.
+    Stores all call data including transcript, summary, analytics.
+    """
+    __tablename__ = "call_history"
+
     id = Column(Integer, primary_key=True, index=True)
-    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=False)
-    student_id = Column(Integer, ForeignKey("students.id"), nullable=False, unique=True)
+    call_id = Column(String(64), unique=True, nullable=False, index=True)
+    institute_id = Column(Integer, ForeignKey("institutes.id"), nullable=False)
     
-    # Call information
-    call_status = Column(SQLEnum(CallStatus), nullable=False)
-    duration = Column(Integer, default=0)  # in seconds
-    started_at = Column(DateTime(timezone=True), nullable=True)
+    # Caller information
+    caller_number = Column(String(20), nullable=False, index=True)
+    caller_name = Column(String(255), nullable=True)
+    
+    # Call details
+    call_status = Column(SQLEnum(CallStatus), default=CallStatus.INCOMING, nullable=False)
+    
+    # Timing
+    started_at = Column(DateTime(timezone=True), nullable=False)
+    answered_at = Column(DateTime(timezone=True), nullable=True)
     ended_at = Column(DateTime(timezone=True), nullable=True)
+    duration_seconds = Column(Integer, default=0)
     
-    # Call recording
+    # Conversation
+    transcript = Column(Text, nullable=True)
+    summary = Column(Text, nullable=True)
+    questions_asked = Column(JSON, nullable=True)  # List of questions
+    topics_discussed = Column(JSON, nullable=True)  # List of topics
+    
+    # AI Analysis
+    sentiment = Column(SQLEnum(Sentiment), default=Sentiment.UNKNOWN, nullable=True)
+    retrieved_chunks = Column(JSON, nullable=True)  # Knowledge chunks used
+    
+    # Performance metrics
+    avg_retrieval_time_ms = Column(Float, nullable=True)
+    avg_llm_response_time_ms = Column(Float, nullable=True)
+    avg_stt_time_ms = Column(Float, nullable=True)
+    avg_tts_time_ms = Column(Float, nullable=True)
+    total_turns = Column(Integer, default=0)
+    
+    # Recording
     recording_path = Column(String(500), nullable=True)
+    
+    # Error handling
+    error_message = Column(Text, nullable=True)
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relationships
-    campaign = relationship("Campaign", back_populates="call_logs")
-    student = relationship("Student", back_populates="call_log")
+    institute = relationship("Institute", back_populates="calls")
 
 
-class Summary(Base):
-    """Summary model representing AI-generated call summaries."""
-    
-    __tablename__ = "summaries"
-    
+# ── Call Analytics ───────────────────────────────────────────────────────────
+
+class CallAnalytics(Base):
+    """
+    Aggregated analytics for dashboard.
+    Updated periodically for performance.
+    """
+    __tablename__ = "call_analytics"
+
     id = Column(Integer, primary_key=True, index=True)
-    student_id = Column(Integer, ForeignKey("students.id"), nullable=False, unique=True)
+    institute_id = Column(Integer, ForeignKey("institutes.id"), nullable=False, unique=True)
     
-    # Summary content
-    transcript = Column(Text, nullable=True)
-    summary = Column(Text, nullable=True)
-    sentiment = Column(SQLEnum(Sentiment), nullable=True)
-    interest_score = Column(Integer, nullable=True)  # 0-100
-    admission_probability = Column(Float, nullable=True)  # 0.0-1.0
+    # Call statistics
+    total_calls = Column(Integer, default=0)
+    today_calls = Column(Integer, default=0)
+    completed_calls = Column(Integer, default=0)
+    missed_calls = Column(Integer, default=0)
     
-    # AI analysis
-    questions_asked = Column(Text, nullable=True)  # JSON array
-    objections = Column(Text, nullable=True)  # JSON array
-    recommended_course = Column(String(255), nullable=True)
-    follow_up_required = Column(Boolean, default=False)
-    follow_up_notes = Column(Text, nullable=True)
+    # Duration statistics
+    avg_duration_seconds = Column(Float, default=0.0)
+    total_duration_seconds = Column(Float, default=0.0)
+    
+    # Performance metrics
+    avg_retrieval_time_ms = Column(Float, default=0.0)
+    avg_llm_response_time_ms = Column(Float, default=0.0)
+    avg_stt_time_ms = Column(Float, default=0.0)
+    avg_tts_time_ms = Column(Float, default=0.0)
+    
+    # Top questions
+    most_asked_questions = Column(JSON, nullable=True)  # [{"question": "...", "count": 5}]
+    
+    # Knowledge usage
+    top_retrieved_chunks = Column(JSON, nullable=True)  # [{"chunk_id": ..., "count": 5}]
+    knowledge_coverage = Column(Float, default=0.0)  # Percentage of knowledge used
+    unused_chunks = Column(JSON, nullable=True)  # List of unused chunk IDs
+    
+    # Peak calling hours
+    peak_hours = Column(JSON, nullable=True)  # [{"hour": 10, "count": 15}]
     
     # Timestamps
-    generated_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
-    # Relationships
-    student = relationship("Student", back_populates="summary")
-
-
-class Report(Base):
-    """Report model representing generated campaign reports."""
-    
-    __tablename__ = "reports"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=False)
-    
-    # Report information
-    report_name = Column(String(255), nullable=False)
-    report_type = Column(String(50), nullable=False)  # campaign, student, analytics
-    file_path = Column(String(500), nullable=False)
-    file_size = Column(Integer, nullable=False)  # in bytes
-    
-    # Report content (JSON for analytics)
-    content = Column(Text, nullable=True)
-    
-    # Timestamps
-    generated_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

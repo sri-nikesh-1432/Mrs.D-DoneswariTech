@@ -4,9 +4,9 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "vite --port 5175 --host localhost",
+    "dev": "vite --port 5176 --host localhost",
     "build": "tsc && vite build",
-    "preview": "vite preview --port 5175"
+    "preview": "vite preview --port 5176"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.0.0",

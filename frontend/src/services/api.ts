@@ -1,5 +1,3 @@
-import type { Campaign, Student, UploadResponse, CampaignStats } from "../types";
-
 const BASE_URL = "/api";
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -20,135 +18,84 @@ export async function healthCheck() {
 }
 
 // ── Knowledge ───────────────────────────────────────────────────
-export async function uploadKnowledge(file: File, campaignId: number): Promise<UploadResponse> {
-  const form = new FormData();
-  form.append("file", file);
-  const res = await fetch(`${BASE_URL}/knowledge/upload?campaign_id=${campaignId}`, {
-    method: "POST",
-    body: form,
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Upload failed");
-  }
-  return res.json();
-}
-
-export async function getKnowledgeStatus(campaignId: number) {
-  return request<{ status: string; knowledge_id?: number; chunks_count?: number }>(`/knowledge/status/${campaignId}`);
-}
-
-// ── Students ────────────────────────────────────────────────────
-export async function uploadStudents(file: File, campaignId: number): Promise<UploadResponse> {
-  const form = new FormData();
-  form.append("file", file);
-  const res = await fetch(`${BASE_URL}/students/upload?campaign_id=${campaignId}`, {
-    method: "POST",
-    body: form,
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Upload failed");
-  }
-  return res.json();
-}
-
-export async function getStudents(campaignId: number) {
-  return request<{ campaign_id: number; students: Student[] }>(`/students/campaign/${campaignId}`);
-}
-
-export async function getStudent(studentId: number) {
-  return request<Student>(`/students/${studentId}`);
-}
-
-// ── Campaign ────────────────────────────────────────────────────
-export async function createCampaign(data: {
-  campaign_name: string;
+export async function uploadKnowledge(file: File, instituteId?: number): Promise<{
+  message: string;
+  knowledge_id: number;
+  institute_id: number;
   institute_name: string;
+  status: string;
+}> {
+  const form = new FormData();
+  form.append("file", file);
+  if (instituteId) {
+    form.append("institute_id", instituteId.toString());
+  }
+  const res = await fetch(`${BASE_URL}/knowledge/upload`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Upload failed");
+  }
+  return res.json();
+}
+
+export async function getKnowledgeStatus(instituteId: number) {
+  return request<{
+    institute_id: number;
+    status: string;
+    knowledge_id?: number;
+    document_name?: string;
+    chunks_count?: number;
+    error_message?: string;
+  }>(`/knowledge/status/${instituteId}`);
+}
+
+// ── Receptionist (Institute, Calls, Analytics) ─────────────────
+export async function createInstitute(data: {
+  name: string;
+  phone_number: string;
   language?: string;
   voice?: string;
+  greeting_message?: string;
 }) {
-  return request<{ message: string; campaign_id: number; campaign_name: string; institute_name: string; status: string }>("/campaigns/", {
+  return request<{
+    institute_id: string;
+    id: number;
+    name: string;
+    phone_number: string;
+    sip_status: string;
+  }>("/receptionist/institute", {
     method: "POST",
     body: JSON.stringify(data),
   });
 }
 
-export async function getCampaignStatus(campaignId: number) {
-  return request<any>(`/campaigns/${campaignId}/status`);
+export async function getInstitute(instituteId: string) {
+  return request<any>(`/receptionist/institute/${instituteId}`);
 }
 
-export async function getCampaign(campaignId: number) {
-  return request<Campaign>(`/campaigns/${campaignId}`);
+export async function getInstituteStatus(instituteId: string) {
+  return request<any>(`/receptionist/institute/${instituteId}/status`);
 }
 
-export async function startCampaign(campaignId: number) {
-  return request<{ message: string; campaign_id: number }>(`/campaigns/${campaignId}/start`, {
-    method: "POST",
-  });
+export async function getCallHistory(instituteId: string, limit: number = 50, offset: number = 0) {
+  return request<any>(`/receptionist/institute/${instituteId}/calls?limit=${limit}&offset=${offset}`);
 }
 
-export async function pauseCampaign(campaignId: number) {
-  return request<{ message: string; campaign_id: number }>(`/campaigns/${campaignId}/pause`, {
-    method: "POST",
-  });
+export async function getCallDetails(callId: string) {
+  return request<any>(`/receptionist/call/${callId}`);
 }
 
-export async function resumeCampaign(campaignId: number) {
-  return request<{ message: string; campaign_id: number }>(`/campaigns/${campaignId}/resume`, {
-    method: "POST",
-  });
+export async function getSimulatorCalls(instituteId: number) {
+  return request<{ calls: any[] }>(`/conversation/calls/${instituteId}`);
 }
 
-export async function cancelCampaign(campaignId: number) {
-  return request<{ message: string; campaign_id: number }>(`/campaigns/${campaignId}/cancel`, {
-    method: "POST",
-  });
+export async function getAnalytics(instituteId: string) {
+  return request<any>(`/receptionist/institute/${instituteId}/analytics`);
 }
 
-// ── Analytics ───────────────────────────────────────────────────
-export async function getCampaignAnalytics(campaignId: number) {
-  return request<any>(`/analytics/campaign/${campaignId}`);
-}
-
-export async function getStudentAnalytics(campaignId: number) {
-  return request<{ campaign_id: number; students: any[] }>(`/analytics/campaign/${campaignId}/students`);
-}
-
-export async function getStudentSummary(studentId: number) {
-  return request<any>(`/analytics/student/${studentId}/summary`);
-}
-
-// ── Single Call ───────────────────────────────────────────────────
-export async function initiateSingleCall(studentName: string, phoneNumber: string) {
-  const res = await fetch(`${BASE_URL}/single-call/initiate?student_name=${encodeURIComponent(studentName)}&phone_number=${encodeURIComponent(phoneNumber)}`, {
-    method: "POST",
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Call initiation failed");
-  }
-  return res.json();
-}
-
-export async function processSpeech(callId: number, speechText: string) {
-  const res = await fetch(`${BASE_URL}/single-call/process-speech?call_id=${callId}&speech_text=${encodeURIComponent(speechText)}`, {
-    method: "POST",
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Speech processing failed");
-  }
-  return res.json();
-}
-
-export async function endCall(callId: number) {
-  const res = await fetch(`${BASE_URL}/single-call/end-call?call_id=${callId}`, {
-    method: "POST",
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Call ending failed");
-  }
-  return res.json();
+export async function getLiveStatus(instituteId: string) {
+  return request<any>(`/receptionist/institute/${instituteId}/live-status`);
 }

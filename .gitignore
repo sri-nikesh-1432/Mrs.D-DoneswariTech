@@ -2,34 +2,51 @@
 backend/.env
 .env
 .env.local
+.env.example
 
 # ── Python ──────────────────────────────────────────────
 __pycache__/
 *.py[cod]
+*.pyc
+*.pyo
 *.egg-info/
 .venv/
 venv/
 env/
+*.db
+*.sqlite
+*.sqlite3
 
 # ── Node ────────────────────────────────────────────────
 node_modules/
 dist/
 .vite/
-
-# ── Audio / Static (auto-generated) ────────────────────
-backend/static/audio/*.mp3
-
-# ── Logs ────────────────────────────────────────────────
-backend/logs/
 *.log
+
+# ── Uploads & Generated Files ───────────────────────────
+backend/uploads/
+backend/generated_reports/
+backend/static/audio/
+backend/logs/
+
+# ── Vector Store ─────────────────────────────────────────
+backend/uploads/vector_db/
 
 # ── IDE ─────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
+*.sublime-*
 
 # ── OS ──────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# ── Cache ───────────────────────────────────────────────
+.cache/
+.pytest_cache/
+.coverage
+htmlcov/
 

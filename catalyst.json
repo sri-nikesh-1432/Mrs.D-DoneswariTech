@@ -1,0 +1,12 @@
+{
+  "functions": {
+    "targets": [
+      "node_function"
+    ],
+    "ignore": [],
+    "source": "functions"
+  },
+  "client": {
+    "source": "client"
+  }
+}

@@ -1,26 +1,24 @@
 """
-Database module for Mrs. D AI Admission Campaign Platform.
+Database module for Mrs. D — AI Voice Receptionist Platform.
 """
 
 from .connection import get_database, init_database
-from .models import (
-    Base,
-    Campaign,
-    Student,
+from app.database.models import (
+    Institute,
     Knowledge,
-    CallLog,
-    Summary,
-    Report
+    CallHistory,
+    CallAnalytics,
+    CallStatus,
+    KnowledgeStatus,
+    Sentiment
 )
 
 __all__ = [
-    "get_database",
-    "init_database",
-    "Base",
-    "Campaign",
-    "Student",
+    "Institute",
     "Knowledge",
-    "CallLog",
-    "Summary",
-    "Report"
+    "CallHistory",
+    "CallAnalytics",
+    "CallStatus",
+    "KnowledgeStatus",
+    "Sentiment"
 ]

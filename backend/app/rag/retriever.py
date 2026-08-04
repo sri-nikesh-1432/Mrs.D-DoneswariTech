@@ -1,13 +1,27 @@
 """
 RAG Retriever — Given a query, retrieves the most relevant knowledge chunks.
+Optimized for fast response times.
 """
 
 from typing import List, Dict, Optional
+from functools import lru_cache
+import hashlib
 from app.rag.embeddings import generate_embedding
 from app.rag.vector_store import vector_store
+from app.config.settings import settings
 from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Simple cache for recent queries (max 128 entries)
+_query_cache = {}
+_cache_max_size = 128
+
+
+def _get_cache_key(query: str, top_k: int, min_score: float) -> str:
+    """Generate cache key for query parameters."""
+    key = f"{query}:{top_k}:{min_score}"
+    return hashlib.md5(key.encode()).hexdigest()
 
 
 async def retrieve_context(
@@ -27,8 +41,18 @@ async def retrieve_context(
         List of relevant chunks with text, source, and score
     """
     if not vector_store.is_ready:
-        logger.warning("Vector store not ready — no context available")
+        logger.warning("Vector store not ready")
         return []
+
+    # Set default top_k
+    if top_k is None:
+        top_k = settings.TOP_K_RESULTS
+
+    # Check cache
+    cache_key = _get_cache_key(query, top_k, min_score)
+    if cache_key in _query_cache:
+        logger.debug(f"Cache hit for query: {query[:50]}...")
+        return _query_cache[cache_key]
 
     try:
         # Generate query embedding
@@ -40,15 +64,18 @@ async def retrieve_context(
         # Filter by minimum score
         filtered = [r for r in results if r["score"] >= min_score]
 
-        logger.info(
-            "Retrieved %d/%d chunks for query (min_score=%.2f)",
-            len(filtered), len(results), min_score,
-        )
+        # Cache results
+        if len(_query_cache) >= _cache_max_size:
+            _query_cache.pop(next(iter(_query_cache)))
+        _query_cache[cache_key] = filtered
+
+        logger.info(f"Retrieved {len(filtered)} chunks for query (min_score={min_score})")
+        
         return filtered
 
     except Exception as e:
-        logger.error("Retrieval failed: %s", e)
-        return []
+        logger.error(f"Retrieval failed: {e}")
+        raise
 
 
 def format_context_for_prompt(retrieved_chunks: List[Dict]) -> str:

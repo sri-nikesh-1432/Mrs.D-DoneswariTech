@@ -1,5 +1,5 @@
 """
-Mrs. D — AI Admission Campaign Platform
+Mrs. D — AI Voice Receptionist Platform
 FastAPI Backend Entry Point
 
 Run with:
@@ -30,7 +30,6 @@ def _ensure_directories() -> None:
         settings.STATIC_DIR,
         settings.AUDIO_DIR,
         settings.UPLOADS_DIR,
-        settings.REPORTS_DIR,
     ]
     for d in dirs:
         os.makedirs(d, exist_ok=True)
@@ -40,25 +39,25 @@ def _ensure_directories() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown lifecycle."""
-    logger.info("🚀 Mrs. D — AI Admission Campaign Platform starting up...")
+    logger.info("Mrs. D - AI Voice Receptionist Platform starting up...")
     _ensure_directories()
     await init_database()
 
     _scheduler.start()
-    logger.info("✅ Scheduler started")
-    logger.info("✅ Backend ready at http://%s:%d", settings.HOST, settings.PORT)
-    logger.info("📖 API docs at http://%s:%d/docs", settings.HOST, settings.PORT)
+    logger.info("Scheduler started")
+    logger.info("Backend ready at http://%s:%d", settings.HOST, settings.PORT)
+    logger.info("API docs at http://%s:%d/docs", settings.HOST, settings.PORT)
 
     yield
 
     _scheduler.shutdown(wait=False)
-    logger.info("👋 Mrs. D shutting down.")
+    logger.info("Mrs. D shutting down.")
 
 
 app = FastAPI(
-    title="Mrs. D — AI Admission Campaign Platform",
-    description="Automate admissions with an intelligent AI counselor.",
-    version="1.0.0",
+    title="Mrs. D — AI Voice Receptionist Platform",
+    description="AI-powered voice receptionist for incoming calls.",
+    version="2.0.0",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
@@ -76,29 +75,21 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
 
 # ── Import and include routers ────────────────────────────────────────────────
-from app.api import (
-    knowledge_router,
-    student_router,
-    campaign_router,
-    websocket_router,
-    analytics_router
-)
-from app.api.single_call_routes import router as single_call_router
+from app.api import knowledge_router
+from app.api.receptionist_routes import router as receptionist_router
+from app.api.conversation_routes import router as conversation_router
 
 app.include_router(knowledge_router)
-app.include_router(student_router)
-app.include_router(campaign_router)
-app.include_router(websocket_router)
-app.include_router(analytics_router)
-app.include_router(single_call_router)
+app.include_router(receptionist_router)
+app.include_router(conversation_router)
 
 
 @app.get("/", tags=["Root"])
 async def root():
     return {
         "agent": "Mrs. D",
-        "platform": "AI Admission Campaign Platform",
+        "platform": "AI Voice Receptionist Platform",
         "status": "running",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "docs": "/docs",
     }

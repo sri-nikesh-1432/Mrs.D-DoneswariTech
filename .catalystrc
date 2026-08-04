@@ -1,0 +1,30 @@
+{
+  "defaults": {
+    "project": 1,
+    "env": 1
+  },
+  "actives": {
+    "project": 1,
+    "env": 1
+  },
+  "projects": [
+    {
+      "idx": 1,
+      "id": "60791000000013102",
+      "name": "Zara",
+      "domain": {
+        "id": "50044496035",
+        "name": "zara-60080768150.development"
+      },
+      "timezone": "Asia/Kolkata",
+      "env": [
+        {
+          "idx": 1,
+          "id": "60080768150",
+          "name": "Development",
+          "type": 3
+        }
+      ]
+    }
+  ]
+}

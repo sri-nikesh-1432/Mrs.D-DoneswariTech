@@ -14,11 +14,11 @@ start "Mrs.D Backend" cmd /c "cd /d backend && python -m uvicorn app.main:app --
 timeout /t 3 /nobreak >/dev/null
 
 :: Start Frontend
-echo [2/2] Starting Frontend on port 5175...
-start "Mrs.D Frontend" cmd /c "cd /d frontend && npx vite --port 5175 --host localhost"
+echo [2/2] Starting Frontend on port 5176...
+start "Mrs.D Frontend" cmd /c "cd /d frontend && npx vite --port 5176 --host localhost"
 
 echo.
-echo Frontend: http://localhost:5175
+echo Frontend: http://localhost:5176
 echo Backend:  http://localhost:8000
 echo API Docs: http://localhost:8000/docs
 echo.

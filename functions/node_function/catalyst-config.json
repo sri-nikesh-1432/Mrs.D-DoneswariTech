@@ -1,0 +1,11 @@
+{
+	"deployment": {
+		"name": "node_function",
+		"stack": "node24",
+		"type": "basicio",
+		"env_variables": {}
+	},
+	"execution": {
+		"main": "index.js"
+	}
+}

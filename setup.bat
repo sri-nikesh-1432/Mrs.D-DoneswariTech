@@ -80,7 +80,7 @@ echo  ║  Next steps:                                             ║
 echo  ║  1. Edit backend\.env  →  set GROQ_API_KEY               ║
 echo  ║  2. Run start.bat to launch the application              ║
 echo  ║                                                          ║
-echo  ║  Frontend: http://localhost:5175                         ║
+echo  ║  Frontend: http://localhost:5176                         ║
 echo  ║  Backend:  http://localhost:8000                         ║
 echo  ║  API Docs: http://localhost:8000/docs                    ║
 echo  ╚══════════════════════════════════════════════════════════╝
