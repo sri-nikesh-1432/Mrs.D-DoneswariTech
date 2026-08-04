@@ -19,7 +19,6 @@ import {
 } from "lucide-react";
 import { uploadKnowledge, getKnowledgeStatus } from "../services/api";
 import AICallSimulator from "../components/AICallSimulator";
-import VoiceTestingConsole from "../components/VoiceTestingConsole";
 
 /* ─── Types ─────────────────────────────────── */
 type KnowledgeStep =
@@ -57,9 +56,7 @@ export default function LandingPage() {
   const [activeCalls, setActiveCalls] = useState(0);
   
   // Admin/Dev mode for testing console
-  const [showTestingConsole, setShowTestingConsole] = useState(false);
   const [showCallSimulator, setShowCallSimulator] = useState(false);
-  const [activeMode, setActiveMode] = useState<"real" | "testing">("real");
   
   const knowledgeReady = knowledgeStep === "ready";
   
@@ -158,55 +155,29 @@ export default function LandingPage() {
           </div>
           
           <div className="flex items-center gap-6">
-            {/* Mode Toggle */}
-            <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1">
-              <button
-                onClick={() => setActiveMode("real")}
-                className={`px-3 py-1.5 rounded-md text-xs transition-colors ${
-                  activeMode === "real"
-                    ? "bg-purple-500/20 text-purple-400"
-                    : "text-slate-400 hover:text-white"
-                }`}
-              >
-                Real App
-              </button>
-              <button
-                onClick={() => setActiveMode("testing")}
-                className={`px-3 py-1.5 rounded-md text-xs transition-colors ${
-                  activeMode === "testing"
-                    ? "bg-purple-500/20 text-purple-400"
-                    : "text-slate-400 hover:text-white"
-                }`}
-              >
-                Testing
-              </button>
-            </div>
-            
             <div className="flex items-center gap-2 text-sm">
               <div className={`w-2 h-2 rounded-full ${knowledgeStatus === "ready" ? "bg-green-400" : "bg-yellow-400"}`} />
               <span className="text-slate-400">Knowledge: {knowledgeStatus}</span>
             </div>
             
-            {activeMode === "real" ? (
-              <button
-                onClick={() => setShowCallSimulator(!showCallSimulator)}
-                disabled={!knowledgeReady}
-                className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs hover:bg-white/10 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                title="AI Voice Agent"
-              >
-                <Sparkles className="w-3 h-3" />
-                {showCallSimulator ? "Close" : "Voice Agent"}
-              </button>
-            ) : (
-              <button
-                onClick={() => setShowTestingConsole(!showTestingConsole)}
-                className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs hover:bg-white/10 transition-colors flex items-center gap-2"
-                title="Testing Console"
-              >
-                <Terminal className="w-3 h-3" />
-                {showTestingConsole ? "Close" : "Console"}
-              </button>
-            )}
+            <button
+              onClick={() => setShowCallSimulator(!showCallSimulator)}
+              disabled={!knowledgeReady}
+              className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs hover:bg-white/10 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="AI Voice Agent"
+            >
+              <Sparkles className="w-3 h-3" />
+              {showCallSimulator ? "Close" : "Voice Agent"}
+            </button>
+            
+            <button
+              onClick={() => navigate("/testing-console")}
+              className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs hover:bg-white/10 transition-colors flex items-center gap-2"
+              title="Testing Console"
+            >
+              <Terminal className="w-3 h-3" />
+              Testing Console
+            </button>
           </div>
         </div>
       </header>
@@ -414,22 +385,13 @@ export default function LandingPage() {
             </motion.div>
           </div>
           
-          {/* AI Voice Agent (Real Mode) */}
+          {/* AI Voice Agent */}
           <AnimatePresence>
-            {showCallSimulator && activeMode === "real" && (
+            {showCallSimulator && (
               <AICallSimulator 
                 instituteId={instituteId || 1} 
                 onClose={() => setShowCallSimulator(false)} 
               />
-            )}
-          </AnimatePresence>
-          
-          {/* Testing Console (Testing Mode) */}
-          <AnimatePresence>
-            {showTestingConsole && activeMode === "testing" && (
-              <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50">
-                <VoiceTestingConsole />
-              </div>
             )}
           </AnimatePresence>
         </div>

@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import LandingPage from "./pages/LandingPage";
 import CallHistory from "./pages/CallHistory";
 import Analytics from "./pages/Analytics";
+import TestingConsole from "./pages/TestingConsole";
 
 function App() {
   const location = useLocation();
@@ -22,6 +23,19 @@ function App() {
                 transition={{ duration: 0.3 }}
               >
                 <LandingPage />
+              </motion.div>
+            }
+          />
+          <Route
+            path="/testing-console"
+            element={
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+              >
+                <TestingConsole />
               </motion.div>
             }
           />
