@@ -27,14 +27,14 @@ class Settings(BaseSettings):
         env="DATABASE_URL"
     )
     
-    # AI / Gemini
-    GEMINI_API_KEY: str = Field(default="", env="GEMINI_API_KEY")
-    GEMINI_MODEL: str = Field(default="gemini-2.5-flash", env="GEMINI_MODEL")
+    # AI / Groq
+    GROQ_API_KEY: str = Field(default="", env="GROQ_API_KEY")
+    GROQ_MODEL: str = Field(default="llama-3.3-70b-versatile", env="GROQ_MODEL")
     
     # RAG / Embeddings
     EMBEDDING_MODEL: str = Field(default="all-MiniLM-L6-v2", env="EMBEDDING_MODEL")
-    CHUNK_SIZE: int = Field(default=800, env="CHUNK_SIZE")
-    CHUNK_OVERLAP: int = Field(default=150, env="CHUNK_OVERLAP")
+    CHUNK_SIZE: int = Field(default=800, env="CHUNK_SIZE")  # Spec: 700-900 characters
+    CHUNK_OVERLAP: int = Field(default=150, env="CHUNK_OVERLAP")  # Spec: 150 characters
     TOP_K_RESULTS: int = Field(default=5, env="TOP_K_RESULTS")
     
     # File Upload
@@ -64,8 +64,6 @@ class Settings(BaseSettings):
     TTS_VOICE: str = Field(default="en-US-AriaNeural", env="TTS_VOICE")
     TTS_RATE: str = Field(default="+0%", env="TTS_RATE")
     TTS_VOLUME: str = Field(default="+0%", env="TTS_VOLUME")
-    
-    # Campaign
     MAX_CONCURRENT_CALLS: int = Field(default=1, env="MAX_CONCURRENT_CALLS")
     CALL_RETRY_ATTEMPTS: int = Field(default=3, env="CALL_RETRY_ATTEMPTS")
     CALL_TIMEOUT_SECONDS: int = Field(default=300, env="CALL_TIMEOUT_SECONDS")
@@ -77,6 +75,11 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = Field(default="INFO", env="LOG_LEVEL")
     
+    @property
+    def is_groq_configured(self) -> bool:
+        """Check if Groq API key is configured."""
+        return bool(self.GROQ_API_KEY) and self.GROQ_API_KEY != "your_groq_api_key_here"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

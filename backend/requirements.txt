@@ -19,7 +19,7 @@ databases>=0.9.0
 alembic>=1.13.0
 
 # AI / LLM
-google-generativeai>=0.8.0
+groq>=0.9.0
 
 # Document Processing
 PyMuPDF>=1.24.0
