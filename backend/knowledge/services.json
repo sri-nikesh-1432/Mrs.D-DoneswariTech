@@ -1,0 +1,26 @@
+{
+  "institute_name": "Venixa Services",
+  "greeting": "Hi! I'm Mrs.D, AI Assistant for Venixa Services. How may I help you today?",
+  "knowledge": [
+    {
+      "category": "Company",
+      "content": "Venixa Services is a technology company specializing in AI solutions, cloud services, and digital transformation."
+    },
+    {
+      "category": "Services",
+      "content": "We offer AI/ML development, cloud migration, web development, mobile app development, and IT consulting services."
+    },
+    {
+      "category": "Pricing",
+      "content": "Hourly rates range from $50 to $150 depending on the service. Project-based pricing available for larger engagements."
+    },
+    {
+      "category": "Contact",
+      "content": "Located in Tech Park, Bangalore. Contact: +91-9876543210. Email: info@venixa.com"
+    },
+    {
+      "category": "Support",
+      "content": "24/7 technical support available for enterprise clients. Standard support: 9 AM to 6 PM IST."
+    }
+  ]
+}
