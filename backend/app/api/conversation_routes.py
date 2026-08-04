@@ -138,7 +138,7 @@ async def process_test_conversation(
             audio_data = None
             if include_audio:
                 tts_start = time.time()
-                audio_data = await tts_service.generate_audio(greeting, language)
+                audio_data = await tts_service.synthesize(greeting, language=language)
                 tts_time = (time.time() - tts_start) * 1000
             else:
                 tts_time = 0
@@ -190,7 +190,7 @@ async def process_test_conversation(
         audio_data = None
         if include_audio:
             tts_start = time.time()
-            audio_data = await tts_service.generate_audio(ai_response, language)
+            audio_data = await tts_service.synthesize(ai_response, language=language)
             tts_time = (time.time() - tts_start) * 1000
         else:
             tts_time = 0
