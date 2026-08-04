@@ -284,117 +284,95 @@ export default function VoiceTestingConsole() {
   
   if (callStage === "idle") {
     return (
-      <div className="h-screen w-screen bg-gradient-to-br from-slate-950 via-purple-950/50 to-slate-950 flex items-center justify-center">
-        <div className="max-w-4xl w-full mx-auto p-8">
-          <motion.button
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            onClick={() => navigate("/")}
-            className="mb-8 flex items-center gap-2 text-slate-400 hover:text-white transition-colors"
-          >
-            <ArrowLeft className="w-5 h-5" />
-            Back to Home
-          </motion.button>
-          
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            transition={{ duration: 0.6 }}
-            className="bg-gradient-to-br from-purple-500/10 to-blue-500/10 backdrop-blur-2xl rounded-3xl border border-white/10 p-12 shadow-2xl"
-          >
-            <div className="text-center space-y-8">
-              <motion.div
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ delay: 0.2, type: "spring", stiffness: 150 }}
-                className="w-24 h-24 rounded-full bg-gradient-to-br from-purple-500/30 to-blue-500/30 flex items-center justify-center mx-auto border-2 border-purple-500/50 shadow-xl shadow-purple-500/30"
+      <div className="h-full w-full flex items-center justify-center">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95, y: 20 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="bg-gradient-to-br from-purple-500/10 to-blue-500/10 backdrop-blur-2xl rounded-3xl border border-white/10 p-12 shadow-2xl max-w-2xl w-full mx-4"
+        >
+          <div className="text-center space-y-8">
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ delay: 0.2, type: "spring", stiffness: 150 }}
+              className="w-24 h-24 rounded-full bg-gradient-to-br from-purple-500/30 to-blue-500/30 flex items-center justify-center mx-auto border-2 border-purple-500/50 shadow-xl shadow-purple-500/30"
+            >
+              <Bot className="w-12 h-12 text-purple-300" />
+            </motion.div>
+            
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+            >
+              <h1 className="text-4xl font-bold mb-3 bg-gradient-to-r from-purple-400 via-pink-400 to-blue-400 bg-clip-text text-transparent">
+                Testing Console
+              </h1>
+              <p className="text-slate-400 text-lg">Developer mode with hardcoded knowledge</p>
+            </motion.div>
+            
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.4 }}
+              className="max-w-md mx-auto"
+            >
+              <label className="block text-sm text-slate-400 mb-2 text-left">Select Knowledge File</label>
+              <select
+                value={knowledgeFile}
+                onChange={(e) => setKnowledgeFile(e.target.value)}
+                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-xl text-base focus:outline-none focus:border-purple-500/50 hover:bg-white/10 transition-colors cursor-pointer"
               >
-                <Bot className="w-12 h-12 text-purple-300" />
-              </motion.div>
-              
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.3 }}
+                <option value="narayana.json">Narayana College</option>
+                <option value="services.json">Venixa Services</option>
+              </select>
+            </motion.div>
+            
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.5 }}
+            >
+              <button
+                onClick={startCall}
+                className="px-12 py-5 bg-gradient-to-r from-purple-500 to-blue-500 rounded-2xl font-semibold text-lg hover:opacity-90 transition-all hover:scale-105 flex items-center justify-center gap-3 mx-auto shadow-xl shadow-purple-500/30"
               >
-                <h1 className="text-4xl font-bold mb-3 bg-gradient-to-r from-purple-400 via-pink-400 to-blue-400 bg-clip-text text-transparent">
-                  Testing Console
-                </h1>
-                <p className="text-slate-400 text-lg">Developer mode with hardcoded knowledge</p>
-              </motion.div>
-              
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.4 }}
-                className="max-w-md mx-auto"
-              >
-                <label className="block text-sm text-slate-400 mb-2 text-left">Select Knowledge File</label>
-                <select
-                  value={knowledgeFile}
-                  onChange={(e) => setKnowledgeFile(e.target.value)}
-                  className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-xl text-base focus:outline-none focus:border-purple-500/50 hover:bg-white/10 transition-colors cursor-pointer"
-                >
-                  <option value="narayana.json">Narayana College</option>
-                  <option value="services.json">Venixa Services</option>
-                </select>
-              </motion.div>
-              
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.5 }}
-              >
-                <button
-                  onClick={startCall}
-                  className="px-12 py-5 bg-gradient-to-r from-purple-500 to-blue-500 rounded-2xl font-semibold text-lg hover:opacity-90 transition-all hover:scale-105 flex items-center justify-center gap-3 mx-auto shadow-xl shadow-purple-500/30"
-                >
-                  <Phone className="w-6 h-6" />
-                  Start Voice Agent
-                </button>
-              </motion.div>
-              
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.6 }}
-                className="flex items-center justify-center gap-8 text-sm text-slate-500 pt-4"
-              >
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-green-400" />
-                  <span>Continuous voice</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-blue-400" />
-                  <span>Auto language detection</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-purple-400" />
-                  <span>Real-time STT & TTS</span>
-                </div>
-              </motion.div>
-            </div>
-          </motion.div>
-        </div>
+                <Phone className="w-6 h-6" />
+                Start Voice Agent
+              </button>
+            </motion.div>
+            
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.6 }}
+              className="flex items-center justify-center gap-8 text-sm text-slate-500 pt-4"
+            >
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-green-400" />
+                <span>Continuous voice</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-blue-400" />
+                <span>Auto language detection</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-purple-400" />
+                <span>Real-time STT & TTS</span>
+              </div>
+            </motion.div>
+          </div>
+        </motion.div>
       </div>
     );
   }
   
   return (
-    <div className="h-screen w-screen bg-gradient-to-br from-slate-950 via-purple-950/50 to-slate-950 flex flex-col">
+    <div className="h-full w-full flex flex-col">
       <div className="flex-1 flex overflow-hidden">
         {/* Voice Agent (Center) */}
         <div className="flex-1 flex flex-col items-center justify-center p-8 relative">
-          <motion.button
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            onClick={() => navigate("/")}
-            className="absolute top-6 left-6 flex items-center gap-2 text-slate-400 hover:text-white transition-colors z-10"
-          >
-            <ArrowLeft className="w-5 h-5" />
-            Back
-          </motion.button>
-          
           <motion.div
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
