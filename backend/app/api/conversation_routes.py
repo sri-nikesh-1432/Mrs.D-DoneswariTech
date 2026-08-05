@@ -171,12 +171,22 @@ async def process_test_conversation(
         
         # Generate response
         llm_start = time.time()
-        ai_response = await generate_response(
-            conversation_history=history_list,
-            context=context,
-            user_message=user_input
-        )
-        llm_time = (time.time() - llm_start) * 1000
+        try:
+            ai_response = await generate_response(
+                conversation_history=history_list,
+                context=context,
+                user_message=user_input
+            )
+            llm_time = (time.time() - llm_start) * 1000
+        except ValueError as e:
+            # Fallback if Groq API key is not configured
+            logger.warning(f"Groq API not configured, using fallback: {e}")
+            # Simple fallback response based on context
+            if context:
+                ai_response = f"Based on the information I have: {context[:500]}"
+            else:
+                ai_response = "I apologize, but I need more information to help you. Could you please provide more details about what you're looking for?"
+            llm_time = 0
         
         # Update memory
         memory.append(user_input)
