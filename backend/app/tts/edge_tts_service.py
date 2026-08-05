@@ -93,12 +93,13 @@ class EdgeTTSService:
                 pitch=self.pitch
             )
             
-            # Generate audio in thread pool
-            loop = asyncio.get_event_loop()
-            audio_data = await loop.run_in_executor(
-                None,
-                lambda: b"".join(chunk["data"] for chunk in communicate.stream())
-            )
+            # Generate audio by iterating over async generator
+            audio_chunks = []
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_chunks.append(chunk["data"])
+            
+            audio_data = b"".join(audio_chunks)
             
             logger.debug(f"Synthesized {len(audio_data)} bytes")
             return audio_data
