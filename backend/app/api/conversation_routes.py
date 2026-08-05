@@ -5,6 +5,7 @@ This is the SINGLE pipeline that both the simulator and real phone calls use.
 
 import time
 import uuid
+import base64
 from fastapi import APIRouter, HTTPException
 from typing import Optional
 from datetime import datetime, timezone
@@ -59,7 +60,9 @@ async def end_conversation(
 
 @router.post("/test")
 async def process_test_conversation(
-    knowledge_file: str = "narayana.json",
+    # Testing Console uses backend/knowledge/institute.json ONLY.
+    # It is hardcoded, for developers, and NEVER touches the uploaded-PDF FAISS knowledge.
+    knowledge_file: str = "institute.json",
     user_input: str = "",
     conversation_id: Optional[str] = None,
     include_audio: bool = True,
@@ -72,7 +75,7 @@ async def process_test_conversation(
     Completely separate from the main FAISS-based knowledge base.
     
     Args:
-        knowledge_file: JSON file name (e.g., narayana.json, services.json)
+        knowledge_file: JSON file name (default: institute.json — the ONLY testing knowledge)
         user_input: User's text input
         conversation_id: Optional conversation ID for memory tracking
         include_audio: Whether to generate TTS audio
@@ -115,15 +118,23 @@ async def process_test_conversation(
                     }
                 }
             
-            # Add to JSON retriever memory
+            # Add to JSON retriever memory (session-only — the JSON file is never modified)
             json_retriever.add_knowledge("Manual Insert", insert_content)
             
             return {
-                "ai_response": "✓ Knowledge Updated (Session Only)\n\nNote: /insert in test mode only updates session memory, not the JSON file.",
+                "ai_response": (
+                    "✓ Knowledge Updated\n"
+                    "+1 chunk added\n"
+                    "Mode: Testing Console (session only)\n\n"
+                    "The hardcoded JSON knowledge is never modified. "
+                    "To persist knowledge, use /insert in the Real Application console (uploads to FAISS)."
+                ),
                 "audio_data": None,
                 "debug_info": {
                     "total_time_ms": 0,
-                    "is_insert_command": True
+                    "is_insert_command": True,
+                    "chunks_added": 1,
+                    "knowledge_source": "json"
                 }
             }
         
@@ -138,7 +149,8 @@ async def process_test_conversation(
             audio_data = None
             if include_audio:
                 tts_start = time.time()
-                audio_data = await tts_service.synthesize(greeting, language=language)
+                audio_bytes = await tts_service.synthesize(greeting, language=language)
+                audio_data = base64.b64encode(audio_bytes).decode('utf-8') if audio_bytes else None
                 tts_time = (time.time() - tts_start) * 1000
             else:
                 tts_time = 0
@@ -200,7 +212,8 @@ async def process_test_conversation(
         audio_data = None
         if include_audio:
             tts_start = time.time()
-            audio_data = await tts_service.synthesize(ai_response, language=language)
+            audio_bytes = await tts_service.synthesize(ai_response, language=language)
+            audio_data = base64.b64encode(audio_bytes).decode('utf-8') if audio_bytes else None
             tts_time = (time.time() - tts_start) * 1000
         else:
             tts_time = 0
@@ -324,6 +337,46 @@ async def process_conversation(
                 # Append to existing index
                 vector_store.append_chunks(chunks, embeddings)
             
+            # Persist to disk so the insert survives a restart.
+            # Same path scheme as knowledge_routes (uploads/knowledge/knowledge_{institute_id}).
+            try:
+                from app.config.settings import settings
+                vector_store.save(str(settings.KNOWLEDGE_DIR / f"knowledge_{institute_id}"))
+            except Exception as save_err:
+                logger.warning("Failed to persist /insert to disk: %s", save_err)
+            
+            # Ensure a READY Knowledge record exists so startup restore reloads
+            # this store. Without it, /insert-before-upload knowledge would
+            # vanish after a restart (_restore_vector_store only loads the
+            # store of the latest READY Knowledge row).
+            try:
+                from app.database.connection import AsyncSessionLocal
+                from app.database.models import Knowledge, KnowledgeStatus
+                from sqlalchemy import select
+                async with AsyncSessionLocal() as session:
+                    result = await session.execute(
+                        select(Knowledge)
+                        .where(Knowledge.institute_id == institute_id)
+                        .order_by(Knowledge.id.desc())
+                        .limit(1)
+                    )
+                    kb = result.scalar_one_or_none()
+                    if kb is None:
+                        from pathlib import Path
+                        session.add(Knowledge(
+                            institute_id=institute_id,
+                            document_name="manual_insert",
+                            document_type="text",
+                            file_path=str(settings.KNOWLEDGE_DIR / "manual_insert.txt"),
+                            file_size=len(insert_content.encode("utf-8")),
+                            status=KnowledgeStatus.READY,
+                            chunks_count=len(vector_store.chunks),
+                        ))
+                        await session.commit()
+                        logger.info("Created Knowledge record for /insert (institute %s)", institute_id)
+            except Exception as db_err:
+                logger.warning("Failed to create Knowledge record for /insert: %s", db_err)
+            
             insert_time = (time.time() - insert_start) * 1000
             
             logger.info(f"/insert processed: {len(chunks)} chunks added in {insert_time:.2f}ms")
@@ -384,18 +437,25 @@ The greeting should:
 Generate ONLY the greeting text, no additional commentary."""
             
             llm_start = time.time()
-            ai_response = await generate_response(
-                conversation_history=[],
-                context=context_text,
-                user_message=greeting_prompt
-            )
+            try:
+                ai_response = await generate_response(
+                    conversation_history=[],
+                    context=context_text,
+                    user_message=greeting_prompt
+                )
+            except ValueError as e:
+                # Fallback greeting if Groq API key is not configured
+                logger.warning(f"Groq API not configured, using fallback greeting: {e}")
+                ai_response = f"Hi! I'm Mrs.D, AI Admission Counsellor of {institute_name}. How may I help you today?"
             llm_time = (time.time() - llm_start) * 1000
             
-            # Don't add greeting to memory yet
+            # Add greeting to conversation memory so follow-up turns have context
+            memory.append(ai_response)
         else:
             # Step 1: Retrieve Knowledge (RAG)
             retrieval_start = time.time()
-            retrieved_chunks = await retrieve_context(user_input, top_k=5, min_score=0.3)
+            # Default min_score is calibrated for all-MiniLM-L6-v2 (0.15)
+            retrieved_chunks = await retrieve_context(user_input, top_k=5)
             retrieval_time = (time.time() - retrieval_start) * 1000
             
             context_text = format_context_for_prompt(retrieved_chunks)
@@ -415,11 +475,19 @@ Generate ONLY the greeting text, no additional commentary."""
                 role = "user" if i % 2 == 0 else "model"
                 history_list.append({"role": role, "content": msg})
             
-            ai_response = await generate_response(
-                conversation_history=history_list,
-                context=context_text,
-                user_message=user_input
-            )
+            try:
+                ai_response = await generate_response(
+                    conversation_history=history_list,
+                    context=context_text,
+                    user_message=user_input
+                )
+            except ValueError as e:
+                # Fallback response if Groq API key is not configured
+                logger.warning(f"Groq API not configured, using fallback: {e}")
+                if context_text:
+                    ai_response = f"Based on the information I have: {context_text[:500]}"
+                else:
+                    ai_response = "I apologize, but I need more information to help you. Could you please provide more details about what you're looking for?"
             llm_time = (time.time() - llm_start) * 1000
             
             # Update memory for regular conversation
@@ -436,7 +504,9 @@ Generate ONLY the greeting text, no additional commentary."""
         tts_time = 0
         if include_audio:
             tts_start = time.time()
-            audio_data = await tts_service.synthesize(ai_response, language=language)
+            audio_bytes = await tts_service.synthesize(ai_response, language=language)
+            # Base64-encode MP3 bytes so the frontend can play them as a data URI
+            audio_data = base64.b64encode(audio_bytes).decode('utf-8') if audio_bytes else None
             tts_time = (time.time() - tts_start) * 1000
         
         total_time = (time.time() - start_time) * 1000
