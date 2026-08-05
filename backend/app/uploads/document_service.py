@@ -100,9 +100,12 @@ class DocumentService:
         """
         logger.info(f"=== STEP 1: FILE SAVING ===")
         
-        # Generate unique filename
+        # Generate unique filename.
+        # Path(filename).name strips any directory components from the original
+        # name, preventing path-traversal attempts like "../../evil.pdf".
+        safe_original = Path(filename).name.strip() or "upload"
         timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-        safe_filename = f"{timestamp}_{filename}"
+        safe_filename = f"{timestamp}_{safe_original}"
         file_path = settings.KNOWLEDGE_DIR / safe_filename
         
         logger.info(f"Saving to: {file_path}")
@@ -289,12 +292,17 @@ class DocumentService:
         
         logger.info(f"Input text preview (first 200 chars): {text[:200]}")
         
-        # Remove extra whitespace
-        text = ' '.join(text.split())
-        logger.info(f"After whitespace removal: {len(text)} characters")
+        # Collapse horizontal whitespace WITHIN each line, but PRESERVE blank
+        # lines so paragraphs survive. (Joining everything with spaces would
+        # collapse the whole document into one giant paragraph — the chunker
+        # then produces a single oversized chunk that truncates at the
+        # embedding model's token limit and matches no query well.)
+        lines = []
+        for raw_line in text.split('\n'):
+            cleaned_line = ' '.join(raw_line.split())
+            lines.append(cleaned_line)
         
         # Remove duplicate lines (but keep at least one occurrence)
-        lines = text.split('\n')
         seen = set()
         unique_lines = []
         for line in lines:
@@ -303,11 +311,12 @@ class DocumentService:
                 seen.add(stripped)
                 unique_lines.append(line)
             elif not stripped:
-                unique_lines.append(line)  # Keep empty lines for structure
+                unique_lines.append('')  # Keep empty lines for paragraph structure
         
         text = '\n'.join(unique_lines)
-        logger.info(f"After duplicate removal: {len(text)} characters")
+        logger.info(f"After cleaning: {len(text)} characters")
         logger.info(f"Unique lines: {len(unique_lines)}")
+        logger.info(f"Paragraphs preserved: {len([l for l in unique_lines if not l.strip()]) + 1}")
         
         logger.info(f"✓ Text cleaning completed")
         logger.info(f"=== STEP 3 COMPLETE: TEXT CLEANING SUCCESSFUL ===")

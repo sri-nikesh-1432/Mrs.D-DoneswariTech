@@ -65,52 +65,55 @@ def build_prompt(
     logger.info(f"Student info provided: {student_info is not None}")
     logger.info(f"Conversation history turns: {len(conversation_history) if conversation_history else 0}")
     
-    messages = [{"role": "user", "parts": [SYSTEM_PROMPT]}]
+    # Groq uses the OpenAI-compatible chat format: string 'content', not Gemini-style 'parts'.
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     logger.info(f"✓ System prompt added (length: {len(SYSTEM_PROMPT)} characters)")
 
     # Add retrieved context as a system message
     if retrieved_context:
-        context_msg = f"## Retrieved Institute Knowledge\n\n{retrieved_context}\n\nIMPORTANT: Use ONLY the information above to answer questions. Do not use any external knowledge. If the answer is not in the retrieved context, say: 'I don't have confirmed information about that. Please contact the admissions office for details.'"
-        messages.append({"role": "user", "parts": [context_msg]})
+        context_msg = (
+            "## Retrieved Institute Knowledge\n\n"
+            f"{retrieved_context}\n\n"
+            "IMPORTANT: Use ONLY the information above to answer questions. Do not use any external "
+            "knowledge. If the answer is not in the retrieved context, say: 'I don't have confirmed "
+            "information about that. Please contact the admissions office for details.'"
+        )
+        messages.append({"role": "system", "content": context_msg})
         logger.info(f"✓ Retrieved context added (length: {len(context_msg)} characters)")
         logger.info(f"Context preview (first 200 chars): {context_msg[:200]}...")
-        logger.info(f"✓ Verified: Context will be passed to LLM")
+        logger.info("✓ Verified: Context will be passed to LLM")
     else:
         logger.warning("⚠ No retrieved context provided - LLM will answer without knowledge base")
 
     # Add student info
     if student_info:
         student_msg = (
-            f"## Student Information\n"
+            "## Student Information\n"
             f"Name: {student_info.get('name', 'Unknown')}\n"
             f"Phone: {student_info.get('phone', 'Unknown')}\n"
             f"Preferred Course: {student_info.get('preferred_course', 'Not specified')}\n"
             f"City: {student_info.get('city', 'Not specified')}\n"
         )
-        messages.append({"role": "user", "parts": [student_msg]})
+        messages.append({"role": "system", "content": student_msg})
         logger.info(f"✓ Student info added: {student_info.get('name', 'Unknown')}")
 
-    # Add conversation history
+    # Add conversation history (legacy 'model' role is mapped to 'assistant')
     if conversation_history:
-        history_parts = []
         for turn in conversation_history[-6:]:  # Last 6 turns for context
-            role = "Student" if turn["role"] == "user" else "Mrs. D"
-            history_parts.append(f"{role}: {turn['content']}")
-        if history_parts:
-            history_msg = "## Recent Conversation\n" + "\n".join(history_parts)
-            messages.append({"role": "user", "parts": [history_msg]})
-            logger.info(f"✓ Conversation history added ({len(history_parts)} turns)")
+            role = "user" if turn.get("role") == "user" else "assistant"
+            messages.append({"role": role, "content": turn.get("content", "")})
+        logger.info(f"✓ Conversation history added ({min(len(conversation_history), 6)} turns)")
 
     # Add the current query
-    messages.append({"role": "user", "parts": [f"## Current Student Message\n\n{query}"]})
-    logger.info(f"✓ Current query added")
+    messages.append({"role": "user", "content": f"## Current Student Message\n\n{query}"})
+    logger.info("✓ Current query added")
 
     # Log final prompt structure
     logger.info(f"Total messages in prompt: {len(messages)}")
-    logger.info(f"Total prompt length: {sum(len(str(m.get('parts', ['']))) for m in messages)} characters")
+    logger.info(f"Total prompt length: {sum(len(str(m.get('content', ''))) for m in messages)} characters")
     
     # Verify context is actually in the prompt
-    context_in_prompt = any("Retrieved Institute Knowledge" in str(m.get('parts', [''])) for m in messages)
+    context_in_prompt = any("Retrieved Institute Knowledge" in str(m.get('content', '')) for m in messages)
     if retrieved_context and not context_in_prompt:
         logger.error("✗ Retrieved context was not added to the prompt")
         logger.error("STEP 8 FAILED: Context not in prompt")

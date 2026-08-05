@@ -27,7 +27,7 @@ def _get_cache_key(query: str, top_k: int, min_score: float) -> str:
 async def retrieve_context(
     query: str,
     top_k: int = None,
-    min_score: float = 0.3,
+    min_score: float = 0.15,
 ) -> List[Dict]:
     """
     Retrieve the most relevant knowledge chunks for a query.
@@ -35,7 +35,10 @@ async def retrieve_context(
     Args:
         query: The question or query text
         top_k: Number of chunks to retrieve
-        min_score: Minimum similarity score threshold
+        min_score: Minimum similarity score threshold.
+            Calibrated for all-MiniLM-L6-v2 (cosine sims for relevant matches
+            typically fall between 0.15 and 0.55 — a 0.3 cutoff silently drops
+            relevant chunks, e.g. "What time does the hostel close?" ≈ 0.29).
         
     Returns:
         List of relevant chunks with text, source, and score

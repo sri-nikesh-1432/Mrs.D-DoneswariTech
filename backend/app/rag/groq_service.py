@@ -91,7 +91,9 @@ async def chat(
             model=settings.GROQ_MODEL,
             messages=messages,
             temperature=0.7,
-            max_tokens=8192,
+            # Keep output capped so requests stay within free-tier TPM limits.
+            # Voice replies are short by design (2-4 sentences).
+            max_tokens=1024,
         )
         
         latency = time.time() - start_time

@@ -132,7 +132,7 @@ class VectorStore:
             return []
 
         if top_k is None:
-            top_k = settings.TOP_K_RETRIEVAL
+            top_k = settings.TOP_K_RESULTS
 
         # Ensure 2D array
         if query_embedding.ndim == 1:
@@ -215,6 +215,13 @@ class VectorStore:
         if len(new_chunks) != new_embeddings.shape[0]:
             logger.error(f"Chunk count {len(new_chunks)} does not match embedding count {new_embeddings.shape[0]}")
             raise ValueError(f"Chunk count {len(new_chunks)} does not match embedding count {new_embeddings.shape[0]}")
+        
+        # Re-key chunk IDs so they stay unique across the whole store.
+        # chunk_text numbers from 0, so appended chunks would otherwise
+        # duplicate existing chunk_ids and break the uniqueness invariant.
+        offset = len(self.chunks)
+        for i, chunk in enumerate(new_chunks):
+            chunk["chunk_id"] = offset + i
         
         # Normalize new embeddings
         faiss.normalize_L2(new_embeddings)
