@@ -160,7 +160,7 @@ export default function AICallSimulator({ instituteId = 1, onClose }: { institut
       // Play greeting audio
       if (data.audio_data && audioRef.current) {
         setCallStage("speaking");
-        audioRef.current.src = `data:audio/wav;base64,${data.audio_data}`;
+        audioRef.current.src = `data:audio/mp3;base64,${data.audio_data}`;
         audioRef.current.play();
         audioRef.current.onended = () => {
           setCallStage("listening");
@@ -240,7 +240,7 @@ export default function AICallSimulator({ instituteId = 1, onClose }: { institut
       
       // Play response audio
       if (data.audio_data && audioRef.current) {
-        audioRef.current.src = `data:audio/wav;base64,${data.audio_data}`;
+        audioRef.current.src = `data:audio/mp3;base64,${data.audio_data}`;
         audioRef.current.play();
         audioRef.current.onended = () => {
           setCallStage("listening");

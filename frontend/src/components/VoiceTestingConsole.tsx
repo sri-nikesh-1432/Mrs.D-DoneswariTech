@@ -44,7 +44,9 @@ export default function VoiceTestingConsole() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
   const [showDebug, setShowDebug] = useState(true);
-  const [knowledgeFile, setKnowledgeFile] = useState("narayana.json");
+  // THE MOST IMPORTANT RULE: the Testing Console uses backend/knowledge/institute.json ONLY.
+  // Hardcoded, for developers, and completely isolated from the uploaded-PDF FAISS knowledge.
+  const KNOWLEDGE_FILE = "institute.json";
   const [detectedLanguage, setDetectedLanguage] = useState("English");
   const [silenceTimer, setSilenceTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
   
@@ -191,8 +193,8 @@ export default function VoiceTestingConsole() {
   };
   
   const startCall = () => {
-    // Navigate to active call page with knowledge file as parameter
-    navigate(`/active-call?knowledge=${knowledgeFile}`);
+    // Navigate to active call page — always with the testing console knowledge file
+    navigate(`/active-call?knowledge=${KNOWLEDGE_FILE}`);
   };
   
   const endCall = async () => {
@@ -225,7 +227,7 @@ export default function VoiceTestingConsole() {
     
     try {
       const params = new URLSearchParams({
-        knowledge_file: knowledgeFile,
+        knowledge_file: KNOWLEDGE_FILE,
         user_input: text,
         conversation_id: conversationId.current,
         include_audio: "true",
@@ -252,7 +254,7 @@ export default function VoiceTestingConsole() {
       setCallStage("speaking");
       
       if (data.audio_data && audioRef.current) {
-        audioRef.current.src = `data:audio/wav;base64,${data.audio_data}`;
+        audioRef.current.src = `data:audio/mp3;base64,${data.audio_data}`;
         audioRef.current.play();
         audioRef.current.onended = () => {
           setCallStage("listening");
@@ -318,15 +320,13 @@ export default function VoiceTestingConsole() {
               transition={{ delay: 0.4 }}
               className="max-w-md mx-auto"
             >
-              <label className="block text-sm text-slate-400 mb-2 text-left">Select Knowledge File</label>
-              <select
-                value={knowledgeFile}
-                onChange={(e) => setKnowledgeFile(e.target.value)}
-                className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-xl text-base focus:outline-none focus:border-purple-500/50 hover:bg-white/10 transition-colors cursor-pointer"
-              >
-                <option value="narayana.json">Narayana College</option>
-                <option value="services.json">Venixa Services</option>
-              </select>
+              <div className="bg-white/5 border border-purple-500/30 rounded-xl px-6 py-4">
+                <div className="text-xs text-slate-500 uppercase tracking-wider mb-1 text-left">Knowledge Source</div>
+                <div className="font-mono text-purple-300 text-sm text-left">backend/knowledge/institute.json</div>
+                <div className="text-xs text-slate-500 mt-2 text-left">
+                  Hardcoded · for developers only · never merged with uploaded PDFs
+                </div>
+              </div>
             </motion.div>
             
             <motion.div

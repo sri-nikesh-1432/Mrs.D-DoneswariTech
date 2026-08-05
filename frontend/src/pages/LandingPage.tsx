@@ -53,6 +53,11 @@ export default function LandingPage() {
   
   // Status
   const [knowledgeStatus, setKnowledgeStatus] = useState("not_uploaded");
+  const [knowledgeDetails, setKnowledgeDetails] = useState<{
+    document_name?: string;
+    chunks_count?: number;
+    institute_name?: string;
+  } | null>(null);
   const [activeCalls, setActiveCalls] = useState(0);
   
   // Admin/Dev mode for testing console
@@ -72,6 +77,11 @@ export default function LandingPage() {
         if (result.institute_id) {
           setInstituteId(result.institute_id);
         }
+        setKnowledgeDetails((prev) => ({
+          ...prev,
+          document_name: file.name,
+          institute_name: result.institute_name,
+        }));
         setKnowledgeStep("extracting");
         
         // Poll for status
@@ -90,9 +100,15 @@ export default function LandingPage() {
             } else if (status.status === "ready") {
               setKnowledgeStep("ready");
               setKnowledgeStatus("ready");
+              setKnowledgeDetails((prev) => ({
+                ...prev,
+                chunks_count: status.chunks_count,
+                document_name: status.document_name || prev?.document_name,
+              }));
               clearInterval(check);
             } else if (status.status === "error") {
               setKnowledgeError(status.error_message || "Processing failed");
+              setKnowledgeStatus("error");
               setKnowledgeStep("error");
               clearInterval(check);
             }
@@ -233,6 +249,8 @@ export default function LandingPage() {
                         setKnowledgeFile(null);
                         setKnowledgeStep(null);
                         setKnowledgeError("");
+                        setKnowledgeStatus("not_uploaded");
+                        setKnowledgeDetails(null);
                       }}
                       className="text-slate-400 hover:text-white"
                     >
@@ -303,6 +321,62 @@ export default function LandingPage() {
                 </div>
               )}
             </div>
+
+            {/* Knowledge Status Panel — Current Institute / Embedding / Retriever */}
+            {knowledgeDetails && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mt-6 glass-card rounded-3xl p-6 border border-white/10 backdrop-blur-xl bg-white/5"
+              >
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 flex items-center justify-center">
+                    <Activity className="w-5 h-5 text-emerald-400" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold">Knowledge Status</h2>
+                    <p className="text-xs text-slate-400">Current active knowledge base</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3 text-sm">
+                  <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl">
+                    <span className="text-slate-400">Current Institute</span>
+                    <span className="font-medium text-white">{knowledgeDetails.institute_name || "—"}</span>
+                  </div>
+                  <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl">
+                    <span className="text-slate-400">Document</span>
+                    <span className="font-medium text-white truncate max-w-[55%]">{knowledgeDetails.document_name || "—"}</span>
+                  </div>
+                  <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl">
+                    <span className="text-slate-400">Embedding Status</span>
+                    <span className={`font-medium flex items-center gap-2 ${
+                      knowledgeStatus === "ready" ? "text-green-400" :
+                      knowledgeStatus === "error" ? "text-red-400" : "text-yellow-400"
+                    }`}>
+                      <span className={`w-2 h-2 rounded-full ${
+                        knowledgeStatus === "ready" ? "bg-green-400" :
+                        knowledgeStatus === "error" ? "bg-red-400" : "bg-yellow-400 animate-pulse"
+                      }`} />
+                      {knowledgeStatus}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl">
+                    <span className="text-slate-400">Retriever Status</span>
+                    <span className={`font-medium flex items-center gap-2 ${knowledgeStatus === "ready" ? "text-green-400" : "text-slate-400"}`}>
+                      <span className={`w-2 h-2 rounded-full ${knowledgeStatus === "ready" ? "bg-green-400" : "bg-slate-500"}`} />
+                      {knowledgeStatus === "ready" ? "Ready" : "Idle"}
+                    </span>
+                  </div>
+                  {typeof knowledgeDetails.chunks_count === "number" && (
+                    <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl">
+                      <span className="text-slate-400">Chunks Indexed</span>
+                      <span className="font-medium text-purple-400">{knowledgeDetails.chunks_count}</span>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
           </motion.div>
           
           {/* Status Cards */}

@@ -38,7 +38,7 @@ type CallStage = "idle" | "connecting" | "listening" | "thinking" | "speaking" |
 export default function ActiveCall() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const knowledgeFile = searchParams.get("knowledge") || "narayana.json";
+  const knowledgeFile = searchParams.get("knowledge") || "institute.json";
   
   const [callStage, setCallStage] = useState<CallStage>("connecting");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -156,7 +156,7 @@ export default function ActiveCall() {
       setCallStage("speaking");
       
       if (data.audio_data && audioRef.current) {
-        audioRef.current.src = `data:audio/wav;base64,${data.audio_data}`;
+        audioRef.current.src = `data:audio/mp3;base64,${data.audio_data}`;
         audioRef.current.play();
         audioRef.current.onended = () => {
           setCallStage("listening");
@@ -305,7 +305,7 @@ export default function ActiveCall() {
       setCallStage("speaking");
       
       if (data.audio_data && audioRef.current) {
-        audioRef.current.src = `data:audio/wav;base64,${data.audio_data}`;
+        audioRef.current.src = `data:audio/mp3;base64,${data.audio_data}`;
         audioRef.current.play();
         audioRef.current.onended = () => {
           setCallStage("listening");
