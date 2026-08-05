@@ -213,8 +213,13 @@ async def get_knowledge_status(
 ):
     """Get knowledge base status for an institute."""
     try:
+        # Only ONE active knowledge base per institute — pick the latest upload.
+        # Old rows stay in the DB for history, but the current active one is always the newest.
         result = await session.execute(
-            select(Knowledge).where(Knowledge.institute_id == institute_id)
+            select(Knowledge)
+            .where(Knowledge.institute_id == institute_id)
+            .order_by(Knowledge.id.desc())
+            .limit(1)
         )
         knowledge = result.scalar_one_or_none()
         
