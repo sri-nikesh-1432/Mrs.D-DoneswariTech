@@ -1,0 +1,46 @@
+{
+  "institute_name": "Narayana Junior College",
+  "greeting": "Hi! I'm Mrs.D, AI Admission Counsellor of Narayana Junior College. How may I help you today?",
+  "knowledge": [
+    {
+      "category": "Admissions",
+      "content": "Admissions are open for 2026 academic year. Students can apply for MPC, BiPC, and MEC streams."
+    },
+    {
+      "category": "Courses",
+      "content": "We offer MPC (Mathematics, Physics, Chemistry), BiPC (Biology, Physics, Chemistry), and MEC (Mathematics, Economics, Civics) streams with 120 seats each."
+    },
+    {
+      "category": "Fees",
+      "content": "Tuition fee is ₹85,000 per year. Hostel fee is ₹80,000 per year. Transport fee is ₹25,000 per year."
+    },
+    {
+      "category": "Scholarships",
+      "content": "We offer merit scholarships for students scoring above 90% in 10th grade. Special scholarship available for girl students."
+    },
+    {
+      "category": "Hostel",
+      "content": "Hostel facility available with separate buildings for boys and girls. Hostel closes at 8PM. Mess provides nutritious food."
+    },
+    {
+      "category": "Transport",
+      "content": "Transport facility available across the city with GPS-enabled buses. Bus routes cover all major areas."
+    },
+    {
+      "category": "Faculty",
+      "content": "Highly qualified faculty with IIT and NIT background. Special coaching for EAMCET and JEE."
+    },
+    {
+      "category": "Infrastructure",
+      "content": "State-of-the-art laboratories, digital classrooms, library with 10,000+ books, and sports facilities."
+    },
+    {
+      "category": "Contact",
+      "content": "Located at Main Road, Hyderabad. Contact number: 040-12345678. Email: admissions@narayana.edu"
+    },
+    {
+      "category": "Timings",
+      "content": "College timings: 8:30 AM to 4:30 PM. Office hours: 9 AM to 5 PM on weekdays."
+    }
+  ]
+}

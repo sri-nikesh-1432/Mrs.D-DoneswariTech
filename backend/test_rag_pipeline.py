@@ -7,6 +7,9 @@ import asyncio
 import sys
 from pathlib import Path
 
+# The script prints unicode symbols (✓, ❌) which crash on Windows cp1252 consoles.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 # Add backend to path
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -16,7 +19,7 @@ from app.rag.embeddings import generate_embeddings
 from app.rag.vector_store import vector_store
 from app.rag.retriever import retrieve_context
 from app.rag.prompt_builder import build_prompt
-from app.rag.gemini_service import chat
+from app.rag.groq_service import chat
 from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
@@ -35,7 +38,25 @@ async def test_rag_pipeline():
     loaded = vector_store.load(vector_store_path)
     
     if not loaded:
-        print("❌ FAILED: Could not load existing vector store")
+        # No saved vector store (fresh environment) - build one from the
+        # testing knowledge file so the pipeline can still be verified.
+        print("⚠ No saved vector store found - building from knowledge/institute.json")
+        from app.rag.chunker import chunk_text
+        from app.rag.embeddings import generate_embeddings
+        import json
+        from pathlib import Path
+
+        knowledge_path = Path(__file__).parent / "knowledge" / "institute.json"
+        with open(knowledge_path, encoding="utf-8") as f:
+            data = json.load(f)
+        text = "\n\n".join(k["content"] for k in data.get("knowledge", []))
+        chunks = chunk_text(text, source_document="institute.json")
+        embeddings = generate_embeddings(chunks)
+        vector_store.build_index(chunks, embeddings)
+        print(f"✓ Built vector store from {len(chunks)} chunks")
+    
+    if not vector_store.is_ready:
+        print("❌ FAILED: Could not load or build vector store")
         return False
     
     print(f"✓ Vector store loaded with {len(vector_store.chunks)} chunks")

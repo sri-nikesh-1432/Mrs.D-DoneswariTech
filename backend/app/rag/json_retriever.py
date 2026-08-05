@@ -19,7 +19,7 @@ KNOWLEDGE_DIR = Path(__file__).parent.parent.parent / "knowledge"
 class JSONRetriever:
     """Retrieves knowledge from JSON files for testing console."""
     
-    def __init__(self, knowledge_file: str = "narayana.json"):
+    def __init__(self, knowledge_file: str = "institute.json"):
         self.knowledge_file = knowledge_file
         self.knowledge_data: Dict = {}
         self._load_knowledge()
@@ -140,7 +140,7 @@ class JSONRetriever:
 _json_retriever: Optional[JSONRetriever] = None
 
 
-def get_json_retriever(knowledge_file: str = "narayana.json") -> JSONRetriever:
+def get_json_retriever(knowledge_file: str = "institute.json") -> JSONRetriever:
     """Get or create JSON retriever instance."""
     global _json_retriever
     
