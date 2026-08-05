@@ -1,297 +1,265 @@
 """
 Single Student Call API Routes - Handle individual student calls.
-The AI Telecalling Agent uses the uploaded knowledge (via hidden RAG) to converse.
+
+These routes are a thin wrapper around the SAME unified conversation pipeline
+used by the Voice Testing Console (/api/conversation/test) and the real
+application (/api/conversation/process):
+
+    Microphone/Text -> Conversation Manager -> Language Detection
+        -> Whisper -> Retriever (FAISS) -> Groq LLM -> Edge-TTS -> Speaker
+
+There is exactly ONE active knowledge base (the latest uploaded PDF). The
+single-call flow never touches the testing-console JSON knowledge.
 """
 
 import uuid
+from typing import Optional
+from datetime import datetime, timezone
+import base64
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Optional
-from datetime import datetime, timezone
 
 from app.database.connection import get_database
-from app.database.models import (
-    Campaign, Student, Knowledge, CallLog,
-    CallStatus, CallState, CampaignStatus, KnowledgeStatus
-)
-from app.rag.retriever import retrieve_context
-from app.rag.gemini_service import generate_response
-from app.voice.voice_service import VoiceService
-from app.telephony.twilio_provider import get_twilio_provider, TwilioProvider
+from app.database.models import Institute, Knowledge, KnowledgeStatus, CallHistory, CallStatus
+from app.rag.retriever import retrieve_context, format_context_for_prompt, is_knowledge_ready
+from app.rag.groq_service import generate_response
+from app.tts.edge_tts_service import get_tts_service
 from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/single-call", tags=["Single Call"])
 
+# Per-call conversation memory (same in-memory pattern as conversation_routes).
+# Created when a call starts and deleted when the call ends.
+_call_memory: dict = {}
+
+_tts_service = get_tts_service()
+
+
+def _get_memory(call_id: str) -> list:
+    """Get (or lazily create) the in-memory transcript for a call."""
+    if call_id not in _call_memory:
+        _call_memory[call_id] = []
+    return _call_memory[call_id]
+
+
+async def _speak(text: str, language: str) -> Optional[str]:
+    """Synthesize speech via Edge-TTS and return base64-encoded MP3 (or None)."""
+    audio_bytes = await _tts_service.synthesize(text, language=language)
+    return base64.b64encode(audio_bytes).decode("utf-8") if audio_bytes else None
+
+
+async def _build_history(memory: list) -> list:
+    """Convert flat transcript into alternating user/model history for the LLM."""
+    history = []
+    for i, msg in enumerate(memory[-6:]):
+        role = "user" if i % 2 == 0 else "model"
+        history.append({"role": role, "content": msg})
+    return history
+
 
 @router.post("/initiate")
 async def initiate_single_call(
-    student_name: str = Query(...),
-    phone_number: str = Query(...),
-    session: AsyncSession = Depends(get_database)
+    institute_id: int = Query(...),
+    student_name: str = Query("Caller"),
+    phone_number: str = Query("+910000000000"),
+    language: str = Query("English"),
+    session: AsyncSession = Depends(get_database),
 ):
     """
-    Initiate a single student call with AI-powered conversation.
-    The hidden RAG engine retrieves relevant knowledge so the AI can answer naturally.
+    Start a single student call.
+
+    Validates that the institute's knowledge base is READY (the only active
+    knowledge base), then generates the AI greeting through RAG + Groq + TTS.
     """
     try:
-        # Get or create default campaign for single calls
         result = await session.execute(
-            select(Campaign).where(Campaign.campaign_name == "Default Campaign")
+            select(Institute).where(Institute.id == institute_id)
         )
-        campaign = result.scalar_one_or_none()
+        institute = result.scalar_one_or_none()
+        if not institute:
+            raise HTTPException(status_code=404, detail="Institute not found")
 
-        if not campaign:
-            campaign = Campaign(
-                campaign_id=f"camp_{uuid.uuid4().hex[:12]}",
-                campaign_name="Default Campaign",
-                institute_name="Institute",
-                status=CampaignStatus.PENDING,
-                language="en",
-                voice="en-IN-NeerjaNeural",
-            )
-            session.add(campaign)
-            await session.commit()
-            await session.refresh(campaign)
-
-        # Check if knowledge base is ready
         knowledge_result = await session.execute(
-            select(Knowledge).where(Knowledge.campaign_id == campaign.id)
+            select(Knowledge)
+            .where(Knowledge.institute_id == institute_id)
+            .order_by(Knowledge.id.desc())
+            .limit(1)
         )
         knowledge = knowledge_result.scalar_one_or_none()
-
         if not knowledge or knowledge.status != KnowledgeStatus.READY:
             raise HTTPException(
                 status_code=400,
-                detail="Knowledge base not ready. Please upload institute knowledge first."
+                detail="Knowledge base not ready. Please upload institute knowledge first.",
             )
 
-        # Create temporary student record
-        student = Student(
-            campaign_id=campaign.id,
-            name=student_name,
-            phone=phone_number,
-            call_status=CallStatus.DIALING,
-            call_state=CallState.DIALING,
-        )
-        session.add(student)
-        await session.commit()
-        await session.refresh(student)
-
-        # Initialize call log
-        call_log = CallLog(
-            student_id=student.id,
-            campaign_id=campaign.id,
-            call_status=CallStatus.DIALING,
+        call_id = f"call_{uuid.uuid4().hex[:12]}"
+        call_record = CallHistory(
+            call_id=call_id,
+            institute_id=institute_id,
+            caller_number=phone_number,
+            caller_name=student_name,
+            call_status=CallStatus.INCOMING,
             started_at=datetime.now(timezone.utc),
         )
-        session.add(call_log)
+        session.add(call_record)
         await session.commit()
-        await session.refresh(call_log)
+        await session.refresh(call_record)
 
-        # Generate initial greeting with RAG context
-        context = await retrieve_context(
-            f"Introduction call for student {student_name} interested in admission"
+        # ── Greeting through the unified pipeline ─────────────────────────
+        retrieved = await retrieve_context("institute name college school admission", top_k=5, min_score=0.1)
+        context_text = format_context_for_prompt(retrieved)
+
+        greeting_prompt = (
+            "You are Mrs. D, an AI Admission Counsellor.\n"
+            f"Generate a warm, professional 2-3 sentence greeting for {student_name}.\n"
+            f"Institute context:\n{context_text if context_text else 'General admission inquiry'}\n"
+            "Generate ONLY the greeting text."
         )
-        from app.rag.retriever import format_context_for_prompt
-        context_str = format_context_for_prompt(context)
+        try:
+            greeting = await generate_response(
+                conversation_history=[],
+                context=context_text,
+                user_message=greeting_prompt,
+            )
+        except ValueError as e:
+            logger.warning("Groq API not configured, using fallback greeting: %s", e)
+            greeting = f"Hi! I'm Mrs.D, AI Admission Counsellor of {institute.name}. How may I help you today?"
 
-        system_prompt = (
-            f"You are Mrs. D, an AI admission counselor for {campaign.institute_name}.\n"
-            f"You are calling {student_name} to discuss admission opportunities.\n\n"
-            f"Use the following knowledge about the institution to answer questions:\n"
-            f"{context_str}\n\n"
-            f"Be friendly, professional, and helpful. Start with a warm greeting."
-        )
+        memory = _get_memory(call_id)
+        memory.append(greeting)
+        audio_data = await _speak(greeting, language)
 
-        greeting = await generate_response(
-            conversation_history=[],
-            context=system_prompt,
-            user_message="Start the conversation"
-        )
-
-        # Generate audio for greeting
-        voice_service = VoiceService()
-        await voice_service.speak(greeting)
-
-        # Get Twilio provider (mock in dev)
-        twilio = get_twilio_provider()
-        call_result = twilio.make_call(
-            to_number=phone_number,
-        )
-
-        # Update call status
-        if call_result.get("success"):
-            student.call_status = CallStatus.CONNECTED
-            call_log.call_status = CallStatus.CONNECTED
-            campaign.calls_in_progress = (campaign.calls_in_progress or 0) + 1
-        else:
-            student.call_status = CallStatus.FAILED
-            call_log.call_status = CallStatus.FAILED
-            campaign.calls_failed = (campaign.calls_failed or 0) + 1
-
-        await session.commit()
+        logger.info("Single call %s initiated for %s (knowledge: %s)", call_id, student_name, knowledge.document_name)
 
         return {
             "success": True,
-            "student_id": student.id,
-            "call_id": call_log.id,
-            "status": student.call_status.value,
+            "call_id": call_id,
+            "student_name": student_name,
+            "knowledge_document": knowledge.document_name,
             "greeting": greeting,
-            "message": "Call initiated successfully"
+            "audio_data": audio_data,
+            "message": "Call initiated successfully",
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error initiating single call: {e}")
+        logger.error("Error initiating single call: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/process-speech")
 async def process_speech(
-    call_id: int = Query(...),
+    call_id: str = Query(...),
     speech_text: str = Query(...),
-    session: AsyncSession = Depends(get_database)
+    language: str = Query("English"),
+    session: AsyncSession = Depends(get_database),
 ):
     """
-    Process student speech during call and generate AI response.
-    Hidden RAG retrieves relevant knowledge for the AI.
+    Process student speech during a call and generate the AI response.
+
+    Uses the same RAG -> Groq -> Edge-TTS pipeline as the testing console,
+    with per-call memory scoped to this call only.
     """
     try:
         result = await session.execute(
-            select(CallLog).where(CallLog.id == call_id)
+            select(CallHistory).where(CallHistory.call_id == call_id)
         )
-        call_log = result.scalar_one_or_none()
-
-        if not call_log:
+        call_record = result.scalar_one_or_none()
+        if not call_record:
             raise HTTPException(status_code=404, detail="Call not found")
 
-        student_result = await session.execute(
-            select(Student).where(Student.id == call_log.student_id)
+        memory = _get_memory(call_id)
+        memory.append(speech_text)
+
+        retrieved = await retrieve_context(speech_text, top_k=5)
+        context_text = format_context_for_prompt(retrieved)
+
+        try:
+            response = await generate_response(
+                conversation_history=await _build_history(memory[:-1]),
+                context=context_text,
+                user_message=speech_text,
+            )
+        except ValueError as e:
+            logger.warning("Groq API not configured, using fallback: %s", e)
+            if context_text:
+                response = f"Based on the information I have: {context_text[:500]}"
+            else:
+                response = "I apologize, but I need more information to help you. Could you please provide more details?"
+
+        memory.append(response)
+
+        # Update transcript on the call record
+        transcript = "\n".join(
+            f"{'Student' if i % 2 == 0 else 'Mrs. D'}: {msg}"
+            for i, msg in enumerate(memory)
         )
-        student = student_result.scalar_one_or_none()
-
-        # Update transcript
-        call_log.transcript = (call_log.transcript or "") + f"\nStudent: {speech_text}"
-
-        # Retrieve relevant context from hidden RAG
-        context = await retrieve_context(speech_text)
-
-        # Get conversation history
-        conversation_history = []
-        if call_log.transcript:
-            lines = call_log.transcript.split('\n')
-            for line in lines:
-                if line.startswith('Mrs. D:'):
-                    conversation_history.append({"role": "assistant", "content": line[7:]})
-                elif line.startswith('Student:'):
-                    conversation_history.append({"role": "user", "content": line[8:]})
-
-        # Generate AI response
-        system_prompt = (
-            "You are Mrs. D, an AI admission counselor.\n"
-            f"Use the following knowledge to answer the student's questions:\n{context}\n\n"
-            "Be conversational, friendly, and helpful. Keep responses concise."
-        )
-
-        response = await generate_response(
-            conversation_history=conversation_history,
-            context=system_prompt,
-            user_message=speech_text
-        )
-
-        call_log.transcript += f"\nMrs. D: {response}"
-
-        # Convert response to speech
-        voice_service = VoiceService()
-        await voice_service.speak(response)
-
+        call_record.transcript = transcript
+        call_record.total_turns = len(memory)
+        call_record.call_status = CallStatus.ANSWERED
         await session.commit()
+
+        audio_data = await _speak(response, language)
 
         return {
             "success": True,
+            "call_id": call_id,
             "response": response,
-            "context_used": context[:500] if context else "No context"
+            "audio_data": audio_data,
+            "knowledge_ready": is_knowledge_ready(),
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing speech: {e}")
+        logger.error("Error processing speech: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/end-call")
 async def end_call(
-    call_id: int = Query(...),
-    session: AsyncSession = Depends(get_database)
+    call_id: str = Query(...),
+    session: AsyncSession = Depends(get_database),
 ):
     """
-    End a call and generate summary.
-    Updates student call results and campaign statistics.
+    End a call, complete the call record, and delete its memory.
+    Memory lives ONLY inside one conversation - call starts, memory is created,
+    call ends, memory is deleted.
     """
     try:
         result = await session.execute(
-            select(CallLog).where(CallLog.id == call_id)
+            select(CallHistory).where(CallHistory.call_id == call_id)
         )
-        call_log = result.scalar_one_or_none()
-
-        if not call_log:
+        call_record = result.scalar_one_or_none()
+        if not call_record:
             raise HTTPException(status_code=404, detail="Call not found")
 
-        # Update call log
         now = datetime.now(timezone.utc)
-        call_log.call_status = CallStatus.COMPLETED
-        call_log.ended_at = now
-        if call_log.started_at:
-            call_log.duration = int((now - call_log.started_at).total_seconds())
-
-        # Get student and campaign
-        student_result = await session.execute(
-            select(Student).where(Student.id == call_log.student_id)
-        )
-        student = student_result.scalar_one_or_none()
-
-        campaign_result = await session.execute(
-            select(Campaign).where(Campaign.id == call_log.campaign_id)
-        )
-        campaign = campaign_result.scalar_one_or_none()
-
-        # Generate summary using AI
-        if student and call_log.transcript:
-            from app.reports.summary_service import SummaryService
-            summary_service = SummaryService()
-            await summary_service.generate_summary(
-                session=session,
-                student_id=student.id,
-                transcript=call_log.transcript
+        call_record.call_status = CallStatus.COMPLETED
+        call_record.ended_at = now
+        if call_record.started_at:
+            call_record.duration_seconds = max(
+                0, int((now - call_record.started_at).total_seconds())
             )
 
-        if student:
-            student.call_status = CallStatus.COMPLETED
-            student.call_state = CallState.COMPLETED
-            student.called_at = now
-            student.call_duration = call_log.duration
-
-        if campaign:
-            campaign.calls_in_progress = max(0, (campaign.calls_in_progress or 0) - 1)
-            campaign.calls_completed = (campaign.calls_completed or 0) + 1
-            if call_log.duration:
-                campaign.total_duration_seconds = (campaign.total_duration_seconds or 0) + call_log.duration
-
+        memory = _call_memory.pop(call_id, [])
         await session.commit()
 
         return {
             "success": True,
-            "duration": call_log.duration,
-            "message": "Call ended and summary generated"
+            "call_id": call_id,
+            "duration_seconds": call_record.duration_seconds,
+            "total_turns": len(memory),
+            "message": "Call ended and memory cleared",
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error ending call: {e}")
+        logger.error("Error ending call: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
