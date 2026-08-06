@@ -7,7 +7,8 @@ import time
 import uuid
 import base64
 from fastapi import APIRouter, HTTPException
-from typing import Optional
+from pydantic import BaseModel
+from typing import Optional, List
 from datetime import datetime, timezone
 
 from app.rag.retriever import retrieve_context, format_context_for_prompt, is_knowledge_ready
@@ -28,6 +29,32 @@ router = APIRouter(prefix="/api/conversation", tags=["Conversation"])
 conversation_memory = {}
 
 tts_service = EdgeTTSService()
+
+
+LANGUAGE_INSTRUCTION = (
+    "Respond in the SAME language the student used ({language}). "
+    "If they wrote in Telugu, answer in Telugu; Hindi → Hindi; Tamil → Tamil; "
+    "English → English. Match their language exactly."
+)
+
+
+class SaveCallRequest(BaseModel):
+    """Request body for saving a completed call."""
+    transcript: List[dict]
+
+
+def _build_history(memory: list, conversation_id: str) -> list:
+    """
+    Convert the flat transcript into alternating user/model history for the LLM.
+
+    Memory layout is always: [greeting (AI), user1, ai1, user2, ai2, ...]
+    so even indices are AI messages and odd indices are user messages.
+    """
+    history_list = []
+    for i, msg in enumerate(memory[-6:]):
+        role = "model" if i % 2 == 0 else "user"
+        history_list.append({"role": role, "content": msg})
+    return history_list
 
 
 @router.post("/end")
@@ -176,18 +203,16 @@ async def process_test_conversation(
         retrieval_time = (time.time() - retrieval_start) * 1000
         
         # Build conversation history
-        history_list = []
-        for i, msg in enumerate(memory[-6:]):
-            role = "user" if i % 2 == 0 else "model"
-            history_list.append({"role": role, "content": msg})
+        history_list = _build_history(memory, conversation_id)
         
         # Generate response
         llm_start = time.time()
+        lang_hint = LANGUAGE_INSTRUCTION.format(language=language or "English")
         try:
             ai_response = await generate_response(
                 conversation_history=history_list,
                 context=context,
-                user_message=user_input
+                user_message=f"{user_input}\n\n{lang_hint}"
             )
             llm_time = (time.time() - llm_start) * 1000
         except ValueError as e:
@@ -464,22 +489,15 @@ Generate ONLY the greeting text, no additional commentary."""
             llm_start = time.time()
             
             # Build conversation history for context
-            history = "\n".join([
-                f"{'User' if i % 2 == 0 else 'AI'}: {msg}"
-                for i, msg in enumerate(memory[-6:])  # Last 3 exchanges
-            ])
-            
             # Convert history to list of dicts for groq_service
-            history_list = []
-            for i, msg in enumerate(memory[-6:]):
-                role = "user" if i % 2 == 0 else "model"
-                history_list.append({"role": role, "content": msg})
+            history_list = _build_history(memory, conversation_id)
             
+            lang_hint = LANGUAGE_INSTRUCTION.format(language=language or "English")
             try:
                 ai_response = await generate_response(
                     conversation_history=history_list,
                     context=context_text,
-                    user_message=user_input
+                    user_message=f"{user_input}\n\n{lang_hint}"
                 )
             except ValueError as e:
                 # Fallback response if Groq API key is not configured
@@ -572,23 +590,24 @@ async def save_call(
     institute_id: int,
     duration: int,
     language: str,
-    transcript: list,
-    status: str
+    status: str,
+    body: SaveCallRequest,
 ):
     """
     Save a completed call record.
-    
+
     Args:
         call_id: Unique call identifier
         institute_id: Institute ID
         duration: Call duration in seconds
         language: Detected language
-        transcript: List of conversation turns
+        body: JSON body containing the transcript list
         status: Call status (completed, ended, etc.)
-    
+
     Returns:
         Saved call record
     """
+    transcript = body.transcript
     from app.database.connection import AsyncSessionLocal
     from app.database.models import CallHistory, CallStatus
     from sqlalchemy import select

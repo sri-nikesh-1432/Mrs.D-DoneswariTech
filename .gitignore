@@ -2,7 +2,7 @@
 backend/.env
 .env
 .env.local
-.env.example
+# NOTE: .env.example is intentionally tracked so fresh clones get a template.
 
 # ── Python ──────────────────────────────────────────────
 __pycache__/

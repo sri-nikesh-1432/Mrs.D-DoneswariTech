@@ -140,6 +140,7 @@ class CallHistory(Base):
     # Conversation
     transcript = Column(Text, nullable=True)
     summary = Column(Text, nullable=True)
+    detected_language = Column(String(50), nullable=True)
     questions_asked = Column(JSON, nullable=True)  # List of questions
     topics_discussed = Column(JSON, nullable=True)  # List of topics
     

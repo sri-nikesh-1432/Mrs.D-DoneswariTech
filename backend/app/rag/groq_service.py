@@ -43,6 +43,7 @@ async def chat(
     student_info: Optional[Dict] = None,
     conversation_history: Optional[List[Dict]] = None,
     use_rag: bool = True,
+    provided_context: Optional[str] = None,
 ) -> Dict:
     """
     Send a query to Groq with RAG context and conversation history.
@@ -52,6 +53,8 @@ async def chat(
         student_info: Dict with student details
         conversation_history: Previous conversation turns
         use_rag: Whether to retrieve context from knowledge base
+        provided_context: Pre-retrieved context (e.g. Testing Console JSON
+            knowledge). When set, this is used INSTEAD of re-querying FAISS.
         
     Returns:
         Dict with answer, sources, chunk_ids, scores, and confidence
@@ -59,13 +62,18 @@ async def chat(
     logger.info(f"=== STEP 9: LLM CALL ===")
     logger.info(f"Query: {query}")
     logger.info(f"Use RAG: {use_rag}")
+    logger.info(f"Provided context: {bool(provided_context)}")
     
     retrieved_chunks = []
     
     try:
-        # Retrieve relevant context
+        # Use caller-provided context if supplied (JSON retriever, /insert,
+        # or pre-retrieved FAISS chunks) — otherwise retrieve from FAISS.
         context = ""
-        if use_rag and is_knowledge_ready():
+        if provided_context:
+            context = provided_context
+            logger.info("Using caller-provided context (%d chars)", len(context))
+        elif use_rag and is_knowledge_ready():
             logger.info("Retrieving context from knowledge base...")
             retrieved = await retrieve_context(query)
             retrieved_chunks = retrieved
@@ -168,23 +176,27 @@ async def generate_response(
     user_message: str,
 ) -> str:
     """
-    Generate a response for a single message (legacy compatibility).
-    
-    This is a wrapper around chat() for backward compatibility.
-    
+    Generate a response for a single message.
+
+    The caller's context (JSON retriever, /insert, or pre-retrieved FAISS
+    chunks) is passed straight to the LLM — it is never discarded and never
+    re-retrieved, which keeps the Testing Console isolated from the uploaded
+    knowledge base.
+
     Args:
         conversation_history: Previous conversation turns
         context: System context/prompt
         user_message: Current user message
         
     Returns:
-        Response text only (for backward compatibility)
+        Response text only
     """
     result = await chat(
         query=user_message,
         student_info=None,
         conversation_history=conversation_history,
-        use_rag=bool(context)
+        use_rag=False,  # context is passed explicitly below
+        provided_context=context or None,
     )
     return result.get("answer", "")
 

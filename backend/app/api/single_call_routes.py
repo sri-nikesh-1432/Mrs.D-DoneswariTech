@@ -38,6 +38,12 @@ _call_memory: dict = {}
 
 _tts_service = get_tts_service()
 
+LANGUAGE_INSTRUCTION = (
+    "Respond in the SAME language the student used ({language}). "
+    "If they spoke in Telugu, answer in Telugu; Hindi → Hindi; Tamil → Tamil; "
+    "English → English. Match their language exactly."
+)
+
 
 def _get_memory(call_id: str) -> list:
     """Get (or lazily create) the in-memory transcript for a call."""
@@ -53,10 +59,14 @@ async def _speak(text: str, language: str) -> Optional[str]:
 
 
 async def _build_history(memory: list) -> list:
-    """Convert flat transcript into alternating user/model history for the LLM."""
+    """Convert flat transcript into alternating user/model history for the LLM.
+
+    Memory layout is always [greeting (AI), user1, ai1, user2, ai2, ...] so
+    even indices are AI messages and odd indices are user messages.
+    """
     history = []
     for i, msg in enumerate(memory[-6:]):
-        role = "user" if i % 2 == 0 else "model"
+        role = "model" if i % 2 == 0 else "user"
         history.append({"role": role, "content": msg})
     return history
 
@@ -179,11 +189,12 @@ async def process_speech(
         retrieved = await retrieve_context(speech_text, top_k=5)
         context_text = format_context_for_prompt(retrieved)
 
+        lang_hint = LANGUAGE_INSTRUCTION.format(language=language or "English")
         try:
             response = await generate_response(
                 conversation_history=await _build_history(memory[:-1]),
                 context=context_text,
-                user_message=speech_text,
+                user_message=f"{speech_text}\n\n{lang_hint}",
             )
         except ValueError as e:
             logger.warning("Groq API not configured, using fallback: %s", e)
@@ -196,7 +207,7 @@ async def process_speech(
 
         # Update transcript on the call record
         transcript = "\n".join(
-            f"{'Student' if i % 2 == 0 else 'Mrs. D'}: {msg}"
+            f"{'Mrs. D' if i % 2 == 0 else 'Student'}: {msg}"
             for i, msg in enumerate(memory)
         )
         call_record.transcript = transcript

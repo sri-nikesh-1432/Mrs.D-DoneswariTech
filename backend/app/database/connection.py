@@ -44,12 +44,36 @@ async def get_database() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
+def _migrate_schema(sync_conn):
+    """
+    Lightweight schema migrations for existing databases.
+    SQLAlchemy's create_all() only creates missing tables; it never adds
+    columns to tables that already exist, so we ALTER TABLE explicitly.
+
+    NOTE: this must be a SYNC function — it is passed to conn.run_sync()
+    which calls it with a synchronous connection.
+    """
+    from sqlalchemy import inspect
+
+    inspector = inspect(sync_conn)
+    tables = inspector.get_table_names()
+
+    if "call_history" in tables:
+        cols = {c["name"] for c in inspector.get_columns("call_history")}
+        if "detected_language" not in cols:
+            sync_conn.exec_driver_sql(
+                "ALTER TABLE call_history ADD COLUMN detected_language VARCHAR(50)"
+            )
+            print("Migration: added call_history.detected_language")
+
+
 async def init_database():
     """
     Initialize database tables.
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_migrate_schema)
 
 
 @asynccontextmanager
