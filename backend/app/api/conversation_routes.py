@@ -33,8 +33,10 @@ tts_service = EdgeTTSService()
 
 LANGUAGE_INSTRUCTION = (
     "Respond in the SAME language the student used ({language}). "
-    "If they wrote in Telugu, answer in Telugu; Hindi → Hindi; Tamil → Tamil; "
-    "English → English. Match their language exactly."
+    "Telugu → Telugu; Hindi → Hindi; Tamil → Tamil; Kannada → Kannada; "
+    "Malayalam → Malayalam; English → English. Match their language exactly. "
+    "Write in the CORRECT native script with accurate spelling — never Romanized "
+    "transliteration (write 'మీకు ఎలా సహాయం చేయగలను?', not 'meeku ela sahayam cheyagalanu?')."
 )
 
 
@@ -165,9 +167,9 @@ async def process_test_conversation(
                 }
             }
         
-        # For greeting, use hardcoded greeting from JSON
+        # For greeting, use language-matched greeting from JSON
         if is_greeting:
-            greeting = json_retriever.get_greeting()
+            greeting = json_retriever.get_greeting(language=language)
             
             # Add greeting to memory
             memory.append(greeting)
@@ -458,6 +460,7 @@ The greeting should:
 - Offer to help with admissions, courses, facilities, scholarships
 - Be conversational and natural
 - Be 2-3 sentences long
+- Be written entirely in {language}, in the correct native script with proper spelling
 
 Generate ONLY the greeting text, no additional commentary."""
             

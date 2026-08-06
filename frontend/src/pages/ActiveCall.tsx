@@ -47,7 +47,7 @@ export default function ActiveCall() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const knowledgeFile = searchParams.get("knowledge") || "institute.json";
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const [showDebug, setShowDebug] = React.useState(true);
 
   const startedAtRef = useRef(Date.now());
@@ -69,7 +69,7 @@ export default function ActiveCall() {
     sendMessage,
     toggleListening,
     audioRef,
-  } = useVoiceAgent({ mode: "test", knowledgeFile, silenceTimeoutMs: 2000 });
+  } = useVoiceAgent({ mode: "test", knowledgeFile, silenceTimeoutMs: 2000, initialLanguage: lang });
 
   // Start the call automatically on mount
   useEffect(() => {

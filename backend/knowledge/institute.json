@@ -1,6 +1,14 @@
 {
   "institute_name": "Narayana Junior College",
   "greeting": "Hi! I'm Mrs.D, AI Admission Counsellor of Narayana Junior College. How may I help you today?",
+  "greetings": {
+    "English": "Hi! I'm Mrs.D, AI Admission Counsellor of Narayana Junior College. How may I help you today?",
+    "Telugu": "నమస్కారం! నేను Mrs. D ని, నారాయణ జూనియర్ కళాశాల నుండి. మీకు ఎలా సహాయం చేయగలను?",
+    "Hindi": "नमस्ते! मैं Mrs. D हूँ, नारायण जूनियर कॉलेज से। आपकी कैसे मदद कर सकती हूँ?",
+    "Tamil": "வணக்கம்! நான் Mrs. D, நாராயண ஜூனியர் கல்லூரியில் இருந்து. உங்களுக்கு எப்படி உதவலாம்?",
+    "Kannada": "ನಮಸ್ಕಾರ! ನಾನು Mrs. D, ನಾರಾಯಣ ಜೂನಿಯರ್ ಕಾಲೇಜಿನಿಂದ. ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಬಹುದು?",
+    "Malayalam": "നമസ്കാരം! ഞാൻ Mrs. D ആണ്, നാരായണ ജൂനിയർ കോളേജിൽ നിന്ന്. എനിക്ക് നിങ്ങളെ എങ്ങനെ സഹായിക്കാനാകും?"
+  },
   "knowledge": [
     {
       "category": "Admissions",

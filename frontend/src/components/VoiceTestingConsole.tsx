@@ -45,7 +45,7 @@ function formatTime(iso: string): string {
 
 export default function VoiceTestingConsole() {
   const navigate = useNavigate();
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const [showDebug, setShowDebug] = React.useState(true);
 
   // THE MOST IMPORTANT RULE: the Testing Console uses backend/knowledge/institute.json ONLY.
@@ -69,7 +69,7 @@ export default function VoiceTestingConsole() {
     sendMessage,
     toggleListening,
     audioRef,
-  } = useVoiceAgent({ mode: "test", knowledgeFile: KNOWLEDGE_FILE });
+  } = useVoiceAgent({ mode: "test", knowledgeFile: KNOWLEDGE_FILE, initialLanguage: lang });
 
   // Auto-scroll to newest message
   useEffect(() => {

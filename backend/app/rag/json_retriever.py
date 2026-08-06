@@ -15,6 +15,12 @@ logger = get_logger(__name__)
 
 KNOWLEDGE_DIR = Path(__file__).parent.parent.parent / "knowledge"
 
+# Accept both display names ("Telugu") and ISO codes ("te") as lookup keys.
+_LANG_CODE_TO_NAME = {
+    "en": "English", "te": "Telugu", "hi": "Hindi",
+    "ta": "Tamil", "kn": "Kannada", "ml": "Malayalam",
+}
+
 
 class JSONRetriever:
     """Retrieves knowledge from JSON files for testing console."""
@@ -55,9 +61,23 @@ class JSONRetriever:
         """Get institute name from knowledge file."""
         return self.knowledge_data.get("institute_name", "Unknown Institute")
     
-    def get_greeting(self) -> str:
-        """Get greeting from knowledge file."""
-        return self.knowledge_data.get("greeting", "Hi! I'm Mrs.D, AI Admission Counsellor. How may I help you today?")
+    def get_greeting(self, language: Optional[str] = None) -> str:
+        """
+        Get greeting from knowledge file, matched to the caller's language.
+
+        Looks up the language-specific greeting in the optional 'greetings'
+        map (keys are language names: English, Telugu, Hindi, ...). Falls back
+        to the plain 'greeting' field, then to a hardcoded English greeting.
+        """
+        default = "Hi! I'm Mrs.D, AI Admission Counsellor. How may I help you today?"
+        greeting = self.knowledge_data.get("greeting", default)
+
+        if language:
+            greetings = self.knowledge_data.get("greetings") or {}
+            lang_name = _LANG_CODE_TO_NAME.get(language.lower(), language)
+            greeting = greetings.get(lang_name, greeting)
+
+        return greeting
     
     def retrieve_context(self, query: str, top_k: int = 5) -> str:
         """

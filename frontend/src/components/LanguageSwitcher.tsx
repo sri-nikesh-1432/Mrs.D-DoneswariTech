@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Globe, Check } from "lucide-react";
-import { SUPPORTED_LANGUAGES, useTranslation } from "../i18n";
+import {
+  SUPPORTED_LANGUAGES,
+  LANGUAGE_NATIVE_NAMES,
+  useTranslation,
+} from "../i18n";
 
 /**
  * LanguageSwitcher — dropdown to switch the entire UI language.
@@ -36,7 +40,7 @@ export default function LanguageSwitcher({
         title="Translate page"
       >
         <Globe className="w-4 h-4 text-slate-400" />
-        <span className="text-slate-300">{lang}</span>
+        <span className="text-slate-300">{LANGUAGE_NATIVE_NAMES[lang]}</span>
       </button>
 
       {open && (
@@ -54,7 +58,7 @@ export default function LanguageSwitcher({
                   : "text-slate-300 hover:bg-white/5 hover:text-white"
               }`}
             >
-              <span>{l}</span>
+              <span>{LANGUAGE_NATIVE_NAMES[l]}</span>
               {l === lang && <Check className="w-4 h-4 text-purple-400" />}
             </button>
           ))}

@@ -43,7 +43,7 @@ export default function AICallSimulator({
   instituteId?: number;
   onClose?: () => void;
 }) {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const startedAtRef = useRef(Date.now());
 
@@ -60,7 +60,7 @@ export default function AICallSimulator({
     sendMessage,
     toggleListening,
     audioRef,
-  } = useVoiceAgent({ mode: "process", instituteId, silenceTimeoutMs: 2000 });
+  } = useVoiceAgent({ mode: "process", instituteId, silenceTimeoutMs: 2000, initialLanguage: lang });
 
   useEffect(() => {
     const el = scrollRef.current;

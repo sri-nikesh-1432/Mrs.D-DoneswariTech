@@ -25,6 +25,8 @@ class Settings(BaseSettings):
         "te": "te-IN-ShrutiNeural",
         "hi": "hi-IN-SwaraNeural",
         "ta": "ta-IN-PallaviNeural",
+        "kn": "kn-IN-SapnaNeural",
+        "ml": "ml-IN-SobhanaNeural",
     }
 
     # ── Server ────────────────────────────────────────────────────

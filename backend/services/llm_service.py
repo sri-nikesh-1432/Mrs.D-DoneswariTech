@@ -21,6 +21,8 @@ _LANG_NAMES = {
     "te": "Telugu",
     "hi": "Hindi",
     "ta": "Tamil",
+    "kn": "Kannada",
+    "ml": "Malayalam",
 }
 
 

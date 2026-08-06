@@ -40,8 +40,10 @@ _tts_service = get_tts_service()
 
 LANGUAGE_INSTRUCTION = (
     "Respond in the SAME language the student used ({language}). "
-    "If they spoke in Telugu, answer in Telugu; Hindi → Hindi; Tamil → Tamil; "
-    "English → English. Match their language exactly."
+    "Telugu → Telugu; Hindi → Hindi; Tamil → Tamil; Kannada → Kannada; "
+    "Malayalam → Malayalam; English → English. Match their language exactly. "
+    "Write in the CORRECT native script with accurate spelling — never Romanized "
+    "transliteration (write 'మీకు ఎలా సహాయం చేయగలను?', not 'meeku ela sahayam cheyagalanu?')."
 )
 
 
@@ -126,6 +128,7 @@ async def initiate_single_call(
         greeting_prompt = (
             "You are Mrs. D, an AI Admission Counsellor.\n"
             f"Generate a warm, professional 2-3 sentence greeting for {student_name}.\n"
+            f"Write it entirely in {language or 'English'}, in the correct native script with proper spelling.\n"
             f"Institute context:\n{context_text if context_text else 'General admission inquiry'}\n"
             "Generate ONLY the greeting text."
         )
@@ -137,7 +140,16 @@ async def initiate_single_call(
             )
         except ValueError as e:
             logger.warning("Groq API not configured, using fallback greeting: %s", e)
-            greeting = f"Hi! I'm Mrs.D, AI Admission Counsellor of {institute.name}. How may I help you today?"
+            _FALLBACK_GREETINGS = {
+                "English": "Hi! I'm Mrs.D, AI Admission Counsellor of {}. How may I help you today?",
+                "Telugu": "నమస్కారం! నేను Mrs. D ని, {} నుండి. మీకు ఎలా సహాయం చేయగలను?",
+                "Hindi": "नमस्ते! मैं Mrs. D हूँ, {} से। आपकी कैसे मदद कर सकती हूँ?",
+                "Tamil": "வணக்கம்! நான் Mrs. D, {} இலிருந்து. உங்களுக்கு எப்படி உதவலாம்?",
+                "Kannada": "ನಮಸ್ಕಾರ! ನಾನು Mrs. D, {} ಇಂದ. ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಬಹುದು?",
+                "Malayalam": "നമസ്കാരം! ഞാൻ Mrs. D ആണ്, {} ൽ നിന്ന്. എനിക്ക് നിങ്ങളെ എങ്ങനെ സഹായിക്കാനാകും?",
+            }
+            template = _FALLBACK_GREETINGS.get(language or "English", _FALLBACK_GREETINGS["English"])
+            greeting = template.format(institute.name)
 
         memory = _get_memory(call_id)
         memory.append(greeting)
