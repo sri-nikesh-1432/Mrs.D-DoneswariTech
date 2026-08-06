@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
 /* ═══════════════════════════════════════════════════════════════
    i18n — Mrs.D UI translation system
@@ -640,16 +640,37 @@ const DICTIONARIES: Record<SupportedLanguage, Dict> = {
 };
 
 export function translate(key: string, lang?: SupportedLanguage): string {
-  const l = lang || getStoredLanguage();
+  const l = lang || currentLang;
   return DICTIONARIES[l][key] ?? DICTIONARIES.English[key] ?? key;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Shared language store.
+   Switching the language must re-render EVERY component that uses
+   useTranslation() — a component-local useState would only re-render
+   the switcher itself. useSyncExternalStore broadcasts changes.
+═══════════════════════════════════════════════════════════════ */
+let currentLang: SupportedLanguage = getStoredLanguage();
+const listeners = new Set<() => void>();
+
+function subscribe(cb: () => void): () => void {
+  listeners.add(cb);
+  return () => {
+    listeners.delete(cb);
+  };
+}
+
+function getSnapshot(): SupportedLanguage {
+  return currentLang;
+}
+
 export function useTranslation() {
-  const [lang, setLang] = useState<SupportedLanguage>(getStoredLanguage);
+  const lang = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const t = useCallback((key: string) => translate(key, lang), [lang]);
   const changeLanguage = useCallback((l: SupportedLanguage) => {
+    currentLang = l;
     storeLanguage(l);
-    setLang(l);
+    listeners.forEach((fn) => fn());
   }, []);
   return { t, lang, changeLanguage };
 }

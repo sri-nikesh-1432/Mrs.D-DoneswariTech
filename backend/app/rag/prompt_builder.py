@@ -69,11 +69,12 @@ def build_prompt(
     # Add retrieved context as a system message
     if retrieved_context:
         context_msg = (
-            "## Retrieved Institute Knowledge\n\n"
+            "## Institute Knowledge\n\n"
             f"{retrieved_context}\n\n"
-            "IMPORTANT: Use ONLY the information above to answer questions. Do not use any external "
-            "knowledge. If the answer is not in the retrieved context, say: 'I don't have confirmed "
-            "information about that. Please contact the admissions office for details.'"
+            "IMPORTANT: Use ONLY the information above to answer institute-related questions. Do not "
+            "use any external knowledge. If the caller asks something not covered here, politely say "
+            "you don't currently have that specific information and invite them to ask another "
+            "institute-related question. Never mention documents, retrieval, or AI internals."
         )
         messages.append({"role": "system", "content": context_msg})
         logger.info(f"✓ Retrieved context added (length: {len(context_msg)} characters)")

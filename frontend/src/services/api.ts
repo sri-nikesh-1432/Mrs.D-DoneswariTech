@@ -92,6 +92,33 @@ export async function getSimulatorCalls(instituteId: number) {
   return request<{ calls: any[] }>(`/conversation/calls/${instituteId}`);
 }
 
+export async function saveSimulatorCall(data: {
+  call_id: string;
+  institute_id: number;
+  duration: number;
+  language: string;
+  status: string;
+  transcript: Array<{ speaker: string; text: string }>;
+}) {
+  const qs = new URLSearchParams({
+    call_id: data.call_id,
+    institute_id: String(data.institute_id),
+    duration: String(data.duration),
+    language: data.language,
+    status: data.status,
+  });
+  const res = await fetch(`${BASE_URL}/conversation/calls/save?${qs}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transcript: data.transcript }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Failed to save call");
+  }
+  return res.json();
+}
+
 export async function getAnalytics(instituteId: string) {
   return request<any>(`/receptionist/institute/${instituteId}/analytics`);
 }

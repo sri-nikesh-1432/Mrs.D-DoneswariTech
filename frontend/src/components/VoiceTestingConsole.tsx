@@ -21,6 +21,7 @@ import { useVoiceAgent } from "../hooks/useVoiceAgent";
 import Markdown from "./Markdown";
 import LanguageSwitcher from "./LanguageSwitcher";
 import { useTranslation } from "../i18n";
+import { saveSimulatorCall } from "../services/api";
 
 const STAGE_LABEL_KEYS: Record<string, string> = {
   connecting: "connecting",
@@ -52,6 +53,7 @@ export default function VoiceTestingConsole() {
   const KNOWLEDGE_FILE = "institute.json";
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const startedAtRef = useRef(Date.now());
 
   const {
     callStage,
@@ -59,11 +61,9 @@ export default function VoiceTestingConsole() {
     inputText,
     setInputText,
     isListening,
-    isProcessing,
     debugInfo,
     detectedLanguage,
-    error,
-    setError,
+    conversationId,
     startCall,
     endCall,
     sendMessage,
@@ -77,9 +77,40 @@ export default function VoiceTestingConsole() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
+  // Track when the call starts (for duration)
+  useEffect(() => {
+    if (callStage === "connecting") startedAtRef.current = Date.now();
+  }, [callStage]);
+
+  // Free backend memory if the user navigates away
+  useEffect(() => {
+    return () => {
+      endCall();
+    };
+  }, [endCall]);
+
   const handleEnd = async () => {
+    const transcript = messages.map((m) => ({
+      speaker: m.role === "user" ? "USER" : "AI",
+      text: m.content,
+    }));
+    const duration = Math.max(
+      1,
+      Math.floor((Date.now() - startedAtRef.current) / 1000)
+    );
+    try {
+      await saveSimulatorCall({
+        call_id: conversationId.current,
+        institute_id: 1,
+        duration,
+        language: detectedLanguage,
+        status: "completed",
+        transcript,
+      });
+    } catch (e) {
+      console.error("Failed to save call:", e);
+    }
     await endCall();
-    setError("");
   };
 
   if (callStage === "idle") {

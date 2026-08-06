@@ -21,6 +21,7 @@ import { useVoiceAgent } from "../hooks/useVoiceAgent";
 import Markdown from "../components/Markdown";
 import LanguageSwitcher from "../components/LanguageSwitcher";
 import { useTranslation } from "../i18n";
+import { saveSimulatorCall } from "../services/api";
 
 const STAGE_LABEL_KEYS: Record<string, string> = {
   connecting: "connecting",
@@ -76,6 +77,13 @@ export default function ActiveCall() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Free backend memory + stop audio if the user navigates away (Back button).
+  useEffect(() => {
+    return () => {
+      endCall();
+    };
+  }, [endCall]);
+
   // Track when the call actually starts (for duration)
   useEffect(() => {
     if (callStage === "connecting") startedAtRef.current = Date.now();
@@ -98,17 +106,13 @@ export default function ActiveCall() {
       Math.floor((Date.now() - startedAtRef.current) / 1000)
     );
     try {
-      const qs = new URLSearchParams({
+      await saveSimulatorCall({
         call_id: conversationId.current,
-        institute_id: "1",
-        duration: String(duration),
+        institute_id: 1,
+        duration,
         language: detectedLanguage,
         status: "completed",
-      });
-      await fetch(`/api/conversation/calls/save?${qs}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript }),
+        transcript,
       });
     } catch (e) {
       console.error("Failed to save call:", e);
