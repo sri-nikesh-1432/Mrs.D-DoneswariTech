@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
+import { useNavigate } from "react-router-dom";
 import {
   Phone,
   Clock,
@@ -12,24 +13,58 @@ import {
   CheckCircle,
   XCircle,
   Calendar,
+  ArrowLeft,
 } from "lucide-react";
 import { getAnalytics } from "../services/api";
+import LanguageSwitcher from "../components/LanguageSwitcher";
+import { useTranslation } from "../i18n";
 
 export default function Analytics() {
+  const navigate = useNavigate();
+  const { t } = useTranslation();
   const [analytics, setAnalytics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState("7d");
-  
-  const instituteId = "default"; // This would come from context/state
-  
+
+  // Resolve the first real institute via /api/receptionist/institutes —
+  // the old hardcoded "default" does not exist and the analytics endpoint 404s.
+  const instituteIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    loadAnalytics();
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/receptionist/institutes");
+        const data = await res.json();
+        const first = data?.institutes?.[0];
+        if (first && !cancelled) {
+          instituteIdRef.current = first.institute_id;
+          loadAnalytics();
+        } else if (!cancelled) {
+          setLoading(false);
+        }
+      } catch (e) {
+        console.error("Error resolving institute:", e);
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (instituteIdRef.current) loadAnalytics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeRange]);
-  
+
   const loadAnalytics = async () => {
     try {
       setLoading(true);
-      const data = await getAnalytics(instituteId);
+      const id = instituteIdRef.current;
+      if (!id) return;
+      const data = await getAnalytics(id);
       setAnalytics(data);
     } catch (e) {
       console.error("Error loading analytics:", e);
@@ -41,35 +76,35 @@ export default function Analytics() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white p-8 flex items-center justify-center">
-        <div className="text-slate-400">Loading analytics...</div>
+        <div className="text-slate-400">{t("loading")}</div>
       </div>
     );
   }
   
   const stats = [
     {
-      label: "Total Calls",
+      label: t("totalCalls"),
       value: analytics?.total_calls || 0,
       icon: Phone,
       color: "from-purple-500/20 to-blue-500/20",
       iconColor: "text-purple-400",
     },
     {
-      label: "Today's Calls",
+      label: t("todaysCalls"),
       value: analytics?.today_calls || 0,
       icon: Calendar,
       color: "from-green-500/20 to-emerald-500/20",
       iconColor: "text-green-400",
     },
     {
-      label: "Completed",
+      label: t("completed"),
       value: analytics?.completed_calls || 0,
       icon: CheckCircle,
       color: "from-blue-500/20 to-cyan-500/20",
       iconColor: "text-blue-400",
     },
     {
-      label: "Missed",
+      label: t("missed"),
       value: analytics?.missed_calls || 0,
       icon: XCircle,
       color: "from-red-500/20 to-orange-500/20",
@@ -79,19 +114,19 @@ export default function Analytics() {
   
   const performanceMetrics = [
     {
-      label: "Avg Duration",
+      label: t("avgDuration"),
       value: `${analytics?.avg_duration_seconds?.toFixed(0) || 0}s`,
       icon: Clock,
       color: "from-purple-500/20 to-blue-500/20",
     },
     {
-      label: "Avg Retrieval Time",
+      label: t("avgRetrieval"),
       value: `${analytics?.avg_retrieval_time_ms?.toFixed(0) || 0}ms`,
       icon: Zap,
       color: "from-yellow-500/20 to-orange-500/20",
     },
     {
-      label: "Avg LLM Response",
+      label: t("avgLlm"),
       value: `${analytics?.avg_llm_response_time_ms?.toFixed(0) || 0}ms`,
       icon: MessageSquare,
       color: "from-blue-500/20 to-cyan-500/20",
@@ -108,10 +143,20 @@ export default function Analytics() {
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white p-8">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <button
+            onClick={() => navigate("/")}
+            className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors text-sm"
+          >
+            <ArrowLeft className="w-5 h-5" />
+            <span>{t("backHome")}</span>
+          </button>
+          <LanguageSwitcher compact />
+        </div>
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-3xl font-bold mb-2">Analytics Dashboard</h1>
-            <p className="text-slate-400">Monitor call performance and insights</p>
+            <h1 className="text-3xl font-bold mb-2">{t("analyticsTitle")}</h1>
+            <p className="text-slate-400">{t("analyticsSub")}</p>
           </div>
           <select
             value={timeRange}
@@ -181,11 +226,11 @@ export default function Analytics() {
           >
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
               <BookOpen className="w-5 h-5 text-purple-400" />
-              Knowledge Usage
+              {t("knowledgeUsage")}
             </h2>
             <div className="space-y-4">
               <div className="p-4 bg-white/5 rounded-xl">
-                <p className="text-xs text-slate-400 mb-1">Knowledge Coverage</p>
+                <p className="text-xs text-slate-400 mb-1">{t("knowledgeCoverage")}</p>
                 <div className="flex items-center gap-3">
                   <div className="flex-1 h-2 bg-white/10 rounded-full overflow-hidden">
                     <div
@@ -199,7 +244,7 @@ export default function Analytics() {
               
               {analytics?.top_retrieved_chunks && analytics.top_retrieved_chunks.length > 0 && (
                 <div className="p-4 bg-white/5 rounded-xl">
-                  <p className="text-xs text-slate-400 mb-2">Top Retrieved Chunks</p>
+                  <p className="text-xs text-slate-400 mb-2">{t("topRetrieved")}</p>
                   <div className="space-y-2">
                     {analytics.top_retrieved_chunks.slice(0, 5).map((chunk: any, i: number) => (
                       <div key={i} className="flex items-center justify-between text-sm">
@@ -221,7 +266,7 @@ export default function Analytics() {
           >
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
               <MessageSquare className="w-5 h-5 text-green-400" />
-              Most Asked Questions
+              {t("mostAsked")}
             </h2>
             <div className="space-y-3">
               {analytics?.most_asked_questions && analytics.most_asked_questions.length > 0 ? (
@@ -232,7 +277,7 @@ export default function Analytics() {
                   </div>
                 ))
               ) : (
-                <p className="text-sm text-slate-400">No questions data available</p>
+                <p className="text-sm text-slate-400">{t("noQuestions")}</p>
               )}
             </div>
           </motion.div>
@@ -247,7 +292,7 @@ export default function Analytics() {
         >
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
             <Clock className="w-5 h-5 text-blue-400" />
-            Peak Calling Hours
+            {t("peakHours")}
           </h2>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
             {Array.from({ length: 24 }, (_, i) => {

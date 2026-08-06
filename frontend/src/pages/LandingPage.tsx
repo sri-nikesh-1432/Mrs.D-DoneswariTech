@@ -19,6 +19,8 @@ import {
 } from "lucide-react";
 import { uploadKnowledge, getKnowledgeStatus } from "../services/api";
 import AICallSimulator from "../components/AICallSimulator";
+import LanguageSwitcher from "../components/LanguageSwitcher";
+import { useTranslation } from "../i18n";
 
 /* ─── Types ─────────────────────────────────── */
 type KnowledgeStep =
@@ -42,6 +44,7 @@ const KNOWLEDGE_STEPS: KnowledgeStep[] = [
 /* ─── Component ─────────────────────────────── */
 export default function LandingPage() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [instituteId, setInstituteId] = useState<number | null>(null);
   const [instituteName, setInstituteName] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -173,9 +176,11 @@ export default function LandingPage() {
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2 text-sm">
               <div className={`w-2 h-2 rounded-full ${knowledgeStatus === "ready" ? "bg-green-400" : "bg-yellow-400"}`} />
-              <span className="text-slate-400">Knowledge: {knowledgeStatus}</span>
+              <span className="text-slate-400">{t("knowledgeStatus")}: {knowledgeStatus}</span>
             </div>
-            
+
+            <LanguageSwitcher compact />
+
             <button
               onClick={() => setShowCallSimulator(!showCallSimulator)}
               disabled={!knowledgeReady}
@@ -183,16 +188,16 @@ export default function LandingPage() {
               title="AI Voice Agent"
             >
               <Sparkles className="w-3 h-3" />
-              {showCallSimulator ? "Close" : "Voice Agent"}
+              {showCallSimulator ? "Close" : t("voiceAgent")}
             </button>
-            
+
             <button
               onClick={() => navigate("/testing-console")}
               className="px-4 py-2 bg-gradient-to-r from-purple-500/20 to-blue-500/20 border border-purple-500/30 rounded-lg text-xs hover:bg-purple-500/30 transition-all flex items-center gap-2"
               title="Testing Console"
             >
               <Terminal className="w-3 h-3" />
-              Testing Console
+              {t("testingConsole")}
             </button>
           </div>
         </div>
@@ -214,8 +219,8 @@ export default function LandingPage() {
                   <BookOpen className="w-5 h-5 text-purple-400" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-semibold">Institute Knowledge</h2>
-                  <p className="text-xs text-slate-400">PDF · DOCX · TXT · CSV</p>
+                  <h2 className="text-lg font-semibold">{t("instituteKnowledge")}</h2>
+                  <p className="text-xs text-slate-400">{t("uploadDoc")}</p>
                 </div>
               </div>
               
@@ -233,9 +238,9 @@ export default function LandingPage() {
                   />
                   <Upload className="w-8 h-8 mx-auto mb-3 text-slate-400" />
                   <p className="text-sm text-slate-300 mb-1">
-                    Drag & drop or <span className="text-purple-400">browse</span>
+                    {t("dragDrop")} <span className="text-purple-400">{t("browse")}</span>
                   </p>
-                  <p className="text-xs text-slate-500">Max file size: 50 MB</p>
+                  <p className="text-xs text-slate-500">{t("maxFileSize")}</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -334,22 +339,22 @@ export default function LandingPage() {
                     <Activity className="w-5 h-5 text-emerald-400" />
                   </div>
                   <div>
-                    <h2 className="text-lg font-semibold">Knowledge Status</h2>
+                    <h2 className="text-lg font-semibold">{t("knowledgeStatus")}</h2>
                     <p className="text-xs text-slate-400">Current active knowledge base</p>
                   </div>
                 </div>
 
                 <div className="space-y-3 text-sm">
                   <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl">
-                    <span className="text-slate-400">Current Institute</span>
+                    <span className="text-slate-400">{t("currentInstitute")}</span>
                     <span className="font-medium text-white">{knowledgeDetails.institute_name || "—"}</span>
                   </div>
                   <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl">
-                    <span className="text-slate-400">Document</span>
+                    <span className="text-slate-400">{t("document")}</span>
                     <span className="font-medium text-white truncate max-w-[55%]">{knowledgeDetails.document_name || "—"}</span>
                   </div>
                   <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl">
-                    <span className="text-slate-400">Embedding Status</span>
+                    <span className="text-slate-400">{t("embeddingStatus")}</span>
                     <span className={`font-medium flex items-center gap-2 ${
                       knowledgeStatus === "ready" ? "text-green-400" :
                       knowledgeStatus === "error" ? "text-red-400" : "text-yellow-400"
@@ -362,15 +367,15 @@ export default function LandingPage() {
                     </span>
                   </div>
                   <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl">
-                    <span className="text-slate-400">Retriever Status</span>
+                    <span className="text-slate-400">{t("retrieverStatus")}</span>
                     <span className={`font-medium flex items-center gap-2 ${knowledgeStatus === "ready" ? "text-green-400" : "text-slate-400"}`}>
                       <span className={`w-2 h-2 rounded-full ${knowledgeStatus === "ready" ? "bg-green-400" : "bg-slate-500"}`} />
-                      {knowledgeStatus === "ready" ? "Ready" : "Idle"}
+                      {knowledgeStatus === "ready" ? t("ready") : t("idle")}
                     </span>
                   </div>
                   {typeof knowledgeDetails.chunks_count === "number" && (
                     <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl">
-                      <span className="text-slate-400">Chunks Indexed</span>
+                      <span className="text-slate-400">{t("chunksIndexed")}</span>
                       <span className="font-medium text-purple-400">{knowledgeDetails.chunks_count}</span>
                     </div>
                   )}
@@ -393,16 +398,16 @@ export default function LandingPage() {
                     <Phone className="w-5 h-5 text-green-400" />
                   </div>
                   <div>
-                    <h2 className="text-lg font-semibold">AI Call Simulator</h2>
+                    <h2 className="text-lg font-semibold">{t("aiCallSimulator")}</h2>
                     <p className="text-xs text-slate-400">Test voice interactions before deployment</p>
                   </div>
                 </div>
                 
                 <div className="space-y-4">
                   <div className="p-4 bg-gradient-to-r from-purple-500/10 to-blue-500/10 rounded-xl border border-purple-500/20">
-                    <p className="text-xs text-slate-400 mb-1">Status</p>
+                    <p className="text-xs text-slate-400 mb-1">{t("status")}</p>
                     <p className="font-medium text-purple-300">
-                      {knowledgeReady ? "Ready to Call" : "Upload Knowledge First"}
+                      {knowledgeReady ? t("readyToCall") : t("uploadFirst")}
                     </p>
                   </div>
                   
@@ -412,7 +417,7 @@ export default function LandingPage() {
                     className="w-full py-3 bg-gradient-to-r from-purple-500 to-blue-500 rounded-xl font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     <Phone className="w-4 h-4" />
-                    {showCallSimulator ? "End Call" : "Start AI Call"}
+                    {showCallSimulator ? t("endCall") : t("startCall")}
                   </button>
                   
                   <p className="text-xs text-slate-500 text-center">
@@ -434,26 +439,26 @@ export default function LandingPage() {
                   className="glass-card rounded-2xl p-4 border border-white/10 backdrop-blur-xl bg-white/5 hover:bg-white/10 transition-colors text-left"
                 >
                   <History className="w-5 h-5 text-purple-400 mb-2" />
-                  <p className="text-sm font-medium">Call History</p>
-                  <p className="text-xs text-slate-400">View all calls</p>
+                  <p className="text-sm font-medium">{t("callHistory")}</p>
+                  <p className="text-xs text-slate-400">{t("viewAllCalls")}</p>
                 </button>
                 <button 
                   onClick={() => navigate("/analytics")}
                   className="glass-card rounded-2xl p-4 border border-white/10 backdrop-blur-xl bg-white/5 hover:bg-white/10 transition-colors text-left"
                 >
                   <BarChart3 className="w-5 h-5 text-blue-400 mb-2" />
-                  <p className="text-sm font-medium">Analytics</p>
-                  <p className="text-xs text-slate-400">View insights</p>
+                  <p className="text-sm font-medium">{t("analytics")}</p>
+                  <p className="text-xs text-slate-400">{t("viewInsights")}</p>
                 </button>
                 <button className="glass-card rounded-2xl p-4 border border-white/10 backdrop-blur-xl bg-white/5 hover:bg-white/10 transition-colors text-left">
                   <Activity className="w-5 h-5 text-green-400 mb-2" />
-                  <p className="text-sm font-medium">Live Calls</p>
-                  <p className="text-xs text-slate-400">Monitor active</p>
+                  <p className="text-sm font-medium">{t("liveCalls")}</p>
+                  <p className="text-xs text-slate-400">{t("monitorActive")}</p>
                 </button>
                 <button className="glass-card rounded-2xl p-4 border border-white/10 backdrop-blur-xl bg-white/5 hover:bg-white/10 transition-colors text-left">
                   <Settings className="w-5 h-5 text-slate-400 mb-2" />
-                  <p className="text-sm font-medium">Settings</p>
-                  <p className="text-xs text-slate-400">Configure</p>
+                  <p className="text-sm font-medium">{t("settings")}</p>
+                  <p className="text-xs text-slate-400">{t("configure")}</p>
                 </button>
               </div>
             </motion.div>

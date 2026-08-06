@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { useNavigate } from "react-router-dom";
 import {
   Phone,
   Clock,
@@ -12,8 +13,11 @@ import {
   Search,
   Filter,
   Download,
+  ArrowLeft,
 } from "lucide-react";
 import { getCallHistory, getCallDetails, getSimulatorCalls } from "../services/api";
+import LanguageSwitcher from "../components/LanguageSwitcher";
+import { useTranslation } from "../i18n";
 
 interface Call {
   call_id: string;
@@ -27,6 +31,8 @@ interface Call {
 }
 
 export default function CallHistory() {
+  const navigate = useNavigate();
+  const { t } = useTranslation();
   const [calls, setCalls] = useState<Call[]>([]);
   const [selectedCall, setSelectedCall] = useState<Call | null>(null);
   const [callDetails, setCallDetails] = useState<any>(null);
@@ -102,14 +108,24 @@ export default function CallHistory() {
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white p-8">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <button
+            onClick={() => navigate("/")}
+            className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors text-sm"
+          >
+            <ArrowLeft className="w-5 h-5" />
+            <span>{t("backHome")}</span>
+          </button>
+          <LanguageSwitcher compact />
+        </div>
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-3xl font-bold mb-2">Call History</h1>
-            <p className="text-slate-400">View all incoming calls and their details</p>
+            <h1 className="text-3xl font-bold mb-2">{t("callHistoryTitle")}</h1>
+            <p className="text-slate-400">{t("callHistorySub")}</p>
           </div>
           <button className="glass-card px-4 py-2 rounded-xl flex items-center gap-2 hover:bg-white/10 transition-colors">
             <Download className="w-4 h-4" />
-            Export
+            {t("export")}
           </button>
         </div>
         
@@ -119,7 +135,7 @@ export default function CallHistory() {
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder="Search by phone number or name..."
+              placeholder={t("searchByPhone")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/10 rounded-xl text-sm focus:outline-none focus:border-purple-500/50"
@@ -130,10 +146,10 @@ export default function CallHistory() {
             onChange={(e) => setStatusFilter(e.target.value)}
             className="px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-sm focus:outline-none focus:border-purple-500/50"
           >
-            <option value="all">All Status</option>
-            <option value="completed">Completed</option>
-            <option value="missed">Missed</option>
-            <option value="failed">Failed</option>
+            <option value="all">{t("allStatus")}</option>
+            <option value="completed">{t("completed")}</option>
+            <option value="missed">{t("missed")}</option>
+            <option value="failed">{t("failed")}</option>
           </select>
         </div>
         
@@ -143,26 +159,26 @@ export default function CallHistory() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-white/10">
-                  <th className="text-left p-4 text-sm font-medium text-slate-400">Caller</th>
-                  <th className="text-left p-4 text-sm font-medium text-slate-400">Date & Time</th>
-                  <th className="text-left p-4 text-sm font-medium text-slate-400">Duration</th>
-                  <th className="text-left p-4 text-sm font-medium text-slate-400">Status</th>
-                  <th className="text-left p-4 text-sm font-medium text-slate-400">Sentiment</th>
-                  <th className="text-left p-4 text-sm font-medium text-slate-400">Turns</th>
-                  <th className="text-right p-4 text-sm font-medium text-slate-400">Actions</th>
+                  <th className="text-left p-4 text-sm font-medium text-slate-400">{t("caller")}</th>
+                  <th className="text-left p-4 text-sm font-medium text-slate-400">{t("dateTime")}</th>
+                  <th className="text-left p-4 text-sm font-medium text-slate-400">{t("duration")}</th>
+                  <th className="text-left p-4 text-sm font-medium text-slate-400">{t("status")}</th>
+                  <th className="text-left p-4 text-sm font-medium text-slate-400">{t("sentiment")}</th>
+                  <th className="text-left p-4 text-sm font-medium text-slate-400">{t("turns")}</th>
+                  <th className="text-right p-4 text-sm font-medium text-slate-400">{t("actions")}</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
                     <td colSpan={7} className="p-8 text-center text-slate-400">
-                      Loading calls...
+                      {t("loading")}
                     </td>
                   </tr>
                 ) : filteredCalls.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="p-8 text-center text-slate-400">
-                      No calls found
+                      {t("noCalls")}
                     </td>
                   </tr>
                 ) : (
@@ -239,7 +255,7 @@ export default function CallHistory() {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between mb-6">
-                <h2 className="text-xl font-bold">Call Details</h2>
+                <h2 className="text-xl font-bold">{t("callDetails")}</h2>
                 <button
                   onClick={() => setSelectedCall(null)}
                   className="text-slate-400 hover:text-white"
@@ -251,33 +267,33 @@ export default function CallHistory() {
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="p-4 bg-white/5 rounded-xl">
-                    <p className="text-xs text-slate-400 mb-1">Caller</p>
+                    <p className="text-xs text-slate-400 mb-1">{t("caller")}</p>
                     <p className="font-medium">{callDetails.caller_name || "Unknown"}</p>
                     <p className="text-sm text-slate-400">{callDetails.caller_number}</p>
                   </div>
                   <div className="p-4 bg-white/5 rounded-xl">
-                    <p className="text-xs text-slate-400 mb-1">Duration</p>
+                    <p className="text-xs text-slate-400 mb-1">{t("duration")}</p>
                     <p className="font-medium">{formatDuration(callDetails.duration_seconds)}</p>
                   </div>
                 </div>
                 
                 {callDetails.transcript && (
                   <div className="p-4 bg-white/5 rounded-xl">
-                    <p className="text-xs text-slate-400 mb-2">Transcript</p>
+                    <p className="text-xs text-slate-400 mb-2">{t("transcript")}</p>
                     <p className="text-sm whitespace-pre-wrap">{callDetails.transcript}</p>
                   </div>
                 )}
                 
                 {callDetails.summary && (
                   <div className="p-4 bg-white/5 rounded-xl">
-                    <p className="text-xs text-slate-400 mb-2">Summary</p>
+                    <p className="text-xs text-slate-400 mb-2">{t("summary")}</p>
                     <p className="text-sm">{callDetails.summary}</p>
                   </div>
                 )}
                 
                 {callDetails.questions_asked && callDetails.questions_asked.length > 0 && (
                   <div className="p-4 bg-white/5 rounded-xl">
-                    <p className="text-xs text-slate-400 mb-2">Questions Asked</p>
+                    <p className="text-xs text-slate-400 mb-2">{t("questionsAsked")}</p>
                     <ul className="text-sm space-y-1">
                       {callDetails.questions_asked.map((q: string, i: number) => (
                         <li key={i} className="flex items-start gap-2">
@@ -291,11 +307,11 @@ export default function CallHistory() {
                 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="p-4 bg-white/5 rounded-xl">
-                    <p className="text-xs text-slate-400 mb-1">Avg Retrieval Time</p>
+                    <p className="text-xs text-slate-400 mb-1">{t("avgRetrieval")}</p>
                     <p className="font-medium">{callDetails.avg_retrieval_time_ms?.toFixed(0) || "N/A"} ms</p>
                   </div>
                   <div className="p-4 bg-white/5 rounded-xl">
-                    <p className="text-xs text-slate-400 mb-1">Avg LLM Response Time</p>
+                    <p className="text-xs text-slate-400 mb-1">{t("avgLlm")}</p>
                     <p className="font-medium">{callDetails.avg_llm_response_time_ms?.toFixed(0) || "N/A"} ms</p>
                   </div>
                 </div>
