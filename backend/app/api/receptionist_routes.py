@@ -21,6 +21,35 @@ router = APIRouter(prefix="/api/receptionist", tags=["Receptionist"])
 
 # ── Institute Management ─────────────────────────────────────────────────────
 
+@router.get("/institutes")
+async def list_institutes(
+    session: AsyncSession = Depends(get_database)
+):
+    """List all institutes (used by dashboards to resolve the default one)."""
+    try:
+        result = await session.execute(
+            select(Institute).order_by(Institute.id.asc())
+        )
+        institutes = result.scalars().all()
+
+        return {
+            "institutes": [
+                {
+                    "id": inst.id,
+                    "institute_id": inst.institute_id,
+                    "name": inst.name,
+                    "phone_number": inst.phone_number,
+                    "total_calls": inst.total_calls,
+                    "completed_calls": inst.completed_calls,
+                }
+                for inst in institutes
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Error listing institutes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/institute")
 async def create_institute(
     name: str,
