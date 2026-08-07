@@ -52,7 +52,13 @@ def _build_messages(
         f"The user is communicating in **{lang_name}**. "
         f"You MUST reply entirely in {lang_name}. "
         f"Keep all technical terms (Python, Java, API, Machine Learning, etc.) in English. "
-        f"If the user switches language mid-conversation, switch your reply language accordingly."
+        f"If the user switches language mid-conversation, switch your reply language accordingly.\n"
+        f"SPELLING (critical, never violate): write in the correct native script with PERFECT "
+        f"spelling — never Romanized transliteration (write 'మీకు ఎలా సహాయం చేయగలను?', not "
+        f"'meeku ela sahayam cheyagalanu?'). Telugu rules: exact vowel signs; compound verbs as "
+        f"ONE word (చేయగలను, not 'చేయ గలను'); never swap similar consonants (డ/ద, ట/త, చ/స/శ); "
+        f"reuse the caller's correctly spelled words; if unsure of a spelling, rephrase with a "
+        f"simpler word rather than guessing."
     )
     system_content = get_system_prompt() + lang_instruction
 
@@ -80,7 +86,7 @@ async def chat_completion(
             response = await client.chat.completions.create(
                 model=settings.GROQ_LLM_MODEL,
                 messages=messages,
-                temperature=0.7,
+                temperature=0.5,
                 max_tokens=2048,
                 stream=False,
             )

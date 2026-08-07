@@ -105,10 +105,10 @@ export default function CallHistory() {
   };
   
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white p-8">
-      <div className="max-w-7xl mx-auto">
+    <div className="h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white p-8 flex flex-col overflow-hidden">
+      <div className="max-w-7xl mx-auto w-full flex flex-col h-full min-h-0">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-4 shrink-0">
           <button
             onClick={() => navigate("/")}
             className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors text-sm"
@@ -118,7 +118,7 @@ export default function CallHistory() {
           </button>
           <LanguageSwitcher compact />
         </div>
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-between mb-5 shrink-0">
           <div>
             <h1 className="text-3xl font-bold mb-2">{t("callHistoryTitle")}</h1>
             <p className="text-slate-400">{t("callHistorySub")}</p>
@@ -130,7 +130,7 @@ export default function CallHistory() {
         </div>
         
         {/* Filters */}
-        <div className="glass-card rounded-2xl p-4 mb-6 flex items-center gap-4">
+        <div className="glass-card rounded-2xl p-4 mb-4 flex items-center gap-4 shrink-0">
           <div className="flex-1 relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
@@ -154,8 +154,8 @@ export default function CallHistory() {
         </div>
         
         {/* Calls Table */}
-        <div className="glass-card rounded-2xl overflow-hidden">
-          <div className="overflow-x-auto">
+        <div className="glass-card-static overflow-hidden flex-1 min-h-0 flex flex-col">
+          <div className="overflow-auto flex-1 min-h-0">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-white/10">

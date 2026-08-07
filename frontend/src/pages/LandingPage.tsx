@@ -151,7 +151,7 @@ export default function LandingPage() {
   }, [instituteId]);
   
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white overflow-hidden">
+    <div className="h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white overflow-hidden flex flex-col">
       {/* Background particles */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl animate-pulse" />
@@ -159,7 +159,7 @@ export default function LandingPage() {
       </div>
       
       {/* Header */}
-      <header className="relative z-10 p-8 border-b border-white/5 backdrop-blur-xl">
+      <header className="relative z-10 shrink-0 px-8 py-4 border-b border-white/5 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center">
@@ -204,7 +204,7 @@ export default function LandingPage() {
       </header>
       
       {/* Main Content */}
-      <main className="relative z-10 max-w-7xl mx-auto p-8">
+      <main className="relative z-10 flex-1 min-h-0 overflow-y-auto w-full max-w-7xl mx-auto p-6">
         <div className="grid gap-6 grid-cols-1 lg:grid-cols-3">
           
           {/* Knowledge Upload Card */}

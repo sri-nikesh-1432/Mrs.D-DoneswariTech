@@ -75,7 +75,7 @@ export default function Analytics() {
   
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white p-8 flex items-center justify-center">
+      <div className="h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white p-8 flex items-center justify-center">
         <div className="text-slate-400">{t("loading")}</div>
       </div>
     );
@@ -140,8 +140,8 @@ export default function Analytics() {
   ];
   
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white p-8">
-      <div className="max-w-7xl mx-auto">
+    <div className="h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white p-8 flex flex-col overflow-hidden">
+      <div className="max-w-7xl mx-auto w-full flex-1 min-h-0 overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <button

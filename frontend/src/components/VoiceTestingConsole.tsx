@@ -1,9 +1,8 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
   Play,
-  RefreshCw,
   Zap,
   Brain,
   Volume2,
@@ -16,6 +15,10 @@ import {
   Phone,
   PhoneOff,
   Maximize2,
+  Activity,
+  MessageSquare,
+  Terminal,
+  ArrowLeft,
 } from "lucide-react";
 import { useVoiceAgent } from "../hooks/useVoiceAgent";
 import Markdown from "./Markdown";
@@ -43,16 +46,19 @@ function formatTime(iso: string): string {
   }
 }
 
+type ConsoleTab = "pipeline" | "log" | "commands";
+
 export default function VoiceTestingConsole() {
   const navigate = useNavigate();
   const { t, lang } = useTranslation();
-  const [showDebug, setShowDebug] = React.useState(true);
+  const [consoleTab, setConsoleTab] = useState<ConsoleTab>("pipeline");
 
   // THE MOST IMPORTANT RULE: the Testing Console uses backend/knowledge/institute.json ONLY.
   // Hardcoded, for developers, and completely isolated from the uploaded-PDF FAISS knowledge.
   const KNOWLEDGE_FILE = "institute.json";
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const logScrollRef = useRef<HTMLDivElement | null>(null);
   const startedAtRef = useRef(Date.now());
 
   const {
@@ -74,6 +80,11 @@ export default function VoiceTestingConsole() {
   // Auto-scroll to newest message
   useEffect(() => {
     const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages]);
+
+  useEffect(() => {
+    const el = logScrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
@@ -113,168 +124,231 @@ export default function VoiceTestingConsole() {
     await endCall();
   };
 
-  if (callStage === "idle") {
+  if (callStage === "error") {
     return (
-      <div className="h-full w-full flex items-center justify-center">
+      <div className="h-full w-full flex items-center justify-center p-6">
         <motion.div
-          initial={{ opacity: 0, scale: 0.95, y: 20 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          className="bg-gradient-to-br from-purple-500/10 to-blue-500/10 backdrop-blur-2xl rounded-3xl border border-white/10 p-12 shadow-2xl max-w-2xl w-full mx-4"
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="bg-gradient-to-br from-red-500/10 to-orange-500/10 backdrop-blur-2xl rounded-3xl border border-red-500/20 p-10 shadow-2xl max-w-md w-full text-center"
         >
-          <div className="text-center space-y-8">
-            <motion.div
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              transition={{ delay: 0.2, type: "spring", stiffness: 150 }}
-              className="w-24 h-24 rounded-full bg-gradient-to-br from-purple-500/30 to-blue-500/30 flex items-center justify-center mx-auto border-2 border-purple-500/50 shadow-xl shadow-purple-500/30"
+          <PhoneOff className="w-12 h-12 text-red-400 mx-auto mb-4" />
+          <h1 className="text-2xl font-bold mb-3 text-white">{t("error")}</h1>
+          <p className="text-slate-400 text-sm mb-6">
+            Is the backend running? Please retry or go back to the console.
+          </p>
+          <div className="space-y-2.5">
+            <button
+              onClick={() => startCall()}
+              className="w-full py-3 bg-gradient-to-r from-purple-500 to-blue-500 rounded-xl text-sm font-medium hover:opacity-90 transition-all flex items-center justify-center gap-2"
             >
-              <Bot className="w-12 h-12 text-purple-300" />
-            </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 }}
+              <Play className="w-4 h-4" />
+              {t("retry")}
+            </button>
+            <button
+              onClick={() => navigate("/testing-console")}
+              className="w-full py-3 bg-white/5 border border-white/10 rounded-xl text-sm font-medium hover:bg-white/10 transition-all"
             >
-              <h1 className="text-4xl font-bold mb-3 bg-gradient-to-r from-purple-400 via-pink-400 to-blue-400 bg-clip-text text-transparent">
-                {t("testingConsole")}
-              </h1>
-              <p className="text-slate-400 text-lg">
-                Developer mode with hardcoded knowledge
-              </p>
-            </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.4 }}
-              className="max-w-md mx-auto"
-            >
-              <div className="bg-white/5 border border-purple-500/30 rounded-xl px-6 py-4">
-                <div className="text-xs text-slate-500 uppercase tracking-wider mb-1 text-left">
-                  {t("knowledgeSource")}
-                </div>
-                <div className="font-mono text-purple-300 text-sm text-left">
-                  backend/knowledge/institute.json
-                </div>
-                <div className="text-xs text-slate-500 mt-2 text-left">
-                  Hardcoded · for developers only · never merged with uploaded
-                  PDFs
-                </div>
-              </div>
-            </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.5 }}
-            >
-              <button
-                onClick={() => startCall()}
-                className="px-12 py-5 bg-gradient-to-r from-purple-500 to-blue-500 rounded-2xl font-semibold text-lg hover:opacity-90 transition-all hover:scale-105 flex items-center justify-center gap-3 mx-auto shadow-xl shadow-purple-500/30"
-              >
-                <Phone className="w-6 h-6" />
-                {t("startVoiceAgent")}
-              </button>
-            </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.6 }}
-              className="flex items-center justify-center gap-8 text-sm text-slate-500 pt-4"
-            >
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-green-400" />
-                <span>Continuous voice</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-blue-400" />
-                <span>Auto language detection</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-purple-400" />
-                <span>Real-time STT & TTS</span>
-              </div>
-            </motion.div>
+              {t("backToConsole")}
+            </button>
           </div>
         </motion.div>
       </div>
     );
   }
 
-  return (
-    <div className="h-full w-full flex flex-col">
-      <div className="flex-1 flex overflow-hidden">
-        {/* Voice Agent (Center) */}
-        <div className="flex-1 flex flex-col items-center justify-center p-8 relative min-w-0">
-          <motion.div
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="relative mb-8"
-          >
-            <div
-              className={`w-48 h-48 rounded-full bg-gradient-to-br from-purple-500/30 to-blue-500/30 flex items-center justify-center border-2 border-purple-500/50 shadow-2xl shadow-purple-500/30 ${
-                callStage === "listening" ? "animate-pulse" : ""
-              }`}
-            >
-              {callStage === "listening" && (
-                <Mic className="w-24 h-24 text-purple-300" />
-              )}
-              {callStage === "thinking" && (
-                <Loader2 className="w-24 h-24 text-blue-400 animate-spin" />
-              )}
-              {callStage === "speaking" && (
-                <Volume2 className="w-24 h-24 text-green-400" />
-              )}
-              {callStage === "connecting" && (
-                <Loader2 className="w-24 h-24 text-yellow-400 animate-spin" />
-              )}
-            </div>
-
+  if (callStage === "idle") {
+    return (
+      <div className="h-full w-full flex items-center justify-center p-6">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95, y: 16 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="bg-gradient-to-br from-purple-500/10 to-blue-500/10 backdrop-blur-2xl rounded-3xl border border-white/10 p-8 shadow-2xl max-w-xl w-full"
+        >
+          <div className="text-center space-y-5">
             <motion.div
-              initial={{ y: 10, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              className="absolute -bottom-4 left-1/2 -translate-x-1/2 px-6 py-2 rounded-full text-sm font-medium backdrop-blur-xl border border-white/20 bg-black/30 whitespace-nowrap"
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ delay: 0.15, type: "spring", stiffness: 150 }}
+              className="w-20 h-20 rounded-full bg-gradient-to-br from-purple-500/30 to-blue-500/30 flex items-center justify-center mx-auto border-2 border-purple-500/50 shadow-xl shadow-purple-500/30"
             >
-              <span
-                className={
-                  callStage === "listening"
-                    ? "text-green-400"
-                    : callStage === "thinking"
-                    ? "text-blue-400"
-                    : callStage === "speaking"
-                    ? "text-purple-400"
-                    : "text-yellow-400"
-                }
-              >
-                {t(STAGE_LABEL_KEYS[callStage] || "idle")}
-              </span>
+              <Bot className="w-10 h-10 text-purple-300" />
             </motion.div>
-          </motion.div>
 
-          {callStage === "speaking" && (
-            <div className="flex items-center gap-1 mb-8">
-              {[...Array(9)].map((_, i) => (
-                <motion.div
-                  key={i}
-                  className="w-1.5 bg-gradient-to-t from-purple-500 to-blue-500 rounded-full"
-                  animate={{ height: [15, 50, 15] }}
-                  transition={{
-                    duration: 0.6,
-                    repeat: Infinity,
-                    delay: i * 0.06,
-                  }}
-                />
-              ))}
+            <div>
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-400 via-pink-400 to-blue-400 bg-clip-text text-transparent">
+                {t("testingConsole")}
+              </h1>
+              <p className="text-slate-400 text-sm mt-1">
+                Developer mode with hardcoded knowledge
+              </p>
             </div>
-          )}
 
-          {/* Messages — full conversation, auto-scroll, timestamps, markdown */}
+            <div className="bg-white/5 border border-purple-500/30 rounded-xl px-4 py-3 max-w-md mx-auto">
+              <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5 text-left">
+                {t("knowledgeSource")}
+              </div>
+              <div className="font-mono text-purple-300 text-xs text-left break-all">
+                backend/knowledge/institute.json
+              </div>
+              <div className="text-[11px] text-slate-500 mt-1 text-left">
+                Hardcoded · for developers only · never merged with uploaded PDFs
+              </div>
+            </div>
+
+            <button
+              onClick={() => startCall()}
+              className="px-10 py-4 bg-gradient-to-r from-purple-500 to-blue-500 rounded-2xl font-semibold hover:opacity-90 transition-all hover:scale-[1.03] flex items-center justify-center gap-2.5 mx-auto shadow-xl shadow-purple-500/30"
+            >
+              <Phone className="w-5 h-5" />
+              {t("startVoiceAgent")}
+            </button>
+
+            <div className="flex items-center justify-center gap-5 text-xs text-slate-500">
+              <div className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                Continuous voice
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                Auto language detection
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+                Real-time STT &amp; TTS
+              </div>
+            </div>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  const stageColor =
+    callStage === "listening"
+      ? "text-green-400"
+      : callStage === "thinking"
+      ? "text-blue-400"
+      : callStage === "speaking"
+      ? "text-purple-400"
+      : "text-yellow-400";
+
+  return (
+    <div className="h-full w-full flex flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-purple-950/40 to-slate-950">
+      {/* ── Header ─────────────────────────────────────────────── */}
+      <div className="h-14 shrink-0 border-b border-white/10 bg-black/20 backdrop-blur-2xl flex items-center gap-3 px-4">
+        <button
+          onClick={() => navigate("/")}
+          className="flex items-center gap-1.5 text-slate-400 hover:text-white transition-colors shrink-0"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span className="text-xs font-medium">{t("back")}</span>
+        </button>
+
+        <div className="h-5 w-px bg-white/10" />
+
+        <div className="flex items-center gap-2 font-mono text-purple-300 text-xs truncate">
+          <Terminal className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">{KNOWLEDGE_FILE}</span>
+        </div>
+
+        <div className="flex-1" />
+
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
+          <span
+            className={`w-2 h-2 rounded-full ${
+              callStage === "listening"
+                ? "bg-green-400"
+                : callStage === "thinking"
+                ? "bg-blue-400 animate-pulse"
+                : callStage === "speaking"
+                ? "bg-purple-400"
+                : "bg-yellow-400 animate-pulse"
+            }`}
+          />
+          <span className={`text-xs font-medium ${stageColor}`}>
+            {t(STAGE_LABEL_KEYS[callStage] || "idle")}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
+          <Globe className="w-3.5 h-3.5 text-slate-400" />
+          <span className="text-xs text-slate-300">{detectedLanguage}</span>
+        </div>
+
+        <LanguageSwitcher compact />
+
+        <button
+          onClick={handleEnd}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/30 transition-all shrink-0"
+        >
+          <PhoneOff className="w-4 h-4" />
+          <span className="text-xs font-medium">{t("endCall")}</span>
+        </button>
+      </div>
+
+      {/* ── Body ───────────────────────────────────────────────── */}
+      <div className="flex-1 flex min-h-0">
+        {/* Left: Call UI */}
+        <div className="flex-1 flex flex-col min-w-0">
+          {/* Orb */}
+          <div className="flex flex-col items-center pt-5 pb-3 shrink-0">
+            <div className="relative">
+              <div
+                className={`absolute inset-0 rounded-full blur-2xl ${
+                  callStage === "listening"
+                    ? "bg-purple-500/25 animate-pulse"
+                    : callStage === "thinking"
+                    ? "bg-blue-500/25 animate-pulse"
+                    : callStage === "speaking"
+                    ? "bg-green-500/25 animate-pulse"
+                    : "bg-transparent"
+                }`}
+              />
+              <div
+                className={`relative w-24 h-24 rounded-full bg-gradient-to-br from-purple-500/25 to-blue-500/25 flex items-center justify-center border-2 border-purple-500/40 shadow-2xl ${
+                  callStage === "listening" ? "animate-pulse" : ""
+                }`}
+              >
+                {callStage === "connecting" && (
+                  <Loader2 className="w-10 h-10 text-yellow-400 animate-spin" />
+                )}
+                {callStage === "listening" && (
+                  <Mic className="w-10 h-10 text-purple-300" />
+                )}
+                {callStage === "thinking" && (
+                  <Brain className="w-10 h-10 text-blue-400 animate-pulse" />
+                )}
+                {callStage === "speaking" && (
+                  <Volume2 className="w-10 h-10 text-green-400" />
+                )}
+              </div>
+            </div>
+
+            {/* Wave */}
+            {callStage === "speaking" && (
+              <div className="flex items-center gap-1 mt-3 h-5">
+                {[...Array(12)].map((_, i) => (
+                  <motion.div
+                    key={i}
+                    className="w-1 bg-gradient-to-t from-purple-500 to-blue-500 rounded-full"
+                    animate={{ height: [6, 20, 6] }}
+                    transition={{
+                      duration: 0.6,
+                      repeat: Infinity,
+                      delay: i * 0.05,
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Conversation */}
           <div
             ref={scrollRef}
-            className="w-full max-w-3xl space-y-4 overflow-y-auto max-h-64 px-2 scroll-smooth"
+            className="flex-1 min-h-0 overflow-y-auto px-6 py-3 space-y-3 scroll-smooth"
           >
             <AnimatePresence>
               {messages.map((msg, idx) => (
@@ -282,30 +356,30 @@ export default function VoiceTestingConsole() {
                   key={`${msg.timestamp}-${idx}`}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className={`flex gap-3 ${
+                  className={`flex gap-2.5 ${
                     msg.role === "user" ? "justify-end" : "justify-start"
                   }`}
                 >
                   <div
-                    className={`flex gap-3 max-w-[85%] min-w-0 ${
+                    className={`flex gap-2.5 max-w-[75%] min-w-0 ${
                       msg.role === "user" ? "flex-row-reverse" : "flex-row"
                     }`}
                   >
                     <div
-                      className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${
+                      className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                         msg.role === "user"
                           ? "bg-purple-500/20 text-purple-400 border border-purple-500/30"
                           : "bg-blue-500/20 text-blue-400 border border-blue-500/30"
                       }`}
                     >
                       {msg.role === "user" ? (
-                        <User className="w-6 h-6" />
+                        <User className="w-4 h-4" />
                       ) : (
-                        <Bot className="w-6 h-6" />
+                        <Bot className="w-4 h-4" />
                       )}
                     </div>
                     <div
-                      className={`p-5 rounded-2xl min-w-0 break-words ${
+                      className={`px-4 py-3 rounded-2xl min-w-0 break-words text-sm ${
                         msg.role === "user"
                           ? "bg-purple-500/20 border border-purple-500/30"
                           : "bg-blue-500/20 border border-blue-500/30"
@@ -314,11 +388,11 @@ export default function VoiceTestingConsole() {
                       {msg.role === "ai" ? (
                         <Markdown text={msg.content} />
                       ) : (
-                        <p className="text-base leading-relaxed whitespace-pre-wrap">
+                        <p className="leading-relaxed whitespace-pre-wrap">
                           {msg.content}
                         </p>
                       )}
-                      <div className="mt-2 text-[11px] text-slate-500 text-right">
+                      <div className="mt-1 text-[10px] text-slate-500 text-right">
                         {formatTime(msg.timestamp)}
                       </div>
                     </div>
@@ -327,36 +401,21 @@ export default function VoiceTestingConsole() {
               ))}
             </AnimatePresence>
           </div>
-        </div>
 
-        {/* Developer Console (Right) */}
-        <div className="w-[450px] border-l border-white/10 flex flex-col bg-black/30 backdrop-blur-2xl hidden lg:flex">
-          <div className="p-6 border-b border-white/10">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-lg">
-                {t("developerConsole")}
-              </h3>
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-2 text-sm bg-white/5 px-3 py-1.5 rounded-lg">
-                  <Globe className="w-4 h-4 text-slate-400" />
-                  <span className="text-slate-300">{detectedLanguage}</span>
-                </div>
-                <LanguageSwitcher compact />
-              </div>
-            </div>
-
-            <div className="flex gap-2">
+          {/* Input */}
+          <div className="shrink-0 border-t border-white/10 bg-black/20 backdrop-blur-2xl p-3">
+            <div className="flex gap-2 max-w-4xl mx-auto">
               <button
                 onClick={toggleListening}
                 disabled={callStage !== "listening"}
-                className={`p-4 rounded-xl transition-all ${
+                className={`p-3 rounded-xl transition-all shrink-0 ${
                   isListening
                     ? "bg-red-500/20 text-red-400 border border-red-500/30"
                     : "bg-white/5 text-slate-400 border border-white/10 hover:bg-white/10"
                 } disabled:opacity-50`}
                 title={isListening ? "Stop listening" : "Start listening"}
               >
-                <Mic className="w-6 h-6" />
+                <Mic className="w-5 h-5" />
               </button>
 
               <input
@@ -366,130 +425,178 @@ export default function VoiceTestingConsole() {
                 onKeyDown={(e) => e.key === "Enter" && sendMessage()}
                 placeholder={t("typeMessage")}
                 disabled={callStage !== "listening"}
-                className="flex-1 px-5 py-4 bg-white/5 border border-white/10 rounded-xl text-base focus:outline-none focus:border-purple-500/50 disabled:opacity-50 min-w-0"
+                className="flex-1 px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-sm focus:outline-none focus:border-purple-500/50 disabled:opacity-50 min-w-0"
               />
 
               <button
                 onClick={() => sendMessage()}
                 disabled={!inputText.trim() || callStage !== "listening"}
-                className="px-6 py-4 bg-gradient-to-r from-purple-500 to-blue-500 rounded-xl font-medium hover:opacity-90 transition-all disabled:opacity-50"
+                className="px-5 py-3 bg-gradient-to-r from-purple-500 to-blue-500 rounded-xl font-medium hover:opacity-90 transition-all disabled:opacity-50 shrink-0"
               >
                 <Send className="w-5 h-5" />
               </button>
             </div>
           </div>
+        </div>
 
-          {showDebug && debugInfo && (
-            <div className="p-6 border-b border-white/10 space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-slate-300">
-                  {t("pipelineDebug")}
-                </span>
-                <RefreshCw className="w-4 h-4 text-slate-400" />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div className="bg-white/5 rounded-xl p-4 border border-white/10">
-                  <div className="text-slate-400 mb-2 text-xs">
-                    {t("retrieval")}
-                  </div>
-                  <div className="font-mono text-green-400 text-lg">
-                    {debugInfo.retrieval_time_ms}ms
-                  </div>
-                </div>
-                <div className="bg-white/5 rounded-xl p-4 border border-white/10">
-                  <div className="text-slate-400 mb-2 text-xs">{t("llm")}</div>
-                  <div className="font-mono text-blue-400 text-lg">
-                    {debugInfo.llm_time_ms}ms
-                  </div>
-                </div>
-                <div className="bg-white/5 rounded-xl p-4 border border-white/10">
-                  <div className="text-slate-400 mb-2 text-xs">{t("tts")}</div>
-                  <div className="font-mono text-purple-400 text-lg">
-                    {debugInfo.tts_time_ms}ms
-                  </div>
-                </div>
-                <div className="bg-white/5 rounded-xl p-4 border border-white/10">
-                  <div className="text-slate-400 mb-2 text-xs">{t("total")}</div>
-                  <div className="font-mono text-white text-lg">
-                    {debugInfo.total_time_ms}ms
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 text-sm bg-white/5 p-3 rounded-xl border border-white/10">
-                <Brain className="w-4 h-4 text-purple-400" />
-                <span className="text-slate-300">
-                  {t("chunksRetrieved")}: {debugInfo.chunks_retrieved}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2 text-sm bg-white/5 p-3 rounded-xl border border-white/10">
-                <Zap className="w-4 h-4 text-blue-400" />
-                <span className="text-slate-300">
-                  {t("knowledgeSource")}: {debugInfo.knowledge_source}
-                </span>
-              </div>
-            </div>
-          )}
-
-          <div className="p-6 border-b border-white/10">
-            <div className="text-sm font-medium text-slate-300 mb-3">
-              {t("quickCommands")}
-            </div>
-            <div className="space-y-2 text-sm">
-              <div className="bg-purple-500/10 border border-purple-500/30 p-3 rounded-xl">
-                <div className="text-purple-400 font-mono text-base">
-                  /insert &lt;content&gt;
-                </div>
-                <div className="text-slate-400 mt-1 text-xs">
-                  {t("uploadKnowledge")}
-                </div>
-              </div>
-            </div>
+        {/* Right: Developer Console */}
+        <div className="w-[380px] shrink-0 border-l border-white/10 flex flex-col bg-black/30 backdrop-blur-2xl min-h-0">
+          {/* Tabs */}
+          <div className="shrink-0 flex items-center gap-1 px-3 pt-3 pb-2 border-b border-white/10">
+            {(
+              [
+                { id: "pipeline", label: t("pipelineDebug"), icon: Activity },
+                { id: "log", label: t("conversationLog"), icon: MessageSquare },
+                { id: "commands", label: t("quickCommands"), icon: Terminal },
+              ] as const
+            ).map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => setConsoleTab(id)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  consoleTab === id
+                    ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
+                    : "text-slate-400 hover:text-white hover:bg-white/5 border border-transparent"
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {label}
+              </button>
+            ))}
           </div>
 
-          <div className="flex-1 overflow-y-auto p-6 space-y-3">
-            <div className="text-sm font-medium text-slate-300 mb-4 sticky top-0 bg-black/30 backdrop-blur-2xl py-2">
-              {t("conversationLog")}
-            </div>
-            <AnimatePresence>
-              {messages.map((msg, idx) => (
-                <div
-                  key={`log-${msg.timestamp}-${idx}`}
-                  className={`text-sm p-4 rounded-xl border ${
-                    msg.role === "user"
-                      ? "bg-purple-500/10 border-purple-500/30"
-                      : "bg-blue-500/10 border-blue-500/30"
-                  }`}
-                >
-                  <div className="font-medium mb-2 flex items-center gap-2 text-slate-300">
-                    {msg.role === "user" ? t("you") : t("ai")}
-                    <span className="ml-auto text-[11px] text-slate-500">
-                      {formatTime(msg.timestamp)}
+          {/* Tab content */}
+          <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
+            {consoleTab === "pipeline" && debugInfo && (
+              <>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="bg-white/5 rounded-xl p-3 border border-white/10">
+                    <div className="text-slate-400 mb-1 text-[10px] uppercase tracking-wider">
+                      {t("retrieval")}
+                    </div>
+                    <div className="font-mono text-green-400 text-base font-bold">
+                      {debugInfo.retrieval_time_ms}ms
+                    </div>
+                  </div>
+                  <div className="bg-white/5 rounded-xl p-3 border border-white/10">
+                    <div className="text-slate-400 mb-1 text-[10px] uppercase tracking-wider">
+                      {t("llm")}
+                    </div>
+                    <div className="font-mono text-blue-400 text-base font-bold">
+                      {debugInfo.llm_time_ms}ms
+                    </div>
+                  </div>
+                  <div className="bg-white/5 rounded-xl p-3 border border-white/10">
+                    <div className="text-slate-400 mb-1 text-[10px] uppercase tracking-wider">
+                      {t("tts")}
+                    </div>
+                    <div className="font-mono text-purple-400 text-base font-bold">
+                      {debugInfo.tts_time_ms}ms
+                    </div>
+                  </div>
+                  <div className="bg-white/5 rounded-xl p-3 border border-white/10">
+                    <div className="text-slate-400 mb-1 text-[10px] uppercase tracking-wider">
+                      {t("total")}
+                    </div>
+                    <div className="font-mono text-white text-base font-bold">
+                      {debugInfo.total_time_ms}ms
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 text-xs bg-white/5 p-2.5 rounded-xl border border-white/10">
+                  <Brain className="w-4 h-4 text-purple-400 shrink-0" />
+                  <span className="text-slate-300">
+                    {t("chunksRetrieved")}:{" "}
+                    <span className="text-white font-medium">
+                      {debugInfo.chunks_retrieved}
                     </span>
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 text-xs bg-white/5 p-2.5 rounded-xl border border-white/10">
+                  <Zap className="w-4 h-4 text-blue-400 shrink-0" />
+                  <span className="text-slate-300 min-w-0">
+                    {t("knowledgeSource")}:{" "}
+                    <span className="text-white font-medium break-all">
+                      {debugInfo.knowledge_source}
+                    </span>
+                  </span>
+                </div>
+              </>
+            )}
+
+            {consoleTab === "log" && (
+              <div className="space-y-2.5">
+                {messages.length === 0 && (
+                  <p className="text-xs text-slate-500 text-center py-6">
+                    {t("noCalls")}
+                  </p>
+                )}
+                <AnimatePresence>
+                  {messages.map((msg, idx) => (
+                    <motion.div
+                      key={`log-${msg.timestamp}-${idx}`}
+                      initial={{ opacity: 0, x: 10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      className={`text-xs p-3 rounded-xl border ${
+                        msg.role === "user"
+                          ? "bg-purple-500/10 border-purple-500/30"
+                          : "bg-blue-500/10 border-blue-500/30"
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 mb-1 text-slate-300 font-medium">
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            msg.role === "user"
+                              ? "bg-purple-400"
+                              : "bg-blue-400"
+                          }`}
+                        />
+                        {msg.role === "user" ? t("you") : t("ai")}
+                        <span className="ml-auto text-[10px] text-slate-500">
+                          {formatTime(msg.timestamp)}
+                        </span>
+                      </div>
+                      <div className="text-slate-400 whitespace-pre-wrap break-words">
+                        {msg.content}
+                      </div>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              </div>
+            )}
+
+            {consoleTab === "commands" && (
+              <div className="space-y-3">
+                <div className="bg-purple-500/10 border border-purple-500/30 p-3 rounded-xl">
+                  <div className="text-purple-400 font-mono text-sm">
+                    /insert &lt;content&gt;
                   </div>
-                  <div className="text-slate-400 whitespace-pre-wrap break-words">
-                    {msg.content}
+                  <div className="text-slate-400 mt-1 text-xs">
+                    {t("uploadKnowledge")}
                   </div>
                 </div>
-              ))}
-            </AnimatePresence>
+              </div>
+            )}
           </div>
 
-          <div className="p-6 border-t border-white/10 space-y-3">
+          {/* Footer */}
+          <div className="shrink-0 p-3 border-t border-white/10 space-y-2">
             <button
-              onClick={() => navigate(`/active-call?knowledge=${KNOWLEDGE_FILE}`)}
-              className="w-full py-3 bg-white/5 border border-white/10 rounded-xl font-medium hover:bg-white/10 transition-all flex items-center justify-center gap-3 text-slate-300"
+              onClick={() =>
+                navigate(`/active-call?knowledge=${KNOWLEDGE_FILE}`)
+              }
+              className="w-full py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs font-medium hover:bg-white/10 transition-all flex items-center justify-center gap-2 text-slate-300"
             >
-              <Maximize2 className="w-4 h-4" />
+              <Maximize2 className="w-3.5 h-3.5" />
               {t("openFullScreen")}
             </button>
             <button
               onClick={handleEnd}
-              className="w-full py-4 bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl font-medium hover:bg-red-500/30 transition-all flex items-center justify-center gap-3"
+              className="w-full py-2.5 bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-xs font-medium hover:bg-red-500/30 transition-all flex items-center justify-center gap-2"
             >
-              <PhoneOff className="w-5 h-5" />
+              <PhoneOff className="w-3.5 h-3.5" />
               {t("endCall")}
             </button>
           </div>

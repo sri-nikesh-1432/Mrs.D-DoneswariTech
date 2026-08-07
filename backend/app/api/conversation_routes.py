@@ -35,8 +35,11 @@ LANGUAGE_INSTRUCTION = (
     "Respond in the SAME language the student used ({language}). "
     "Telugu → Telugu; Hindi → Hindi; Tamil → Tamil; Kannada → Kannada; "
     "Malayalam → Malayalam; English → English. Match their language exactly. "
-    "Write in the CORRECT native script with accurate spelling — never Romanized "
-    "transliteration (write 'మీకు ఎలా సహాయం చేయగలను?', not 'meeku ela sahayam cheyagalanu?')."
+    "Write in the CORRECT native script with PERFECT spelling — never Romanized "
+    "transliteration (write 'మీకు ఎలా సహాయం చేయగలను?', not 'meeku ela sahayam cheyagalanu?'). "
+    "Telugu rules: exact vowel signs; compound verbs as ONE word (చేయగలను, not 'చేయ గలను'); "
+    "never swap similar consonants (డ/ద, ట/త, చ/స/శ); reuse the caller's correctly spelled "
+    "words; if unsure of a spelling, rephrase with a simpler word rather than guessing."
 )
 
 
