@@ -166,8 +166,9 @@ class EdgeTTSService:
                 try:
                     import edge_tts
                     spoken = normalize_for_speech(sentence)
+                    rate, pitch = self._prosody_for(sentence)
                     communicate = edge_tts.Communicate(
-                        spoken, voice_to_use, rate=self.rate, pitch=self.pitch
+                        spoken, voice_to_use, rate=rate, pitch=pitch
                     )
                     chunks = [
                         c["data"] async for c in communicate.stream()
@@ -195,7 +196,126 @@ class EdgeTTSService:
             }
             for r in results
         ]
+
+    async def stream_sentences(
+        self,
+        text: str,
+        voice: Optional[str] = None,
+        language: Optional[str] = None,
+        max_sentences: int = 20,
+    ):
+        """
+        Async generator that yields each sentence's audio IN ORDER as soon as
+        it is ready — so the frontend can start playing sentence 1 while the
+        later sentences are still being synthesized (real-time feel without
+        ever cutting a sentence).
+
+        Yields dicts: {"index": int, "text": str, "audio_data": base64-or-None}
+        """
+        all_sentences = split_into_sentences(text)[:max_sentences]
+        if not all_sentences:
+            return
+
+        voice_to_use = self._pick_voice(text, language=language, voice=voice)
+        sem = asyncio.Semaphore(4)
+
+        async def _synth(index: int, sentence: str):
+            async with sem:
+                try:
+                    import edge_tts
+                    spoken = normalize_for_speech(sentence)
+                    rate, pitch = self._prosody_for(sentence)
+                    communicate = edge_tts.Communicate(
+                        spoken, voice_to_use, rate=rate, pitch=pitch
+                    )
+                    chunks = [
+                        c["data"] async for c in communicate.stream()
+                        if c["type"] == "audio"
+                    ]
+                    audio = b"".join(chunks)
+                    return index, sentence, audio or None
+                except Exception as e:
+                    logger.error("Streaming sentence TTS failed: %s", e)
+                    return index, sentence, None
+
+        # Launch all in parallel; collect into a buffer keyed by index and
+        # yield strictly in order so playback is one continuous speaker.
+        pending = {}
+        next_index = 0
+
+        tasks = [asyncio.create_task(_synth(i, s)) for i, s in enumerate(all_sentences)]
+        for task in asyncio.as_completed(tasks):
+            index, sentence, audio = await task
+            pending[index] = (sentence, audio)
+            while next_index in pending:
+                sentence_i, audio_i = pending.pop(next_index)
+                yield {
+                    "index": next_index,
+                    "text": sentence_i,
+                    "audio_data": base64_encode(audio_i) if audio_i else None,
+                }
+                next_index += 1
     
+    # ── Natural prosody (subtle, human-like rhythm) ─────────────────────────
+    # The goal is a living counsellor, not a monotone TTS demo. Per sentence
+    # we vary pitch and rate a little based on the sentence type and length:
+    #   - Questions      : slight pitch rise  (sounds like a question)
+    #   - Exclamations   : slight emphasis    (+pitch)
+    #   - Short lines    : a touch faster     (brisk "Avunu...")
+    #   - Long sentences : a touch slower     (clear, unhurried information)
+    # All deltas are small so the voice stays natural and never theatrical.
+    _BASE_RATE = os.getenv("TTS_RATE", "+10%")
+    _BASE_PITCH = os.getenv("TTS_PITCH", "+0Hz")
+
+    @staticmethod
+    def _parse_pct(value: str, default: int = 10) -> int:
+        """Parse '+10%' -> 10, '-5%' -> -5, '0%' -> 0."""
+        m = re.match(r"([+-]?\d+(?:\.\d+)?)%", value.strip())
+        if not m:
+            return default
+        try:
+            return int(float(m.group(1)))
+        except ValueError:
+            return default
+
+    @staticmethod
+    def _parse_hz(value: str, default: int = 0) -> int:
+        """Parse '+2Hz' -> 2, '-3Hz' -> -3."""
+        m = re.match(r"([+-]?\d+(?:\.\d+)?)\s*[Hh]z", value.strip())
+        if not m:
+            return default
+        try:
+            return int(float(m.group(1)))
+        except ValueError:
+            return default
+
+    def _prosody_for(self, sentence: str) -> tuple:
+        """
+        Return (rate, pitch) for a single sentence so the whole reply does not
+        sound equally timed and pitched.
+        """
+        base_rate = self._parse_pct(self._BASE_RATE)
+        base_pitch = self._parse_hz(self._BASE_PITCH)
+        s = sentence.strip()
+
+        rate_delta = 0
+        pitch_delta = 0
+
+        if s.endswith("?"):
+            pitch_delta += 4          # question rise
+        elif s.endswith("!"):
+            pitch_delta += 2          # gentle emphasis
+
+        length = len(s)
+        if length < 20:
+            rate_delta += 4           # short, brisk acknowledgement
+        elif length > 130:
+            rate_delta -= 3           # long sentence: calm, clear
+
+        rate = base_rate + rate_delta
+        pitch = base_pitch + pitch_delta
+        return f"{rate:+d}%", f"{pitch:+d}Hz"
+
     def _pick_voice(
         self,
         text: str,

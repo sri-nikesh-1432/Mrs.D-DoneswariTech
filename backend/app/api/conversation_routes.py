@@ -4,9 +4,11 @@ This is the SINGLE pipeline that both the simulator and real phone calls use.
 """
 
 import time
+import json
 import uuid
 import base64
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timezone
@@ -43,8 +45,11 @@ LANGUAGE_INSTRUCTION = (
     "- Acknowledge warmly in ONE short phrase, then answer or guide. E.g. 'అవును, తప్పకుండా. ...'\n"
     "- Keep it SHORT like a phone call: 1-3 sentences for simple questions. Don't dump everything.\n"
     "- End with a relevant warm follow-up question when natural.\n"
-    "- Code-mixing is normal: keep course names and terms (MPC, BiPC, JEE, NEET, B.Tech, fee, "
-    "  hostel, bus) in English even inside a Telugu reply.\n"
+    "- NATURAL TELUGU-ENGLISH CODE-MIXING IS EXPECTED: an educated Telugu counsellor mixes "
+    "  English words naturally. Write Telugu words in Telugu script, keep conversational "
+    "  English words (fee, hostel, bus, campus, college, admission, process, course, details, "
+    "  available, structure, scholarship, facility) in English: 'అవును, మా college లో hostel "
+    "  facility కూడా ఉంది.' Never force formal pure Telugu, never write Telugu words in Latin.\n"
     "\n"
     "SPELLING (critical): regional text in CORRECT native script, PERFECT spelling, never "
     "Romanized ('మీకు ఎలా సహాయం చేయగలను?', not 'meeku ela sahayam cheyagalanu?'). Telugu: exact "
@@ -54,6 +59,8 @@ LANGUAGE_INSTRUCTION = (
     "రూపాయలు' for ₹15000, 'ఎనభై ఐదు వేల రూపాయలు' for ₹85000. Spell names correctly: నారాయణ, "
     "హైదరాబాద్, జూబిలీ హిల్స్.\n"
     "\n"
+    "Vary sentence lengths; mix short acknowledgements and longer answers so it sounds spoken. "
+    "End questions with '?' and statements with '.' for natural intonation. "
     "Speak like a warm professional counsellor: confident, concise, human."
 )
 
@@ -101,6 +108,188 @@ def _detect_language(user_input: str, hint: Optional[str] = None) -> str:
     if hint and hint.lower() in ("ml", "malayalam"):
         return "Malayalam"
     return "English"
+
+
+@router.post("/stream")
+async def stream_conversation(
+    # Streaming voice endpoint: returns text/event-stream where each sentence
+    # event carries the sentence's audio as soon as it is ready, so the
+    # frontend can begin playback of sentence 1 while later sentences are
+    # still being synthesized. Identical RAG + LLM logic to /test and /process
+    # (no business-logic changes) — only the audio delivery is streamed.
+    mode: str = "test",
+    knowledge_file: str = "institute.json",
+    institute_id: int = 1,
+    user_input: str = "",
+    conversation_id: Optional[str] = None,
+    is_greeting: bool = False,
+    language: Optional[str] = "English",
+):
+    """
+    Stream a conversation turn as server-sent events.
+
+    Event flow:
+      event: turn      data: {"conversation_id", "detected_language"}
+      event: sentence  data: {"index", "text", "audio_data"}   (one per sentence, in order)
+      event: done      data: {"ai_response", "debug_info", "sentence_count"}
+      event: error     data: {"detail"}
+    """
+    conv_id = conversation_id or (
+        f"stream_{uuid.uuid4().hex[:12]}"
+    )
+
+    async def event_stream():
+        try:
+            turn_start = time.time()
+            retrieval_ms = 0
+            llm_ms = 0
+            tts_ms = 0
+            # ── Same detection/transliteration as the non-streaming routes ──
+            detected_lang = _detect_language(user_input, hint=language)
+            llm_input = transliterate_roman_telugu(user_input)
+            yield sse_event(
+                "turn",
+                {"conversation_id": conv_id, "detected_language": detected_lang},
+            )
+
+            # Greeting: no LLM needed — reuse the JSON greeting (test mode)
+            # or a context-generated greeting (process mode), matching the
+            # non-streaming routes exactly.
+            if is_greeting:
+                if mode == "test":
+                    retriever = get_json_retriever(knowledge_file)
+                    ai_response = retriever.get_greeting(language=language)
+                else:
+                    _r0 = time.time()
+                    retrieved_chunks = await retrieve_context(
+                        "institute name college school", top_k=5, min_score=0.1
+                    )
+                    retrieval_ms = (time.time() - _r0) * 1000
+                    context_text = format_context_for_prompt(retrieved_chunks)
+                    institute_name = "the institute"
+                    if context_text:
+                        import re as _re
+                        for pattern in [
+                            r'(?:institute|college|school|university)[\s]+(?:name|is|called|:)\s*([A-Z][A-Za-z\s]+)',
+                            r'([A-Z][A-Za-z\s]+(?:College|Institute|School|University))',
+                            r'Name:\s*([A-Z][A-Za-z\s]+)',
+                        ]:
+                            m = _re.search(pattern, context_text, _re.IGNORECASE)
+                            if m:
+                                institute_name = m.group(1).strip()
+                                break
+                    greeting_prompt = (
+                        f"You are Mrs. D, a warm Indian admissions counsellor speaking on a live call.\n"
+                        f"You are representing {institute_name}.\n\n"
+                        f"Context about the institute:\n{context_text or 'General admission inquiry'}\n\n"
+                        f"Write a friendly, brief (2-3 sentence) greeting in {language} "
+                        f"in the correct native script with proper spelling. Introduce yourself and "
+                        f"mention {institute_name}. Invite the caller to ask about admissions, courses, "
+                        f"fees, hostel or scholarships. Generate ONLY the greeting."
+                    )
+                    _l0 = time.time()
+                    try:
+                        ai_response = await generate_response(
+                            conversation_history=[],
+                            context=context_text,
+                            user_message=greeting_prompt,
+                        )
+                        llm_ms = (time.time() - _l0) * 1000
+                    except ValueError:
+                        ai_response = (
+                            f"Hi! I'm Mrs.D, AI Admission Counsellor of {institute_name}. "
+                            f"How may I help you today?"
+                        )
+            else:
+                _r0 = time.time()
+                if mode == "test":
+                    retriever = get_json_retriever(knowledge_file)
+                    context = retriever.retrieve_context(llm_input, top_k=5)
+                else:
+                    retrieved_chunks = await retrieve_context(llm_input, top_k=5)
+                    context = format_context_for_prompt(retrieved_chunks)
+                retrieval_ms = (time.time() - _r0) * 1000
+
+                memory = conversation_memory.setdefault(conv_id, [])
+                history_list = _build_history(memory, conv_id)
+                lang_hint = LANGUAGE_INSTRUCTION.format(language=detected_lang)
+                _l0 = time.time()
+                try:
+                    ai_response = await generate_response(
+                        conversation_history=history_list,
+                        context=context,
+                        user_message=f"{llm_input}\n\n{lang_hint}",
+                    )
+                    llm_ms = (time.time() - _l0) * 1000
+                except ValueError:
+                    if detected_lang == "Telugu":
+                        ai_response = (
+                            "అవును, మా నారాయణ కాలేజీ వివరాలు మీకు చెప్తాను. "
+                            "మీకు కోర్సులు, ఫీజు లేదా అడ్మిషన్ ప్రాసెస్ గురించి ఏది కావాలి?"
+                        )
+                    else:
+                        ai_response = (
+                            "I can help with that. We offer MPC, BiPC, MEC and CEC streams. "
+                            "What would you like to know more about — courses, fees or admission?"
+                        )
+
+                memory.append(user_input)
+                memory.append(ai_response)
+                if len(memory) > 20:
+                    conversation_memory[conv_id] = memory[-20:]
+
+            # ── Stream each sentence's audio as soon as it is ready ──────────
+            synth_lang = detected_lang if not is_greeting else language
+            count = 0
+            _t0 = time.time()
+            async for chunk in tts_service.stream_sentences(
+                ai_response, language=synth_lang
+            ):
+                if chunk.get("audio_data") is None:
+                    continue  # skip sentences with no audio (still keep order)
+                yield sse_event(
+                    "sentence",
+                    {
+                        "index": chunk["index"],
+                        "text": chunk["text"],
+                        "audio_data": chunk["audio_data"],
+                    },
+                )
+                count += 1
+            tts_ms = (time.time() - _t0) * 1000
+
+            yield sse_event(
+                "done",
+                {
+                    "ai_response": ai_response,
+                    "conversation_id": conv_id,
+                    "sentence_count": count,
+                    "debug_info": {
+                        "retrieval_time_ms": retrieval_ms,
+                        "llm_time_ms": llm_ms,
+                        "tts_time_ms": tts_ms,
+                        "total_time_ms": (time.time() - turn_start) * 1000,
+                        "sentence_count": count,
+                        "knowledge_source": (
+                            "json" if mode == "test" else "faiss"
+                        ),
+                    },
+                },
+            )
+        except Exception as e:
+            logger.error("Streaming conversation failed: %s", e)
+            yield sse_event("error", {"detail": str(e)})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def sse_event(event: str, data: dict) -> str:
+    """Format one SSE event frame."""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 @router.post("/end")

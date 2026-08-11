@@ -157,6 +157,14 @@ export function useVoiceAgent({
   const aiSpeakStartedAtRef = useRef(0); // barge-in cooldown anchor
   const aiFinishedAtRef = useRef(0); // when AI finished speaking (post-TTS grace)
 
+  // ── Streaming (SSE) state ────────────────────────────────────────────────
+  // The /stream endpoint delivers each sentence's audio as soon as it is
+  // ready, so playback of sentence 1 can begin while the reply is still being
+  // generated/synthesized. One in-flight stream per conversation; aborting it
+  // (barge-in / end call / new turn) cancels the fetch immediately.
+  const streamAbortRef = useRef<AbortController | null>(null);
+  const streamActiveRef = useRef(false);
+
   // ── Silence / VAD: fire after ~1.3s with no new speech ────────────────────
   const clearSilenceTimer = useCallback(() => {
     if (silenceTimerRef.current) {
@@ -217,6 +225,15 @@ export function useVoiceAgent({
     }
   }, []);
 
+  // ── Cancel any in-flight streaming fetch (barge-in, end call, new turn) ──
+  const stopStreaming = useCallback(() => {
+    streamActiveRef.current = false;
+    if (streamAbortRef.current) {
+      streamAbortRef.current.abort();
+      streamAbortRef.current = null;
+    }
+  }, []);
+
   // ── Turn end: clear buffers, THEN listen for new audio only ───────────────
   const handleTurnEnd = useCallback(() => {
     processingRef.current = false;
@@ -244,7 +261,9 @@ export function useVoiceAgent({
       }
       listeningRef.current = false;
       setIsListening(false);
-      setTimeout(() => startListening(), 120);
+      if (!endedRef.current) {
+        setTimeout(() => startListening(), 120);
+      }
     }
   }, [setStage, startListening]);
 
@@ -256,7 +275,9 @@ export function useVoiceAgent({
     const next = audioQueueRef.current.shift();
     if (!next) {
       queueActiveRef.current = false;
-      handleTurnEnd();
+      // While the stream is still delivering sentences, wait for the rest —
+      // never close the turn mid-stream. Otherwise playback is complete.
+      if (!streamActiveRef.current) handleTurnEnd();
       return;
     }
     if (!audioRef.current) {
@@ -269,36 +290,128 @@ export function useVoiceAgent({
     aiSpeakStartedAtRef.current = Date.now();
     const el = audioRef.current;
     el.src = `data:audio/mp3;base64,${next.audioData}`;
-    el.onended = () => playNextInQueue();
+    el.onended = () => {
+      // Natural conversational gap (~200ms) at sentence boundaries — one
+      // continuous speaker, never a clipped machine-gun of clips.
+      setTimeout(() => playNextInQueue(), 200);
+    };
     try {
       await el.play();
     } catch {
       // Autoplay blocked or aborted — skip to the next sentence.
-      playNextInQueue();
+      setTimeout(() => playNextInQueue(), 200);
     }
   }, [handleTurnEnd]);
 
-  // ── Start the sentence queue for a freshly generated response ─────────────
-  const playAudioQueue = useCallback(
-    (sentences: Array<{ text: string; audio_data: string | null }>) => {
-      const withAudio = sentences.filter((s) => s.audio_data);
-      if (withAudio.length === 0) return false;
-      stopAudioQueue();
-      audioQueueRef.current = withAudio.map((s) => ({
-        text: s.text,
-        audioData: s.audio_data as string,
-      }));
-      queueActiveRef.current = true;
-      playNextInQueue();
-      return true;
+  // ── Enqueue one streamed sentence for immediate playback ─────────────────
+  // Each sentence's audio is queued the moment it arrives from the SSE
+  // stream; if nothing is playing yet, playback begins right away so the
+  // caller hears a live response instead of a 30-second wait.
+  const enqueueStreamedSentence = useCallback(
+    (s: { text: string; audioData: string }) => {
+      if (endedRef.current) return;
+      if (!queueActiveRef.current) {
+        audioQueueRef.current = [s];
+        queueActiveRef.current = true;
+        setStage("speaking");
+        playNextInQueue();
+      } else {
+        audioQueueRef.current.push(s);
+      }
     },
-    [playNextInQueue, stopAudioQueue]
+    [playNextInQueue, setStage]
+  );
+
+  // ── Consume the /stream SSE endpoint ─────────────────────────────────────
+  // Events: `sentence` (audio ready → enqueue + play as soon as possible),
+  // `done` (full reply + debug info), `error`. Aborting the fetch (barge-in /
+  // end call) cancels both the network request and further playback.
+  const streamConversation = useCallback(
+    async (
+      params: URLSearchParams,
+      onSentence: (text: string) => void,
+      onDone: (aiResponse: string, debugInfo: any) => void,
+      onTurn?: (detectedLanguage: string) => void
+    ) => {
+      const controller = new AbortController();
+      streamAbortRef.current = controller;
+      streamActiveRef.current = true;
+      try {
+        const response = await fetch(`/api/conversation/stream?${params}`, {
+          method: "POST",
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) {
+          throw new Error("Failed to get response");
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let sep = buffer.indexOf("\n\n");
+          while (sep !== -1) {
+            const frame = buffer.slice(0, sep);
+            buffer = buffer.slice(sep + 2);
+            const eventName = (frame.match(/^event:\s*(.+)$/m) || [])[1]?.trim();
+            const dataLine = (frame.match(/^data:\s*(.+)$/m) || [])[1];
+            if (eventName && dataLine) {
+              let data: any = null;
+              try {
+                data = JSON.parse(dataLine);
+              } catch {
+                /* skip malformed frame */
+              }
+              if (data) {
+                if (eventName === "turn") {
+                  onTurn?.(data.detected_language || "");
+                } else if (eventName === "sentence") {
+                  onSentence(data.text || "");
+                  if (data.audio_data) {
+                    enqueueStreamedSentence({
+                      text: data.text || "",
+                      audioData: data.audio_data,
+                    });
+                  }
+                } else if (eventName === "done") {
+                  onDone(data.ai_response || "", data.debug_info || null);
+                } else if (eventName === "error") {
+                  throw new Error(data.detail || "Stream error");
+                }
+              }
+            }
+            sep = buffer.indexOf("\n\n");
+          }
+        }
+      } finally {
+        streamActiveRef.current = false;
+        if (streamAbortRef.current === controller) {
+          streamAbortRef.current = null;
+        }
+        // The stream ended but produced no playable audio → close the turn so
+        // the mic returns to LISTENING instead of hanging on THINKING. Skipped
+        // when the call ended (endCall owns that transition) or when a barge-in
+        // already moved to LISTENING (there the silence timer owns the
+        // re-submit — never submit a half-spoken interruption).
+        if (
+          !endedRef.current &&
+          stageRef.current !== "listening" &&
+          !queueActiveRef.current
+        ) {
+          handleTurnEnd();
+        }
+      }
+    },
+    [enqueueStreamedSentence, handleTurnEnd]
   );
 
   // ── Barge-in: user talks while AI is speaking → stop TTS, queue speech ────
   const handleBargeIn = useCallback(
     (text: string) => {
       stopAudioQueue();
+      stopStreaming();
       clearSilenceTimer();
       processingRef.current = false;
       setIsProcessing(false);
@@ -309,7 +422,7 @@ export function useVoiceAgent({
       // Submit after the user pauses — same silence logic as normal turns.
       armSilenceTimer();
     },
-    [armSilenceTimer, clearSilenceTimer, setStage, stopAudioQueue]
+    [armSilenceTimer, clearSilenceTimer, setStage, stopAudioQueue, stopStreaming]
   );
 
   // ── Submit an utterance through the chosen pipeline ───────────────────────
@@ -341,60 +454,67 @@ export function useVoiceAgent({
         const lang = detectLanguage(text);
         setDetectedLanguage(lang);
 
-        const params = new URLSearchParams(
-          mode === "test"
-            ? {
-                knowledge_file: knowledgeFile,
-                user_input: text,
-                conversation_id: conversationId.current,
-                include_audio: "true",
-                language: lang,
+        const params = new URLSearchParams({
+          mode,
+          user_input: text,
+          conversation_id: conversationId.current,
+          language: lang,
+          ...(mode === "test"
+            ? { knowledge_file: knowledgeFile }
+            : { institute_id: String(instituteId) }),
+        });
+
+        // SSE streaming: each sentence's audio is delivered as soon as it is
+        // ready and playback begins immediately — the caller hears one live,
+        // continuous speaker instead of waiting for a 30-second blob.
+        let aiAccumulated = "";
+        await streamConversation(
+          params,
+          (sentenceText) => {
+            aiAccumulated += sentenceText;
+            // Progressively reveal the reply while it is being spoken.
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              if (last && last.role === "ai") {
+                return [...prev.slice(0, -1), { ...last, content: aiAccumulated }];
               }
-            : {
-                institute_id: String(instituteId),
-                user_input: text,
-                conversation_id: conversationId.current,
-                include_audio: "true",
-                language: lang,
-              }
+              return [
+                ...prev,
+                {
+                  role: "ai",
+                  content: aiAccumulated,
+                  timestamp: new Date().toISOString(),
+                },
+              ];
+            });
+          },
+          (fullText, debug) => {
+            if (fullText) aiAccumulated = fullText;
+            if (debug) setDebugInfo(debug);
+          },
+          (lang) => {
+            if (lang) setDetectedLanguage(lang);
+          }
         );
 
-        const endpoint =
-          mode === "test"
-            ? `/api/conversation/test?${params}`
-            : `/api/conversation/process?${params}`;
-
-        const response = await fetch(endpoint, { method: "POST" });
-        if (!response.ok) throw new Error("Failed to get response");
-
-        const data = await response.json();
-        const aiText = data.ai_response || "I'm sorry, I couldn't respond.";
-
-        // If the user barged in while we were waiting, discard this turn's audio.
-        if (stageRef.current !== "thinking") {
+        // Finalize the AI message with the canonical response text.
+        const aiText = aiAccumulated || "I'm sorry, I couldn't respond.";
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.role === "ai") {
+            return [...prev.slice(0, -1), { ...last, content: aiText }];
+          }
+          return [
+            ...prev,
+            { role: "ai", content: aiText, timestamp: new Date().toISOString() },
+          ];
+        });
+      } catch (e: any) {
+        // Barge-in / end call aborts the stream — the pipeline was already
+        // reset by handleBargeIn/endCall, so this is expected and silent.
+        if (e && e.name === "AbortError") {
           return;
         }
-
-        setMessages((prev) => [
-          ...prev,
-          { role: "ai", content: aiText, timestamp: new Date().toISOString() },
-        ]);
-        setDebugInfo(data.debug_info || null);
-        setStage("speaking");
-
-        // Prefer the sentence queue (no mid-sentence cut-off, one TTS at a
-        // time). Fall back to a single blob for legacy endpoints.
-        const queueStarted =
-          Array.isArray(data.sentence_audios) &&
-          data.sentence_audios.length > 0
-            ? playAudioQueue(data.sentence_audios)
-            : false;
-        if (!queueStarted && data.audio_data && audioRef.current) {
-          playAudioQueue([{ text: aiText, audio_data: data.audio_data }]);
-        } else if (!queueStarted) {
-          setTimeout(() => handleTurnEnd(), 400);
-        }
-      } catch (e) {
         console.error("Voice pipeline error:", e);
         setMessages((prev) => [
           ...prev,
@@ -418,9 +538,8 @@ export function useVoiceAgent({
       mode,
       setStage,
       startListening,
-      handleTurnEnd,
       clearSilenceTimer,
-      playAudioQueue,
+      streamConversation,
     ]
   );
 
@@ -557,61 +676,64 @@ export function useVoiceAgent({
     setStage("connecting");
 
     try {
-      const params = new URLSearchParams(
-        mode === "test"
-          ? {
-              knowledge_file: knowledgeFile,
-              user_input: "",
-              conversation_id: conversationId.current,
-              include_audio: "true",
-              is_greeting: "true",
-              language: detectedLanguage,
+      const params = new URLSearchParams({
+        mode,
+        user_input: mode === "process" ? "START_CALL" : "",
+        conversation_id: conversationId.current,
+        is_greeting: "true",
+        language: detectedLanguage,
+        ...(mode === "test"
+          ? { knowledge_file: knowledgeFile }
+          : { institute_id: String(instituteId) }),
+      });
+
+      // The greeting streams through the same SSE pipeline: sentence audio
+      // starts playing the moment it is ready. When the queue drains,
+      // handleTurnEnd transitions to LISTENING and starts a FRESH recognition
+      // session (old mic buffer discarded → the AI can never hear itself).
+      let greetingAccum = "";
+      await streamConversation(
+        params,
+        (sentenceText) => {
+          greetingAccum += sentenceText;
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && last.role === "ai") {
+              return [...prev.slice(0, -1), { ...last, content: greetingAccum }];
             }
-          : {
-              institute_id: String(instituteId),
-              user_input: "START_CALL",
-              conversation_id: conversationId.current,
-              include_audio: "true",
-              is_greeting: "true",
-              language: detectedLanguage,
-            }
+            return [
+              ...prev,
+              {
+                role: "ai",
+                content: greetingAccum,
+                timestamp: new Date().toISOString(),
+              },
+            ];
+          });
+        },
+        (fullText, debug) => {
+          if (fullText) greetingAccum = fullText;
+          if (debug) setDebugInfo(debug);
+        },
+        (lang) => {
+          if (lang) setDetectedLanguage(lang);
+        }
       );
-      const endpoint =
-        mode === "test"
-          ? `/api/conversation/test?${params}`
-          : `/api/conversation/process?${params}`;
-
-      const response = await fetch(endpoint, { method: "POST" });
-      if (!response.ok) throw new Error("Failed to connect to voice agent");
-
-      const data = await response.json();
-      const greeting = data.ai_response || "Hi! How can I help you today?";
-
-      setMessages([
-        { role: "ai", content: greeting, timestamp: new Date().toISOString() },
-      ]);
-      setDebugInfo(data.debug_info || null);
-      setStage("speaking");
-
-      // Greeting also flows through the same audio queue. On completion it
-      // transitions to LISTENING and starts a FRESH recognition session (the
-      // old mic buffer is discarded so the AI can never hear itself).
-      const greetQueued =
-        Array.isArray(data.sentence_audios) && data.sentence_audios.length > 0
-          ? playAudioQueue(data.sentence_audios)
-          : data.audio_data
-          ? playAudioQueue([{ text: greeting, audio_data: data.audio_data }])
-          : false;
-      if (!greetQueued) {
-        setTimeout(() => {
-          pendingTranscriptRef.current = "";
-          setStage("listening");
-          startListening();
-        }, 400);
-      }
-      // (When the greeting queue is exhausted, playNextInQueue → handleTurnEnd
-      //  already clears the mic buffer and resumes LISTENING.)
-    } catch (e) {
+      // Safety net: if the greeting produced no sentences at all, keep the
+      // transcript from being blank.
+      setMessages((prev) =>
+        prev.length === 0
+          ? [
+              {
+                role: "ai",
+                content: greetingAccum || "Hi! How can I help you today?",
+                timestamp: new Date().toISOString(),
+              },
+            ]
+          : prev
+      );
+    } catch (e: any) {
+      if (e && e.name === "AbortError") return;
       console.error("Error starting call:", e);
       setError("Failed to connect to the voice agent. Is the backend running?");
       setStage("error");
@@ -622,8 +744,7 @@ export function useVoiceAgent({
     knowledgeFile,
     mode,
     setStage,
-    startListening,
-    playAudioQueue,
+    streamConversation,
   ]);
 
   const sendMessage = useCallback(
@@ -649,6 +770,7 @@ export function useVoiceAgent({
     endedRef.current = true;
     stopListening();
     stopAudioQueue();
+    stopStreaming();
     processingRef.current = false;
     pendingTranscriptRef.current = "";
     setMessages([]);
@@ -664,7 +786,7 @@ export function useVoiceAgent({
       /* ignore */
     }
     onEnded?.();
-  }, [onEnded, setStage, stopListening, stopAudioQueue]);
+  }, [onEnded, setStage, stopListening, stopAudioQueue, stopStreaming]);
 
   return {
     callStage,
