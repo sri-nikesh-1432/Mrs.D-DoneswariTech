@@ -12,6 +12,7 @@ This module is dependency-free (pure Python) so both the Mrs. D pipeline
 (backend/app) and the legacy pipeline (backend/services) can import it.
 """
 
+import json
 import re
 
 # ── 1. ROMAN TELUGU DETECTION ────────────────────────────────────────────
@@ -410,6 +411,87 @@ def split_into_sentences(text: str) -> list:
             part = part.replace(token, original)
         restored.append(part.strip())
     return restored
+
+
+# ── 6. TTS INPUT VALIDATION (debug/telemetry quarantine) ────────────────
+# The conversational answer and the debug/analytics payload are kept
+# structurally separate in the API (assistant_response vs debug_info). This
+# is the FINAL safety layer before audio synthesis: it guarantees that only
+# natural conversational text can ever reach the TTS engine.
+#
+# Matches telemetry-shaped lines. Structural patterns only — real institute
+# answers ("fee is 100000", "MPC course") are never affected.
+_TELEMETRY_LINE_RE = re.compile(
+    r"^\s*(?:"
+    r"[\u2713\u2714\u2717\u2718]+|"                 # ✓ ✗ check/cross marks
+    r"\d+(?:\.\d+)?\s*(?:ms|milliseconds)\b|"      # "12589.74ms"
+    r"(?:total|retrieval|generation|llm|tts|response|elapsed)[-_ ]?time\b|"
+    r"retrieved[-_ ]?chunks?\b|"
+    r"knowledge[-_ ]?source\b|"
+    r"similarity\s*(?:score)?\b|"
+    r"confidence\s*[:=]\s*\d|"
+    r"\bsource\s*[:=]\s*\w+|"
+    r"\bmetadata\b|"
+    r"\b(?:FAISS|embedding|vector[ -]?store)\b"
+    r")\s*[:\-]?\s*.*$",
+    re.IGNORECASE,
+)
+
+_JSON_FRAGMENT_RE = re.compile(r"\{[^{}]*\}")
+
+
+def clean_tts_text(text) -> str:
+    """
+    Return ONLY the natural conversational text that is safe to synthesize.
+
+    Guarantees:
+      - Non-string input (dict / list / None) -> "" — a debug object can
+        NEVER be spoken.
+      - If the value is a JSON string (e.g. {"answer": "..."}), the
+        assistant's natural answer is extracted.
+      - JSON fragments ("{...}") and telemetry-shaped lines (timings,
+        chunk counts, sources, similarity, confidence, metadata) are
+        stripped.
+
+    This is a SAFETY LAYER only: the pipeline already keeps the answer and
+    the debug payload structurally separate (assistant_response vs debug).
+    """
+    if isinstance(text, dict):
+        # Structured response object — extract the conversational answer only.
+        for key in ("assistant_response", "answer", "response", "text", "message"):
+            val = text.get(key)
+            if isinstance(val, str) and val.strip():
+                out = val
+                break
+        else:
+            return ""  # dict without an answer key — never speak it
+    elif not isinstance(text, str):
+        return ""
+    else:
+        out = text
+
+    stripped = out.strip()
+    # JSON object STRING ({"answer": "..."})? Extract the answer, never the dict.
+    if stripped.startswith("{"):
+        try:
+            obj = json.loads(stripped)
+        except (json.JSONDecodeError, ValueError):
+            obj = None
+        if isinstance(obj, dict):
+            for key in ("assistant_response", "answer", "response", "text", "message"):
+                val = obj.get(key)
+                if isinstance(val, str) and val.strip():
+                    out = val
+                    break
+            else:
+                return ""  # JSON object without an answer key — never speak it
+
+    # Remove leftover JSON fragments, then telemetry lines.
+    out = _JSON_FRAGMENT_RE.sub("", out)
+    kept = [ln for ln in out.splitlines() if not _TELEMETRY_LINE_RE.match(ln)]
+    out = " ".join(kept)
+    out = _NON_SPEECH_RE.sub("", out)
+    return re.sub(r"\s{2,}", " ", out).strip()
 
 
 def normalize_for_speech(text: str) -> str:

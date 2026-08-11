@@ -22,14 +22,20 @@ from services.language_service import detect_language, get_voice_for_language
 logger = get_logger(__name__)
 
 # Import the shared speech-normalization module so fees/numbers/abbreviations
-# are spoken naturally. The legacy pipeline reuses the same logic as Mrs. D.
+# are spoken naturally, plus the TTS-input safety layer (clean_tts_text)
+# that guarantees debug/telemetry text can NEVER reach the voice.
+# The legacy pipeline reuses the same logic as Mrs. D.
 try:
     from app.roman_telugu import normalize_for_speech as _normalize_for_speech
+    from app.roman_telugu import clean_tts_text as _clean_tts_text
 except Exception:
     def _normalize_for_speech(text: str) -> str:
         return text
+    def _clean_tts_text(text) -> str:
+        return text if isinstance(text, str) else ""
 
 normalize_for_speech = _normalize_for_speech
+clean_tts_text = _clean_tts_text
 
 
 def _ensure_audio_dir() -> str:
@@ -51,7 +57,10 @@ async def synthesize_speech(text: str, lang: str | None = None) -> bytes:
 
     # Normalize fees/numbers/abbreviations so they are SPOKEN naturally
     # (ఒక లక్ష రూపాయలు, Two Thousand Twenty Six, ఎం పి సి) not digit-by-digit.
-    clean = normalize_for_speech(clean)
+    # clean_tts_text() is the FINAL guard — debug/telemetry can never be read.
+    clean = _clean_tts_text(normalize_for_speech(clean))
+    if not clean:
+        raise ValueError("TTS input empty after cleaning")
 
     if lang is None:
         lang = detect_language(clean)

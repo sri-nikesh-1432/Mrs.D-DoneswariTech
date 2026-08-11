@@ -475,7 +475,7 @@ export default function VoiceTestingConsole() {
                       {t("retrieval")}
                     </div>
                     <div className="font-mono text-green-400 text-base font-bold">
-                      {debugInfo.retrieval_time_ms}ms
+                      {Math.round(debugInfo.retrieval_time_ms)}ms
                     </div>
                   </div>
                   <div className="bg-white/5 rounded-xl p-3 border border-white/10">
@@ -483,7 +483,7 @@ export default function VoiceTestingConsole() {
                       {t("llm")}
                     </div>
                     <div className="font-mono text-blue-400 text-base font-bold">
-                      {debugInfo.llm_time_ms}ms
+                      {Math.round(debugInfo.llm_time_ms)}ms
                     </div>
                   </div>
                   <div className="bg-white/5 rounded-xl p-3 border border-white/10">
@@ -491,7 +491,7 @@ export default function VoiceTestingConsole() {
                       {t("tts")}
                     </div>
                     <div className="font-mono text-purple-400 text-base font-bold">
-                      {debugInfo.tts_time_ms}ms
+                      {Math.round(debugInfo.tts_time_ms)}ms
                     </div>
                   </div>
                   <div className="bg-white/5 rounded-xl p-3 border border-white/10">
@@ -499,7 +499,7 @@ export default function VoiceTestingConsole() {
                       {t("total")}
                     </div>
                     <div className="font-mono text-white text-base font-bold">
-                      {debugInfo.total_time_ms}ms
+                      {Math.round(debugInfo.total_time_ms)}ms
                     </div>
                   </div>
                 </div>

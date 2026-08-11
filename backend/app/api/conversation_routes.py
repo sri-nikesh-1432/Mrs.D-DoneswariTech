@@ -171,6 +171,7 @@ async def stream_conversation(
             retrieval_ms = 0
             llm_ms = 0
             tts_ms = 0
+            first_sentence_ms = 0
             # ── Same detection/transliteration as the non-streaming routes ──
             detected_lang = _detect_language(user_input, hint=language)
             llm_input = transliterate_roman_telugu(user_input)
@@ -303,6 +304,12 @@ async def stream_conversation(
                         ):
                             if chunk.get("audio_data") is None:
                                 continue
+                            # True time-to-first-audio: the first sentence event
+                            # (text + audio) is actually being delivered.
+                            if first_sentence_ms == 0:
+                                first_sentence_ms = (
+                                    time.time() - turn_start
+                                ) * 1000
                             yield sse_event(
                                 "sentence",
                                 {
@@ -320,6 +327,10 @@ async def stream_conversation(
                     if not llm_task.done():
                         llm_task.cancel()
                 llm_ms = (time.time() - _l0) * 1000
+                if first_sentence_ms == 0:
+                    # Error before any sentence — report the failed turn's
+                    # latency so the debug panel stays truthful.
+                    first_sentence_ms = llm_ms
 
                 ai_response = "".join(ai_parts).strip()
                 if stream_error:
@@ -371,6 +382,8 @@ async def stream_conversation(
                 ):
                     if chunk.get("audio_data") is None:
                         continue  # skip sentences with no audio (still keep order)
+                    if first_sentence_ms == 0:
+                        first_sentence_ms = (time.time() - turn_start) * 1000
                     yield sse_event(
                         "sentence",
                         {
@@ -382,6 +395,14 @@ async def stream_conversation(
                     count += 1
                 tts_ms = (time.time() - _t0) * 1000
 
+            total_ms = (time.time() - turn_start) * 1000
+            logger.info(
+                "STREAM turn done | conv=%s | mode=%s | retrieval=%.0fms | "
+                "first_sentence=%.0fms | llm=%.0fms | tts=%.0fms | total=%.0fms | "
+                "sentences=%d",
+                conv_id, mode, retrieval_ms, first_sentence_ms, llm_ms, tts_ms,
+                total_ms, count,
+            )
             yield sse_event(
                 "done",
                 {
@@ -389,10 +410,11 @@ async def stream_conversation(
                     "conversation_id": conv_id,
                     "sentence_count": count,
                     "debug_info": {
-                        "retrieval_time_ms": retrieval_ms,
-                        "llm_time_ms": llm_ms,
-                        "tts_time_ms": tts_ms,
-                        "total_time_ms": (time.time() - turn_start) * 1000,
+                        "retrieval_time_ms": round(retrieval_ms),
+                        "llm_time_ms": round(llm_ms),
+                        "tts_time_ms": round(tts_ms),
+                        "first_sentence_ms": round(first_sentence_ms),
+                        "total_time_ms": round(total_ms),
                         "sentence_count": count,
                         "knowledge_source": (
                             "json" if mode == "test" else "faiss"
@@ -557,10 +579,10 @@ async def process_test_conversation(
                 "audio_data": audio_data,
                 "sentence_audios": sentence_audios,
                 "debug_info": {
-                    "total_time_ms": total_time,
+                    "total_time_ms": round(total_time),
                     "retrieval_time_ms": 0,
                     "llm_time_ms": 0,
-                    "tts_time_ms": tts_time,
+                    "tts_time_ms": round(tts_time),
                     "chunks_retrieved": 0,
                     "knowledge_source": "json"
                 }
@@ -644,15 +666,14 @@ async def process_test_conversation(
         return {
             "ai_response": ai_response,
             "audio_data": audio_data,
-            "sentence_audios": sentence_audios,
-            "debug_info": {
-                "total_time_ms": total_time,
-                "retrieval_time_ms": retrieval_time,
-                "llm_time_ms": llm_time,
-                "tts_time_ms": tts_time,
-                "chunks_retrieved": context.count("\n\n") + 1 if context else 0,
-                "knowledge_source": "json"
-            }
+            "sentence_audios": sentence_audios,                "debug_info": {
+                    "total_time_ms": round(total_time),
+                    "retrieval_time_ms": round(retrieval_time),
+                    "llm_time_ms": round(llm_time),
+                    "tts_time_ms": round(tts_time),
+                    "chunks_retrieved": context.count("\n\n") + 1 if context else 0,
+                    "knowledge_source": "json"
+                }
         }
 
     except Exception as e:
@@ -957,10 +978,10 @@ Generate ONLY the greeting text, no additional commentary."""
             "sentence_audios": sentence_audios,
             "retrieved_chunks": retrieved_chunks,
             "debug_info": {
-                "retrieval_time_ms": retrieval_time,
-                "llm_time_ms": llm_time,
-                "tts_time_ms": tts_time,
-                "total_time_ms": total_time,
+                "retrieval_time_ms": round(retrieval_time),
+                "llm_time_ms": round(llm_time),
+                "tts_time_ms": round(tts_time),
+                "total_time_ms": round(total_time),
                 "chunks_retrieved": len(retrieved_chunks),
                 "memory_length": len(memory),
                 "knowledge_ready": is_knowledge_ready()

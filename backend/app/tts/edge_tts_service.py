@@ -12,7 +12,11 @@ from typing import Optional
 import logging
 
 from app.logs.logger import get_logger
-from app.roman_telugu import normalize_for_speech, split_into_sentences
+from app.roman_telugu import (
+    normalize_for_speech,
+    clean_tts_text,
+    split_into_sentences,
+)
 
 logger = get_logger(__name__)
 
@@ -92,8 +96,12 @@ class EdgeTTSService:
             
             # Normalize fees/numbers/abbreviations so they are SPOKEN naturally
             # (ఒక లక్ష రూపాయలు, Two Thousand Twenty Six, ఎం పి సి) instead of
-            # being read digit-by-digit.
-            spoken_text = normalize_for_speech(text)
+            # being read digit-by-digit. clean_tts_text() is the FINAL guard:
+            # debug/telemetry text can never reach the voice.
+            spoken_text = clean_tts_text(normalize_for_speech(text))
+            if not spoken_text:
+                logger.warning("TTS input empty after cleaning; skipping")
+                return None
 
             # Auto-select voice based on language. CRITICAL: the language hint
             # sent by the frontend can disagree with the language the LLM
@@ -171,10 +179,12 @@ class EdgeTTSService:
         async def _synth(sentence: str):
             async with sem:
                 try:
-                    spoken = normalize_for_speech(sentence)
+                    spoken = clean_tts_text(normalize_for_speech(sentence))
+                    if not spoken:
+                        return {"text": sentence, "audio_data": None}
                     rate, pitch = self._prosody_for(sentence)
                     audio = await self._synthesize_one(
-                        spoken, voice_to_use, rate, pitch
+                        sentence, spoken, voice_to_use, rate, pitch
                     )
                     if not audio:
                         logger.warning("Empty TTS audio for sentence: %r", sentence[:40])
@@ -223,10 +233,12 @@ class EdgeTTSService:
         async def _synth(index: int, sentence: str):
             async with sem:
                 try:
-                    spoken = normalize_for_speech(sentence)
+                    spoken = clean_tts_text(normalize_for_speech(sentence))
+                    if not spoken:
+                        return index, sentence, None
                     rate, pitch = self._prosody_for(sentence)
                     audio = await self._synthesize_one(
-                        spoken, voice_to_use, rate, pitch
+                        sentence, spoken, voice_to_use, rate, pitch
                     )
                     return index, sentence, audio or None
                 except Exception as e:
@@ -312,44 +324,77 @@ class EdgeTTSService:
         pitch = base_pitch + pitch_delta
         return f"{rate:+d}%", f"{pitch:+d}Hz"
 
+    # Natural breathing-cadence pause AFTER a sentence, in milliseconds.
+    # Humans do not pause the same length after every sentence — questions
+    # get a thinking beat, exclamations an emphasis beat, a long thought a
+    # deeper breath. These pauses live INSIDE the audio (mstts:silence) so
+    # the caller hears ONE continuous speaker, not clipped clips.
+    @staticmethod
+    def _silence_for(sentence: str) -> int:
+        s = sentence.strip()
+        if s.endswith("?"):
+            return 550
+        if s.endswith("!"):
+            return 450
+        if len(s) > 140:
+            return 600
+        if len(s) < 20:
+            return 300
+        return 380
+
+    # Expressive SSML is OPT-IN (TTS_EXPRESSIVE=1). On this endpoint the SSML
+    # path (mstts:express-as + mstts:silence) synthesizes ~2.4x slower than
+    # plain per-sentence prosody and returns several times more audio bytes —
+    # which directly hurts time-to-first-audio. For a realtime voice agent,
+    # the fast plain path + per-sentence rate/pitch variation + natural
+    # inter-sentence pauses is the right balance of natural and live.
+    _EXPRESSIVE = os.getenv("TTS_EXPRESSIVE", "0").lower() in ("1", "true", "yes")
+
     async def _synthesize_one(
-        self, spoken: str, voice: str, rate: str, pitch: str
+        self, sentence: str, spoken: str, voice: str, rate: str, pitch: str
     ) -> Optional[bytes]:
         """
-        Synthesize ONE complete sentence as audio bytes.
+        Synthesize ONE complete sentence as audio bytes (fast path).
 
-        Tries SSML with an expressive style first — `mstts:express-as
-        style="friendly"` makes the neural voice sound like a warm person
-        talking (the single biggest fix for the "robotic TTS" feel). Falls
-        back to plain synthesis for voices that reject express-as, so other
-        languages are never broken by the upgrade.
+        Primary: plain synthesis with per-sentence prosody (rate/pitch) —
+        ~1.7-2.4s per sentence. Optional expressive SSML when
+        TTS_EXPRESSIVE=1: `mstts:express-as style="friendly"` plus a
+        sentence-boundary silence for a human breathing cadence, with plain
+        fallback if the voice rejects the tags.
         """
-        try:
-            import edge_tts
-            xml_lang = _xml_lang_for(voice)
-            escaped = html.escape(spoken, quote=False)
-            ssml = (
-                '<speak version="1.0" '
-                'xmlns="http://www.w3.org/2001/10/synthesis" '
-                'xmlns:mstts="http://www.w3.org/2001/mstts" '
-                f'xml:lang="{xml_lang}">'
-                '<mstts:express-as style="friendly">'
-                f'<prosody rate="{rate}" pitch="{pitch}">{escaped}</prosody>'
-                "</mstts:express-as></speak>"
-            )
-            communicate = edge_tts.Communicate(ssml, voice, rate="+0%", pitch="+0Hz")
-            chunks = [
-                c["data"] async for c in communicate.stream()
-                if c["type"] == "audio"
-            ]
-            audio = b"".join(chunks)
-            if audio:
-                return audio
-            logger.debug("Express-as produced no audio; falling back to plain")
-        except Exception as e:
-            logger.debug("Express-as synthesis failed (%s); falling back to plain", e)
+        if self._EXPRESSIVE:
+            try:
+                import edge_tts
+                xml_lang = _xml_lang_for(voice)
+                escaped = html.escape(spoken, quote=False)
+                silence_ms = self._silence_for(sentence)
+                ssml = (
+                    '<speak version="1.0" '
+                    'xmlns="http://www.w3.org/2001/10/synthesis" '
+                    'xmlns:mstts="http://www.w3.org/2001/mstts" '
+                    f'xml:lang="{xml_lang}">'
+                    '<mstts:express-as style="friendly">'
+                    f'<prosody rate="{rate}" pitch="{pitch}">{escaped}</prosody>'
+                    f'<mstts:silence type="Sentenceboundary" value="{silence_ms}ms"/>'
+                    "</mstts:express-as></speak>"
+                )
+                communicate = edge_tts.Communicate(
+                    ssml, voice, rate="+0%", pitch="+0Hz"
+                )
+                chunks = [
+                    c["data"] async for c in communicate.stream()
+                    if c["type"] == "audio"
+                ]
+                audio = b"".join(chunks)
+                if audio:
+                    return audio
+                logger.debug("Express-as produced no audio; falling back to plain")
+            except Exception as e:
+                logger.debug(
+                    "Express-as synthesis failed (%s); falling back to plain", e
+                )
 
-        # Plain fallback (voices that do not support mstts:express-as)
+        # Fast plain path (default): per-sentence prosody via rate/pitch.
         try:
             import edge_tts
             communicate = edge_tts.Communicate(spoken, voice, rate=rate, pitch=pitch)

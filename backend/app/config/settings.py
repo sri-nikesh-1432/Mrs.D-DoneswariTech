@@ -34,7 +34,10 @@ class Settings(BaseSettings):
     # (Groq's free tier caps tokens per DAY per model — a 429 on one model
     # must not end the call; the next model keeps Mrs. D talking).
     GROQ_FALLBACK_MODELS: list = Field(
-        default=["llama-3.1-8b-instant", "gemma2-9b-it"],
+        # Only models VALID on this tier (verified via models.list). A dead
+        # model in the chain would raise a 400 that kills the call — never
+        # worse than the 429 it exists to recover from.
+        default=["llama-3.1-8b-instant"],
         env="GROQ_FALLBACK_MODELS",
     )
     

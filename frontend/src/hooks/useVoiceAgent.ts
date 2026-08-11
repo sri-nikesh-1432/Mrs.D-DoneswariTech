@@ -269,17 +269,17 @@ export function useVoiceAgent({
     }
   }, [setStage, startListening]);
 
-  // Natural inter-sentence pause. Humans do NOT pause the same length after
-  // every sentence — uniform gaps are exactly what makes TTS sound robotic.
-  // Questions get a "thinking" beat, exclamations an emphasis beat, a long
-  // sentence a slightly longer breath, and short acknowledgements flow fast.
+  // Natural inter-sentence pause (the "breathing" cadence). Humans do NOT
+  // pause the same length after every sentence — uniform gaps are exactly
+  // what makes TTS sound robotic. Questions get a thinking beat, a long
+  // thought a deeper breath, short acknowledgements flow fast.
   const pauseAfterSentence = useCallback((sentence: string): number => {
     const s = sentence.trim();
-    if (s.endsWith("?")) return 560; // question → thinking beat
-    if (s.endsWith("!")) return 460; // exclamation → emphasis beat
-    if (s.length > 140) return 620; // long thought → catch-up breath
-    if (s.length < 20) return 300; // short ack → keep it moving
-    return 380; // normal conversational gap
+    if (s.endsWith("?")) return 560;
+    if (s.endsWith("!")) return 460;
+    if (s.length > 140) return 620;
+    if (s.length < 20) return 300;
+    return 380;
   }, []);
 
   // ── Play the next sentence in the queue. Each sentence is a COMPLETE

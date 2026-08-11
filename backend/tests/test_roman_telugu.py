@@ -19,6 +19,7 @@ try:
         number_to_telugu_words,
         number_to_english_words,
         normalize_for_speech,
+        clean_tts_text,
         transliterate_roman_telugu,
     )
 except ImportError:
@@ -27,6 +28,7 @@ except ImportError:
     number_to_telugu_words = m.number_to_telugu_words
     number_to_english_words = m.number_to_english_words
     normalize_for_speech = m.normalize_for_speech
+    clean_tts_text = m.clean_tts_text
     transliterate_roman_telugu = m.transliterate_roman_telugu
 
 
@@ -115,6 +117,22 @@ def test_normalize_phone_number_spaced():
 def test_normalize_year():
     out = normalize_for_speech("Admissions for 2026 are open")
     assert "Two Thousand Twenty Six" in out
+
+
+def test_clean_tts_text_rejects_debug_payloads():
+    # Debug/telemetry must NEVER reach TTS: non-strings are rejected outright.
+    assert clean_tts_text({"total_time_ms": 12589, "knowledge_source": "json"}) == ""
+    assert clean_tts_text({"answer": "అవును, తప్పకుండా.", "confidence": 0.9}) == "అవును, తప్పకుండా."
+    assert clean_tts_text(None) == ""
+    assert clean_tts_text(12345) == ""
+    # Telemetry-shaped text is stripped, conversational text is preserved.
+    dirty = "12589.75ms మొత్తం\nRetrieved chunks: 5\nSource: json\nఅవును, తప్పకుండా."
+    out = clean_tts_text(dirty)
+    assert "12589" not in out and "Retrieved" not in out and "Source" not in out
+    assert "అవును, తప్పకుండా." in out
+    # Legitimate institute answers are untouched.
+    ok = clean_tts_text("మా college లో hostel fee ఒక లక్ష రూపాయలు ఉంది. మీకు ఫీజు కావాలా?")
+    assert "లక్ష" in ok and "రూపాయలు" in ok and "కావాలా" in ok
 
 
 def test_normalize_abbreviation_mpc():
