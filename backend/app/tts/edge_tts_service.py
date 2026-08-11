@@ -4,13 +4,21 @@ Generates audio from AI responses.
 """
 
 import asyncio
+import base64
 import os
+import re
 from typing import Optional
 import logging
 
 from app.logs.logger import get_logger
+from app.roman_telugu import normalize_for_speech, split_into_sentences
 
 logger = get_logger(__name__)
+
+
+def base64_encode(data: bytes) -> str:
+    """Base64-encode audio bytes for transport to the frontend."""
+    return base64.b64encode(data).decode("utf-8")
 
 
 class EdgeTTSService:
@@ -28,8 +36,8 @@ class EdgeTTSService:
             "Kannada": "kn-IN-SapnaNeural",    # Kannada female
             "Malayalam": "ml-IN-SobhanaNeural", # Malayalam female
         }
-        self.voice = os.getenv("TTS_VOICE", "en-IN-NeerjaNeural")
-        self.rate = os.getenv("TTS_RATE", "+15%")  # 1.15x speed for natural conversation
+        self.voice = os.getenv("TTS_VOICE", "te-IN-ShrutiNeural")
+        self.rate = os.getenv("TTS_RATE", "+10%")  # ~1.1x speed, calm counsellor pace
         self.pitch = os.getenv("TTS_PITCH", "+0Hz")
         self.is_initialized = False
     
@@ -75,19 +83,27 @@ class EdgeTTSService:
         try:
             import edge_tts
             
-            # Auto-select voice based on language
-            if language and language in self.voices:
-                voice_to_use = self.voices[language]
-            elif voice:
-                voice_to_use = voice
-            else:
-                voice_to_use = self.voice
-            
-            logger.debug(f"Synthesizing: {text[:50]}... with voice: {voice_to_use}")
+            # Normalize fees/numbers/abbreviations so they are SPOKEN naturally
+            # (ఒక లక్ష రూపాయలు, Two Thousand Twenty Six, ఎం పి సి) instead of
+            # being read digit-by-digit.
+            spoken_text = normalize_for_speech(text)
+
+            # Auto-select voice based on language. CRITICAL: the language hint
+            # sent by the frontend can disagree with the language the LLM
+            # actually wrote in (e.g. hint="English" but a Telugu reply). Edge
+            # TTS returns "No audio was received" when the voice and script
+            # don't match, so detect the script of the REAL text first and only
+            # fall back to the hint when the text has no regional script.
+            # NOTE: the script check runs on the ORIGINAL `text`, not the
+            # normalized version — normalize_for_speech injects Telugu script
+            # for abbreviations ("MPC" → "ఎం పి సి"), which must not flip an
+            # English reply onto a Telugu voice.
+            voice_to_use = self._pick_voice(text, language=language, voice=voice)
+            logger.debug(f"Synthesizing: {spoken_text[:50]}... with voice: {voice_to_use}")
             
             # Create communicate object
             communicate = edge_tts.Communicate(
-                text,
+                spoken_text,
                 voice_to_use,
                 rate=self.rate,
                 pitch=self.pitch
@@ -108,23 +124,119 @@ class EdgeTTSService:
             logger.error(f"Error synthesizing speech: {e}")
             return None
     
-    async def synthesize_stream(
+    async def synthesize_sentences(
         self,
         text: str,
-        voice: Optional[str] = None
-    ) -> Optional[bytes]:
+        voice: Optional[str] = None,
+        language: Optional[str] = None,
+        max_sentences: int = 20,
+    ) -> list:
         """
-        Synthesize text to audio with streaming.
-        
-        Args:
-            text: Text to synthesize
-            voice: Voice to use
-        
-        Returns:
-            Audio bytes or None if synthesis fails
+        Synthesize text sentence-by-sentence.
+
+        Each sentence is synthesized independently and returned as its own
+        entry, so the frontend can play them in sequence with an audio queue:
+          - No single giant 30-second TTS request.
+          - No mid-sentence cut-off: each unit is a COMPLETE sentence.
+          - Sentences are generated concurrently (bounded) to reduce latency.
+
+        Returns a list of dicts: [{"text": ..., "audio_data": base64-or-None}]
         """
-        return await self.synthesize(text, voice)
+        all_sentences = split_into_sentences(text)
+        if len(all_sentences) > max_sentences:
+            logger.warning(
+                "Response has %d sentences; capping audio to first %d (text still shown in full)",
+                len(all_sentences), max_sentences,
+            )
+        sentences = all_sentences[:max_sentences]
+        if not sentences:
+            return []
+
+        voice_to_use = self._pick_voice(text, language=language, voice=voice)
+        logger.debug(
+            "Synthesizing %d sentences with voice %s", len(sentences), voice_to_use
+        )
+
+        # Synthesize concurrently but bound the parallelism (edge-tts handles
+        # a handful of parallel connections fine; unbounded could overwhelm).
+        sem = asyncio.Semaphore(4)
+
+        async def _synth(sentence: str):
+            async with sem:
+                try:
+                    import edge_tts
+                    spoken = normalize_for_speech(sentence)
+                    communicate = edge_tts.Communicate(
+                        spoken, voice_to_use, rate=self.rate, pitch=self.pitch
+                    )
+                    chunks = [
+                        c["data"] async for c in communicate.stream()
+                        if c["type"] == "audio"
+                    ]
+                    audio = b"".join(chunks)
+                    if not audio:
+                        logger.warning("Empty TTS audio for sentence: %r", sentence[:40])
+                        return {"text": sentence, "audio_data": None}
+                    return {"text": sentence, "audio_data": audio}
+                except Exception as e:
+                    logger.error("Sentence TTS failed: %s", e)
+                    return {"text": sentence, "audio_data": None}
+
+        results = await asyncio.gather(*[_synth(s) for s in sentences])
+
+        # Keep only sentences that produced audio; mark the rest so the
+        # frontend can skip gracefully without breaking the queue.
+        return [
+            {
+                "text": r["text"],
+                "audio_data": (
+                    base64_encode(r["audio_data"]) if r["audio_data"] else None
+                ),
+            }
+            for r in results
+        ]
     
+    def _pick_voice(
+        self,
+        text: str,
+        language: Optional[str] = None,
+        voice: Optional[str] = None,
+    ) -> str:
+        """
+        Choose the Edge-TTS voice for the given text.
+
+        Priority:
+          1. Script of the actual text (Telugu/Hindi/Tamil/Kannada/Malayalam
+             characters -> the matching regional voice). This guarantees the
+             voice can read the text even when the caller's language hint is
+             wrong.
+          2. Explicit `voice` argument.
+          3. `language` hint mapped to a voice.
+          4. Default configured voice.
+        """
+        if text:
+            script_checks = [
+                (r"[\u0C00-\u0C7F]", "Telugu"),
+                (r"[\u0900-\u097F]", "Hindi"),
+                (r"[\u0B80-\u0BFF]", "Tamil"),
+                (r"[\u0C80-\u0CFF]", "Kannada"),
+                (r"[\u0D00-\u0D7F]", "Malayalam"),
+            ]
+            for pattern, lang_name in script_checks:
+                if re.search(pattern, text):
+                    script_voice = self.voices.get(lang_name)
+                    if script_voice:
+                        logger.debug(
+                            "Picked %s voice from script (%s)", script_voice, lang_name
+                        )
+                        return script_voice
+
+        if voice:
+            return voice
+        if language and language in self.voices:
+            return self.voices[language]
+        return self.voice
+
     async def get_available_voices(self) -> list[str]:
         """Get list of available voices."""
         try:

@@ -52,9 +52,42 @@ const SCRIPT_TO_LANGUAGE: Array<{ re: RegExp; lang: string }> = [
   { re: /[\u0D00-\u0D7F]/, lang: "Malayalam" },
 ];
 
+// High-frequency Roman Telugu words that let us detect Telugu typed in Latin
+// letters ("idhi enti", "meeru ekkada unnaru"). STRONG words are unambiguous
+// Roman-Telugu words; WEAK words are shared with English (fee, college, bus)
+// and must never trigger a Telugu verdict on their own.
+const ROMAN_TELUGU_STRONG = new Set([
+  "idhi", "idi", "adi", "ivi", "enti", "endhi", "endi", "meeru", "maa",
+  "naku", "naaku", "nee", "nuvvu", "eppudu", "ekkada", "enduku", "ela",
+  "entha", "undi", "unna", "unnaru", "unnay", "unnayi", "kavali", "kaavali",
+  "cheppandi", "cheppu", "isthara", "isthunnaru", "avutundi", "avuthundi",
+  "padutundi", "paduthundi", "chestharu", "raavali", "koncham", "konchem",
+  "chaala", "chala", "telsa", "telusa", "manchi", "appudu", "alage",
+  "inkem", "inkemi", "baagundi", "bagundi", "ante", "antava", "raandi",
+  "raandru", "tarandi", "chesoccha", "raavoccha", "undachu", "undach",
+]);
+
+const ROMAN_TELUGU_WEAK = new Set([
+  "campus", "college", "colleji", "hostel", "bus", "cluster", "fee", "fees",
+]);
+
 function detectLanguage(text: string): string {
+  // Real regional script first
   for (const { re, lang } of SCRIPT_TO_LANGUAGE) {
     if (re.test(text)) return lang;
+  }
+  // Roman Telugu (Latin script): "idhi enti" → Telugu so the AI speaks Telugu
+  const tokens = text.toLowerCase().match(/[a-z]+/g) || [];
+  let strongHits = 0;
+  let weakHits = 0;
+  for (const tok of tokens) {
+    if (ROMAN_TELUGU_STRONG.has(tok)) strongHits++;
+    else if (ROMAN_TELUGU_WEAK.has(tok)) weakHits++;
+  }
+  // At least one unambiguous Telugu word, or a heavy accumulation of shared
+  // words — a single "college" or "bus" alone is not enough.
+  if (strongHits >= 1 || weakHits >= 3) {
+    return "Telugu";
   }
   return "English";
 }
@@ -67,23 +100,24 @@ function normalizeTranscript(text: string): string {
  * useVoiceAgent — the ONE conversation state machine for the whole voice UI.
  *
  * Pipeline guarantees (ChatGPT-Voice-style):
- *   Listen → speech ends (2s silence) → thinking → speaking → clear buffers → listen
+ *   Listen → speech ends (~1.3s silence) → thinking → speaking (sentence
+ *   audio queue) → clear buffers + fresh STT session → listen
  *
  *  - Exactly ONE active SpeechRecognition session at a time.
- *  - Previously processed audio is never re-processed: the recognition
- *    session is never stopped/restarted mid-turn (restarting is what made
- *    browsers replay the old audio buffer and loop forever).
- *  - Identical consecutive transcripts are ignored.
+ *  - Previously processed audio is never re-processed: identical consecutive
+ *    transcripts are ignored, and the STT session is restarted after every
+ *    AI turn so the AI's own voice can never be fed back as user speech.
  *  - Transcripts arriving while "thinking" are ignored.
  *  - Barge-in: if the user speaks (final result, decent confidence) while the
- *    AI is speaking, TTS stops immediately and the new speech is queued.
- *  - Listening resumes only after TTS playback has completely finished.
+ *    AI is speaking, the audio queue stops immediately and the new speech is
+ *    submitted once they pause.
+ *  - Listening resumes only after the TTS queue has completely finished.
  */
 export function useVoiceAgent({
   mode = "test",
   knowledgeFile = "institute.json",
   instituteId = 1,
-  silenceTimeoutMs = 2000,
+  silenceTimeoutMs = 1300,
   initialLanguage = "English",
   onEnded,
 }: UseVoiceAgentOptions = {}) {
@@ -114,7 +148,16 @@ export function useVoiceAgent({
   const listeningRef = useRef(false);
   const endedRef = useRef(false); // endCall idempotency guard
 
-  // ── Silence / VAD: fire after ~2s with no new speech ──────────────────────
+  // ── Sentence audio queue (ONE queue per conversation) ─────────────────────
+  // Responses arrive as sentence-level audio chunks. They are played strictly
+  // one at a time so the caller always hears a COMPLETE sentence and no two
+  // TTS streams ever overlap. A new response or a barge-in clears the queue.
+  const audioQueueRef = useRef<Array<{ text: string; audioData: string }>>([]);
+  const queueActiveRef = useRef(false);
+  const aiSpeakStartedAtRef = useRef(0); // barge-in cooldown anchor
+  const aiFinishedAtRef = useRef(0); // when AI finished speaking (post-TTS grace)
+
+  // ── Silence / VAD: fire after ~1.3s with no new speech ────────────────────
   const clearSilenceTimer = useCallback(() => {
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
@@ -163,14 +206,99 @@ export function useVoiceAgent({
     }
   }, []);
 
+  // ── Stop the audio queue immediately (barge-in, new response, end call) ───
+  const stopAudioQueue = useCallback(() => {
+    queueActiveRef.current = false;
+    audioQueueRef.current = [];
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current.onended = null;
+    }
+  }, []);
+
+  // ── Turn end: clear buffers, THEN listen for new audio only ───────────────
+  const handleTurnEnd = useCallback(() => {
+    processingRef.current = false;
+    setIsProcessing(false);
+    queueActiveRef.current = false;
+    audioQueueRef.current = [];
+    aiFinishedAtRef.current = Date.now();
+    setStage("listening");
+    const pending = pendingTranscriptRef.current;
+    pendingTranscriptRef.current = "";
+    setInputText("");
+    if (pending.trim() && pending.trim() !== lastProcessedRef.current) {
+      // Speech captured during the turn (barge-in) — submit it now.
+      submitSpeechRef.current(pending);
+    } else {
+      // Fresh STT session: stop the old (continuous) recognition and start a
+      // brand-new one so the AI's own trailing audio in the old mic buffer can
+      // NEVER be fed back as the next user query (spec: reset STT after TTS).
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          /* ignore */
+        }
+      }
+      listeningRef.current = false;
+      setIsListening(false);
+      setTimeout(() => startListening(), 120);
+    }
+  }, [setStage, startListening]);
+
+  // ── Play the next sentence in the queue. Each sentence is a COMPLETE
+  //    utterance — never cut in the middle. When the queue is empty the turn
+  //    is finished and we return to LISTENING. ───────────────────────────────
+  const playNextInQueue = useCallback(async () => {
+    if (endedRef.current || !queueActiveRef.current) return;
+    const next = audioQueueRef.current.shift();
+    if (!next) {
+      queueActiveRef.current = false;
+      handleTurnEnd();
+      return;
+    }
+    if (!audioRef.current) {
+      // No audio element (text-only mode) — fast-forward through the queue.
+      playNextInQueue();
+      return;
+    }
+    // Reset the barge-in cooldown per sentence so the caller can interrupt
+    // between sentences, but the AI's own first few syllables can't trigger it.
+    aiSpeakStartedAtRef.current = Date.now();
+    const el = audioRef.current;
+    el.src = `data:audio/mp3;base64,${next.audioData}`;
+    el.onended = () => playNextInQueue();
+    try {
+      await el.play();
+    } catch {
+      // Autoplay blocked or aborted — skip to the next sentence.
+      playNextInQueue();
+    }
+  }, [handleTurnEnd]);
+
+  // ── Start the sentence queue for a freshly generated response ─────────────
+  const playAudioQueue = useCallback(
+    (sentences: Array<{ text: string; audio_data: string | null }>) => {
+      const withAudio = sentences.filter((s) => s.audio_data);
+      if (withAudio.length === 0) return false;
+      stopAudioQueue();
+      audioQueueRef.current = withAudio.map((s) => ({
+        text: s.text,
+        audioData: s.audio_data as string,
+      }));
+      queueActiveRef.current = true;
+      playNextInQueue();
+      return true;
+    },
+    [playNextInQueue, stopAudioQueue]
+  );
+
   // ── Barge-in: user talks while AI is speaking → stop TTS, queue speech ────
   const handleBargeIn = useCallback(
     (text: string) => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
-        audioRef.current.onended = null;
-      }
+      stopAudioQueue();
       clearSilenceTimer();
       processingRef.current = false;
       setIsProcessing(false);
@@ -181,24 +309,8 @@ export function useVoiceAgent({
       // Submit after the user pauses — same silence logic as normal turns.
       armSilenceTimer();
     },
-    [armSilenceTimer, clearSilenceTimer, setStage]
+    [armSilenceTimer, clearSilenceTimer, setStage, stopAudioQueue]
   );
-
-  // ── Turn end: clear buffers, THEN listen for new audio only ───────────────
-  const handleTurnEnd = useCallback(() => {
-    processingRef.current = false;
-    setIsProcessing(false);
-    setStage("listening");
-    const pending = pendingTranscriptRef.current;
-    pendingTranscriptRef.current = "";
-    setInputText("");
-    if (pending.trim() && pending.trim() !== lastProcessedRef.current) {
-      // Speech captured during the turn (barge-in) — submit it now.
-      submitSpeechRef.current(pending);
-    } else {
-      startListening();
-    }
-  }, [setStage, startListening]);
 
   // ── Submit an utterance through the chosen pipeline ───────────────────────
   const submitSpeech = useCallback(
@@ -270,11 +382,16 @@ export function useVoiceAgent({
         setDebugInfo(data.debug_info || null);
         setStage("speaking");
 
-        if (data.audio_data && audioRef.current) {
-          audioRef.current.src = `data:audio/mp3;base64,${data.audio_data}`;
-          await audioRef.current.play();
-          audioRef.current.onended = () => handleTurnEnd();
-        } else {
+        // Prefer the sentence queue (no mid-sentence cut-off, one TTS at a
+        // time). Fall back to a single blob for legacy endpoints.
+        const queueStarted =
+          Array.isArray(data.sentence_audios) &&
+          data.sentence_audios.length > 0
+            ? playAudioQueue(data.sentence_audios)
+            : false;
+        if (!queueStarted && data.audio_data && audioRef.current) {
+          playAudioQueue([{ text: aiText, audio_data: data.audio_data }]);
+        } else if (!queueStarted) {
           setTimeout(() => handleTurnEnd(), 400);
         }
       } catch (e) {
@@ -303,6 +420,7 @@ export function useVoiceAgent({
       startListening,
       handleTurnEnd,
       clearSilenceTimer,
+      playAudioQueue,
     ]
   );
 
@@ -348,12 +466,15 @@ export function useVoiceAgent({
       const stage = stageRef.current;
 
       // Barge-in: user speaks while the AI is talking → stop TTS immediately.
+      // Cooldown: ignore audio during the first ~400ms of a sentence so the
+      // AI's own voice (or echo of it) can never trigger an interruption.
       if (stage === "speaking") {
         if (finalTranscript.trim().length >= 2) {
           const avgConf = confidences.length
             ? confidences.reduce((a, b) => a + b, 0) / confidences.length
             : 0;
-          if (avgConf >= 0.45) {
+          const aiJustSpoke = Date.now() - aiSpeakStartedAtRef.current < 400;
+          if (!aiJustSpoke && avgConf >= 0.5) {
             handleBargeIn(finalTranscript);
           }
         }
@@ -362,6 +483,13 @@ export function useVoiceAgent({
 
       // Ignore everything while processing/thinking — never re-feed old audio.
       if (processingRef.current || stage !== "listening") {
+        return;
+      }
+
+      // Post-TTS grace window: ignore any final transcript arriving right
+      // after the AI stopped speaking (echo/trailing audio) — real new speech
+      // will arrive a moment later and be captured by the fresh session.
+      if (Date.now() - aiFinishedAtRef.current < 450) {
         return;
       }
 
@@ -465,20 +593,24 @@ export function useVoiceAgent({
       setDebugInfo(data.debug_info || null);
       setStage("speaking");
 
-      if (data.audio_data && audioRef.current) {
-        audioRef.current.src = `data:audio/mp3;base64,${data.audio_data}`;
-        await audioRef.current.play();
-        audioRef.current.onended = () => {
-          pendingTranscriptRef.current = "";
-          setStage("listening");
-          startListening();
-        };
-      } else {
+      // Greeting also flows through the same audio queue. On completion it
+      // transitions to LISTENING and starts a FRESH recognition session (the
+      // old mic buffer is discarded so the AI can never hear itself).
+      const greetQueued =
+        Array.isArray(data.sentence_audios) && data.sentence_audios.length > 0
+          ? playAudioQueue(data.sentence_audios)
+          : data.audio_data
+          ? playAudioQueue([{ text: greeting, audio_data: data.audio_data }])
+          : false;
+      if (!greetQueued) {
         setTimeout(() => {
+          pendingTranscriptRef.current = "";
           setStage("listening");
           startListening();
         }, 400);
       }
+      // (When the greeting queue is exhausted, playNextInQueue → handleTurnEnd
+      //  already clears the mic buffer and resumes LISTENING.)
     } catch (e) {
       console.error("Error starting call:", e);
       setError("Failed to connect to the voice agent. Is the backend running?");
@@ -491,6 +623,7 @@ export function useVoiceAgent({
     mode,
     setStage,
     startListening,
+    playAudioQueue,
   ]);
 
   const sendMessage = useCallback(
@@ -515,13 +648,9 @@ export function useVoiceAgent({
     if (endedRef.current) return;
     endedRef.current = true;
     stopListening();
+    stopAudioQueue();
     processingRef.current = false;
     pendingTranscriptRef.current = "";
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-      audioRef.current.onended = null;
-    }
     setMessages([]);
     setDebugInfo(null);
     setInputText("");
@@ -535,7 +664,7 @@ export function useVoiceAgent({
       /* ignore */
     }
     onEnded?.();
-  }, [onEnded, setStage, stopListening]);
+  }, [onEnded, setStage, stopListening, stopAudioQueue]);
 
   return {
     callStage,

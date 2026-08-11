@@ -21,6 +21,16 @@ from services.language_service import detect_language, get_voice_for_language
 
 logger = get_logger(__name__)
 
+# Import the shared speech-normalization module so fees/numbers/abbreviations
+# are spoken naturally. The legacy pipeline reuses the same logic as Mrs. D.
+try:
+    from app.roman_telugu import normalize_for_speech as _normalize_for_speech
+except Exception:
+    def _normalize_for_speech(text: str) -> str:
+        return text
+
+normalize_for_speech = _normalize_for_speech
+
 
 def _ensure_audio_dir() -> str:
     """Ensure the audio output directory exists and return its path."""
@@ -38,6 +48,10 @@ async def synthesize_speech(text: str, lang: str | None = None) -> bytes:
         raise ValueError("Empty text provided for TTS synthesis")
 
     clean = _clean_for_speech(text)
+
+    # Normalize fees/numbers/abbreviations so they are SPOKEN naturally
+    # (ఒక లక్ష రూపాయలు, Two Thousand Twenty Six, ఎం పి సి) not digit-by-digit.
+    clean = normalize_for_speech(clean)
 
     if lang is None:
         lang = detect_language(clean)

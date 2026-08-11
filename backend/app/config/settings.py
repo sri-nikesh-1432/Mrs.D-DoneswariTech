@@ -60,9 +60,11 @@ class Settings(BaseSettings):
     STATIC_DIR: Path = Field(default=Path("static"))
     AUDIO_DIR: Path = Field(default=Path("static/audio"))
     
-    # Voice
-    TTS_VOICE: str = Field(default="en-US-AriaNeural", env="TTS_VOICE")
-    TTS_RATE: str = Field(default="+0%", env="TTS_RATE")
+# Voice — warm, professional Telugu Indian female neural voice (Mrs. D).
+    # te-IN-ShrutiNeural is the Telugu female voice. Rate +10% ≈ 1.1x for a
+    # natural, calm counsellor pace (not robotic, not rushed).
+    TTS_VOICE: str = Field(default="te-IN-ShrutiNeural", env="TTS_VOICE")
+    TTS_RATE: str = Field(default="+10%", env="TTS_RATE")
     TTS_VOLUME: str = Field(default="+0%", env="TTS_VOLUME")
     MAX_CONCURRENT_CALLS: int = Field(default=1, env="MAX_CONCURRENT_CALLS")
     CALL_RETRY_ATTEMPTS: int = Field(default=3, env="CALL_RETRY_ATTEMPTS")

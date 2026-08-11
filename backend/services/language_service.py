@@ -18,11 +18,27 @@ _KANNADA_RE    = re.compile(r"[\u0C80-\u0CFF]")
 _MALAYALAM_RE  = re.compile(r"[\u0D00-\u0D7F]")
 
 
+def _detect_roman_telugu(text: str) -> bool:
+    """
+    Detect Roman Telugu written in Latin letters ("idhi enti", "meeru ekkada unnaru").
+    Uses a weighted vocabulary of high-frequency Roman Telugu words so plain
+    English queries are never misclassified. Falls back gracefully.
+    """
+    try:
+        from app.roman_telugu import looks_roman_telugu
+        return looks_roman_telugu(text)
+    except Exception:
+        return False
+
+
 def detect_language(text: str) -> str:
     """
     Detect the primary language of the given text.
     Returns ISO 639-1 code: 'en', 'te', 'hi', 'ta', 'kn', or 'ml'.
     Defaults to 'en' if no regional script is detected.
+
+    Roman-Telugu aware: typing "idhi enti" (Latin script) is correctly detected
+    as 'te' so the AI replies in Telugu, never English.
     """
     if not text:
         return "en"
@@ -35,8 +51,11 @@ def detect_language(text: str) -> str:
 
     total_regional = te_count + hi_count + ta_count + kn_count + ml_count
 
-    # Need at least 2 regional chars to confidently detect language
+    # Roman Telugu is detected purely from Latin letters (no Unicode script).
     if total_regional < 2:
+        if _detect_roman_telugu(text):
+            logger.debug("Roman Telugu detected via vocabulary: %r", text)
+            return "te"
         return "en"
 
     scores = {"te": te_count, "hi": hi_count, "ta": ta_count, "kn": kn_count, "ml": ml_count}

@@ -17,7 +17,8 @@ class Settings(BaseSettings):
 
     # ── Text-to-Speech ────────────────────────────────────────────
     TTS_VOICE: str = Field(default="te-IN-ShrutiNeural")
-    TTS_RATE: str = Field(default="+25%")
+    # +10% ≈ 1.1x — natural, calm Indian conversational counsellor pace.
+    TTS_RATE: str = Field(default="+10%")
 
     # Multilingual voice map: lang_code → Edge-TTS voice name
     TTS_VOICE_MAP: dict = {

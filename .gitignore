@@ -50,3 +50,6 @@ desktop.ini
 .coverage
 htmlcov/
 
+
+# ── Obsidian workspace ─────────────────────────────
+.obsidian/

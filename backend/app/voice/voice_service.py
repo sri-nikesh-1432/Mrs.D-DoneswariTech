@@ -53,10 +53,14 @@ class VoiceService:
             # Generate audio file path if not provided
             if output_file is None:
                 output_file = tempfile.mktemp(suffix=".mp3", dir=settings.AUDIO_DIR)
-            
+
+            # Normalize fees/numbers/abbreviations so they are spoken naturally.
+            from app.roman_telugu import normalize_for_speech
+            spoken_text = normalize_for_speech(text)
+
             # Use Edge-TTS to generate speech
             communicate = edge_tts.Communicate(
-                text,
+                spoken_text,
                 voice=self.tts_voice,
                 rate=self.tts_rate,
                 volume=self.tts_volume
