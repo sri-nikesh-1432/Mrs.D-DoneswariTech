@@ -18,6 +18,87 @@ logger = get_logger(__name__)
 _client = None
 
 
+def _model_chain() -> list:
+    """Primary model first, then fallbacks (deduplicated)."""
+    models = [settings.GROQ_MODEL] + list(settings.GROQ_FALLBACK_MODELS or [])
+    seen = []
+    for m in models:
+        if m and m not in seen:
+            seen.append(m)
+    return seen or ["llama-3.3-70b-versatile"]
+
+
+def _is_rate_limit(e: Exception) -> bool:
+    """True for Groq 429 (per-model token cap) — the ONLY error worth retrying
+    on a different model. Connection errors are retried on the same request;
+    auth/validation errors must surface immediately."""
+    if getattr(e, "status_code", None) == 429:
+        return True
+    name = type(e).__name__.lower()
+    return "ratelimit" in name or "429" in str(e)[:60]
+
+
+async def _create_with_fallback(
+    messages: List[Dict],
+    temperature: float = 0.5,
+    max_tokens: int = 1024,
+    stream: bool = False,
+):
+    """
+    Create a Groq completion, automatically falling back to the next model in
+    the chain when the current one is rate-limited. Free-tier Groq caps tokens
+    per DAY per model, so a 429 must switch models instead of killing the call.
+    """
+    client = _get_client()
+    chain = _model_chain()
+    last_exc = None
+    for idx, model in enumerate(chain):
+        try:
+            return await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+            )
+        except Exception as e:
+            last_exc = e
+            if _is_rate_limit(e) and idx < len(chain) - 1:
+                logger.warning(
+                    "Model %s rate-limited (%s); falling back to %s",
+                    model, str(e)[:120], chain[idx + 1],
+                )
+                continue
+            raise
+    raise last_exc
+
+
+async def stream_chat(
+    query: str,
+    conversation_history: Optional[List[Dict]] = None,
+    provided_context: Optional[str] = None,
+) -> AsyncGenerator[str, None]:
+    """
+    Stream LLM completion tokens for a single turn (real-time voice).
+
+    Yields text deltas as they arrive. `provided_context` (JSON/FAISS chunks)
+    is passed straight to the prompt builder. Raises on final failure after
+    the model fallback chain is exhausted.
+    """
+    messages = build_prompt(query, provided_context or "", None, conversation_history)
+    try:
+        stream = await _create_with_fallback(messages, stream=True)
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+    except Exception as e:
+        logger.error("Streaming LLM failed: %s", e)
+        raise
+
+
 def _get_client():
     """Lazy-init the Groq client."""
     global _client
@@ -88,20 +169,16 @@ async def chat(
         messages = build_prompt(query, context, student_info, conversation_history)
         logger.info(f"Prompt built with {len(messages)} messages")
 
-        # Get Groq response
+        # Get Groq response (auto model-fallback on 429 rate limits)
         logger.info("Calling Groq API...")
         client = _get_client()
         
         import time
         start_time = time.time()
         
-        response = await client.chat.completions.create(
-            model=settings.GROQ_MODEL,
-            messages=messages,
-            # Lower temperature reduces Romanized/misspelled regional words.
+        response = await _create_with_fallback(
+            messages,
             temperature=0.5,
-            # Keep output capped so requests stay within free-tier TPM limits.
-            # Voice replies are short by design (2-4 sentences).
             max_tokens=1024,
         )
         

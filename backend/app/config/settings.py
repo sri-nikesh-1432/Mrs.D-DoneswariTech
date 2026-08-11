@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     # AI / Groq
     GROQ_API_KEY: str = Field(default="", env="GROQ_API_KEY")
     GROQ_MODEL: str = Field(default="llama-3.3-70b-versatile", env="GROQ_MODEL")
+    # Fallback models tried in order when the primary model is rate-limited
+    # (Groq's free tier caps tokens per DAY per model — a 429 on one model
+    # must not end the call; the next model keeps Mrs. D talking).
+    GROQ_FALLBACK_MODELS: list = Field(
+        default=["llama-3.1-8b-instant", "gemma2-9b-it"],
+        env="GROQ_FALLBACK_MODELS",
+    )
     
     # RAG / Embeddings
     EMBEDDING_MODEL: str = Field(default="all-MiniLM-L6-v2", env="EMBEDDING_MODEL")

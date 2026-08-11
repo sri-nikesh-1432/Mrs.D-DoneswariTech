@@ -93,8 +93,17 @@ def test_english_year():
 
 # ── Speech normalization ──────────────────────────────────────────────────
 def test_normalize_fees_to_words():
-    assert "రూపాయలు" in normalize_for_speech("The fee is ₹100000")
-    assert "లక్ష" in normalize_for_speech("Fee is 100000")
+    # Telugu reply → Telugu currency words (ఒక లక్ష రూపాయలు), per spec
+    out_te = normalize_for_speech("ఫీజు ₹100000")
+    assert "రూపాయలు" in out_te
+    assert "లక్ష" in out_te
+    # English reply → English words, never mixed script (the English voice
+    # cannot read Telugu script — mixing it caused robotic/mangled speech)
+    out_en = normalize_for_speech("The fee is ₹100000")
+    assert "One Lakh rupees" in out_en
+    assert "రూపాయలు" not in out_en
+    # Bare 6-digit amount in an English reply still becomes words
+    assert "Lakh" in normalize_for_speech("Fee is 100000")
 
 
 def test_normalize_phone_number_spaced():

@@ -5,6 +5,7 @@ Generates audio from AI responses.
 
 import asyncio
 import base64
+import html
 import os
 import re
 from typing import Optional
@@ -19,6 +20,12 @@ logger = get_logger(__name__)
 def base64_encode(data: bytes) -> str:
     """Base64-encode audio bytes for transport to the frontend."""
     return base64.b64encode(data).decode("utf-8")
+
+
+def _xml_lang_for(voice: str) -> str:
+    """'te-IN-ShrutiNeural' -> 'te-IN' (SSML xml:lang must match the voice)."""
+    parts = voice.split("-")
+    return "-".join(parts[:2]) if len(parts) >= 2 else "en-US"
 
 
 class EdgeTTSService:
@@ -164,17 +171,11 @@ class EdgeTTSService:
         async def _synth(sentence: str):
             async with sem:
                 try:
-                    import edge_tts
                     spoken = normalize_for_speech(sentence)
                     rate, pitch = self._prosody_for(sentence)
-                    communicate = edge_tts.Communicate(
-                        spoken, voice_to_use, rate=rate, pitch=pitch
+                    audio = await self._synthesize_one(
+                        spoken, voice_to_use, rate, pitch
                     )
-                    chunks = [
-                        c["data"] async for c in communicate.stream()
-                        if c["type"] == "audio"
-                    ]
-                    audio = b"".join(chunks)
                     if not audio:
                         logger.warning("Empty TTS audio for sentence: %r", sentence[:40])
                         return {"text": sentence, "audio_data": None}
@@ -222,17 +223,11 @@ class EdgeTTSService:
         async def _synth(index: int, sentence: str):
             async with sem:
                 try:
-                    import edge_tts
                     spoken = normalize_for_speech(sentence)
                     rate, pitch = self._prosody_for(sentence)
-                    communicate = edge_tts.Communicate(
-                        spoken, voice_to_use, rate=rate, pitch=pitch
+                    audio = await self._synthesize_one(
+                        spoken, voice_to_use, rate, pitch
                     )
-                    chunks = [
-                        c["data"] async for c in communicate.stream()
-                        if c["type"] == "audio"
-                    ]
-                    audio = b"".join(chunks)
                     return index, sentence, audio or None
                 except Exception as e:
                     logger.error("Streaming sentence TTS failed: %s", e)
@@ -263,8 +258,9 @@ class EdgeTTSService:
     #   - Exclamations   : slight emphasis    (+pitch)
     #   - Short lines    : a touch faster     (brisk "Avunu...")
     #   - Long sentences : a touch slower     (clear, unhurried information)
-    # All deltas are small so the voice stays natural and never theatrical.
-    _BASE_RATE = os.getenv("TTS_RATE", "+10%")
+    # All deltas are deliberately small — big swings are what make TTS sound
+    # robotic or theatrical.
+    _BASE_RATE = os.getenv("TTS_RATE", "+8%")
     _BASE_PITCH = os.getenv("TTS_PITCH", "+0Hz")
 
     @staticmethod
@@ -302,19 +298,69 @@ class EdgeTTSService:
         pitch_delta = 0
 
         if s.endswith("?"):
-            pitch_delta += 4          # question rise
+            pitch_delta += 3          # gentle question rise
         elif s.endswith("!"):
             pitch_delta += 2          # gentle emphasis
 
         length = len(s)
         if length < 20:
-            rate_delta += 4           # short, brisk acknowledgement
+            rate_delta += 3           # short, brisk acknowledgement
         elif length > 130:
-            rate_delta -= 3           # long sentence: calm, clear
+            rate_delta -= 2           # long sentence: calm, clear
 
         rate = base_rate + rate_delta
         pitch = base_pitch + pitch_delta
         return f"{rate:+d}%", f"{pitch:+d}Hz"
+
+    async def _synthesize_one(
+        self, spoken: str, voice: str, rate: str, pitch: str
+    ) -> Optional[bytes]:
+        """
+        Synthesize ONE complete sentence as audio bytes.
+
+        Tries SSML with an expressive style first — `mstts:express-as
+        style="friendly"` makes the neural voice sound like a warm person
+        talking (the single biggest fix for the "robotic TTS" feel). Falls
+        back to plain synthesis for voices that reject express-as, so other
+        languages are never broken by the upgrade.
+        """
+        try:
+            import edge_tts
+            xml_lang = _xml_lang_for(voice)
+            escaped = html.escape(spoken, quote=False)
+            ssml = (
+                '<speak version="1.0" '
+                'xmlns="http://www.w3.org/2001/10/synthesis" '
+                'xmlns:mstts="http://www.w3.org/2001/mstts" '
+                f'xml:lang="{xml_lang}">'
+                '<mstts:express-as style="friendly">'
+                f'<prosody rate="{rate}" pitch="{pitch}">{escaped}</prosody>'
+                "</mstts:express-as></speak>"
+            )
+            communicate = edge_tts.Communicate(ssml, voice, rate="+0%", pitch="+0Hz")
+            chunks = [
+                c["data"] async for c in communicate.stream()
+                if c["type"] == "audio"
+            ]
+            audio = b"".join(chunks)
+            if audio:
+                return audio
+            logger.debug("Express-as produced no audio; falling back to plain")
+        except Exception as e:
+            logger.debug("Express-as synthesis failed (%s); falling back to plain", e)
+
+        # Plain fallback (voices that do not support mstts:express-as)
+        try:
+            import edge_tts
+            communicate = edge_tts.Communicate(spoken, voice, rate=rate, pitch=pitch)
+            chunks = [
+                c["data"] async for c in communicate.stream()
+                if c["type"] == "audio"
+            ]
+            return b"".join(chunks) or None
+        except Exception as e:
+            logger.error("Plain TTS synthesis failed: %s", e)
+            return None
 
     def _pick_voice(
         self,

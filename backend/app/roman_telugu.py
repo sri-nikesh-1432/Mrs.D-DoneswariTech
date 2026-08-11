@@ -280,6 +280,9 @@ _MONEY_RE = re.compile(r"(?:₹|RS\.?|rs\.?|Rs\.?)?\s*([0-9][0-9,]*)\b", re.IGNO
 # Abbreviations -> pronunciation map. We map to a pronunciation that Edge-TTS
 # reads correctly: for letter abbreviations join the roman letters with spaces
 # ("ఎం పి సి") so it reads each letter; for words use phonetic spelling.
+# NOTE: English words that are already pronounceable (College, Hostel, Fee,
+# Transport...) are NOT listed — the neural voices read them naturally in
+# Tenglish, and injecting Telugu script into an English reply breaks the voice.
 _ABBREV_PRON = {
     "MPC": "ఎం పి సి",
     "BiPC": "బై పి సి",
@@ -302,26 +305,49 @@ _ABBREV_PRON = {
     "nLearn": "ఎన్ లెర్న్",
     "NLearn": "ఎన్ లెర్న్",
     "Olympiad": "ఒలింపియాడ్",
-    "Transport": "ట్రాన్స్‌పోర్ట్",
-    "Hostel": "హాస్టల్",
-    "Admissions": "అడ్మిషన్స్",
-    "College": "కాలేజీ",
-    "Campus": "క్యాంపస్",
-    "Scholarship": "స్కాలర్‌షిప్",
-    "Scholarships": "స్కాలర్‌షిప్స్",
+}
+
+# English-reply pronunciations for the same abbreviations (the English Indian
+# voice reads letter names: "MPC" -> "M P C"). Words (NEET, Narayana...) are
+# already pronounceable and stay as-is.
+_ABBREV_PRON_EN = {
+    "MPC": "M P C",
+    "BiPC": "B i P C",
+    "BIPC": "B i P C",
+    "JEE": "J E E",
+    "EAPCET": "E A P C E T",
+    "MBA": "M B A",
+    "B.Tech": "B Tech",
+    "BTech": "B Tech",
+    "IIT": "I I T",
+    "nLearn": "N Learn",
+    "NLearn": "N Learn",
 }
 
 # ordered key matching (longest first so "B.Tech" beats "B.")
-_ABBREV_KEYS = sorted(_ABBREV_PRON.keys(), key=len, reverse=True)
+_ABBREV_KEYS = sorted(set(_ABBREV_PRON) | set(_ABBREV_PRON_EN), key=len, reverse=True)
 
 
-def _normalize_abbreviations(text: str) -> str:
-    """Replace course/institution abbreviations with their spoken form."""
+# Non-spoken glyphs that should never reach the TTS engine: ✓ ✗ ✔ ✖ ★ ⭐
+# emoji, variation selectors, zero-width joiners, soft hyphens.
+_NON_SPEECH_RE = re.compile(
+    r"[\u2713\u2714\u2717\u2718\u2605\u2606\u274C\u2705\u274E\u274F"
+    r"\U0001F000-\U0001FAFF\uFE0F\u200D\u2060\u00AD]"
+)
+
+
+def _normalize_abbreviations(text: str, is_telugu: bool = True) -> str:
+    """Replace course/institution abbreviations with their spoken form in the
+    reply's dominant script (Telugu letters for Telugu, English letter names
+    for English) — never mix scripts inside one voice track."""
+    mapping = _ABBREV_PRON if is_telugu else _ABBREV_PRON_EN
     for key in _ABBREV_KEYS:
+        if key not in mapping:
+            continue
         # word-boundary-aware but tolerant of case (MPC, mpc, Mpc)
         pattern = re.compile(r"(?<!\w)" + re.escape(key) + r"(?!\w)", re.IGNORECASE)
         if pattern.search(text):
-            text = pattern.sub(_ABBREV_PRON[key].strip(), text)
+            text = pattern.sub(mapping[key].strip(), text)
     return text
 
 
@@ -415,7 +441,9 @@ def normalize_for_speech(text: str) -> str:
     out = text
 
     # 1) Abbreviations FIRST so their digits/letters are not re-parsed as numbers.
-    out = _normalize_abbreviations(out)
+    #    Script-aware: an English reply must NOT receive Telugu-script
+    #    pronunciations (the English voice cannot read them).
+    out = _normalize_abbreviations(out, is_telugu=telugu_reply)
 
     # 2) Phone numbers -> spaced digits (do before general number handling)
     #    Digit names follow the dominant script so a Telugu reply is read
@@ -437,24 +465,43 @@ def normalize_for_speech(text: str) -> str:
         return number_to_english_words(int(m.group(0)))
     out = _YEAR_RE.sub(_year_repl, out)
 
-    # 4) Money amounts -> Telugu words + " రూపాయలు". Fees are spoken in
-    #    Telugu currency words (ఒక లక్ష రూపాయలు) even inside an English reply
-    #    because the TTS voice is a native Telugu female voice — this matches
-    #    how an Indian counsellor speaks amounts. ₹/rs prefixes handled too.
+    # 4) Money amounts -> words + currency in the reply's dominant script.
+    #    Telugu reply: "ఒక లక్ష రూపాయలు" (per the spec). English reply:
+    #    "one lakh rupees" — never digit-by-digit and never mixed scripts.
+    #    Handles sentence-final punctuation: "₹85000." -> "ఎనభై ఐదు వేల
+    #    రూపాయలు." (years were already converted to words in step 3, so a
+    #    leftover 4+ digit run here is an amount, not a year).
     id_words = out.split()
     new_tokens = []
-    for tok in id_words:
-        stripped = tok.lstrip("₹rsRSoo ").replace(",", "")
-        lower = tok.lower()
-        is_rupee_token = "₹" in tok or lower.startswith("rs") or lower.startswith("inr")
-        if stripped.isdigit() and (is_rupee_token or (len(stripped) >= 4)):
-            amount = int(stripped)
-            new_tokens.append(number_to_telugu_words(amount) + " రూపాయలు")
-        else:
-            new_tokens.append(tok)
+    for i, tok in enumerate(id_words):
+        prev = (id_words[i - 1] if i else "").lower().rstrip(".")
+        m = re.match(
+            r"^(₹|rs\.?|inr)?([0-9][0-9,]*)([.!?…]*)$", tok, re.IGNORECASE
+        )
+        if m and m.group(2):
+            digits = m.group(2).replace(",", "")
+            amount = int(digits)
+            punct = m.group(3) or ""
+            has_prefix = bool(m.group(1))
+            if has_prefix or len(digits) >= 4:
+                # Drop a bare leading "Rs"/"INR" token so we never emit
+                # "Rs one lakh rupees" — just "one lakh rupees".
+                if prev in ("rs", "inr"):
+                    new_tokens.pop()
+                if telugu_reply:
+                    new_tokens.append(
+                        number_to_telugu_words(amount) + " రూపాయలు" + punct
+                    )
+                else:
+                    new_tokens.append(
+                        number_to_english_words(amount) + " rupees" + punct
+                    )
+                continue
+        new_tokens.append(tok)
     out = " ".join(new_tokens)
 
-    # 5) Cleanup stray spaces
+    # 5) Strip non-spoken glyphs (✓ ✗ emoji ZWJ...) and stray spaces
+    out = _NON_SPEECH_RE.sub("", out)
     out = re.sub(r"\s{2,}", " ", out).strip()
     return out
 

@@ -34,7 +34,16 @@ def setup_logging():
     
     # Create logs directory if it doesn't exist
     settings.LOGS_DIR.mkdir(parents=True, exist_ok=True)
-    
+
+    # Windows consoles default to cp1252 and CRASH the logging handlers when a
+    # log line contains ✓/✗ or Telugu script (UnicodeEncodeError), which masked
+    # the real errors. Force UTF-8 everywhere so errors are never lost.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass  # not a TextIOWrapper (e.g. captured output) — ignore
+
     # Create formatters
     console_formatter = ColoredFormatter(
         fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -51,15 +60,15 @@ def setup_logging():
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(console_formatter)
     
-    # File handler - general logs
+    # File handler - general logs (UTF-8: ✓, ✗ and Telugu script must survive)
     log_file = settings.LOGS_DIR / f"mrsd_{datetime.now().strftime('%Y%m%d')}.log"
-    file_handler = logging.FileHandler(log_file)
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(file_formatter)
     
-    # File handler - error logs
+    # File handler - error logs (UTF-8)
     error_log_file = settings.LOGS_DIR / f"mrsd_errors_{datetime.now().strftime('%Y%m%d')}.log"
-    error_handler = logging.FileHandler(error_log_file)
+    error_handler = logging.FileHandler(error_log_file, encoding="utf-8")
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(file_formatter)
     

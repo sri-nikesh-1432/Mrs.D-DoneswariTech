@@ -13,6 +13,8 @@ export interface VoiceDebugInfo {
   total_time_ms: number;
   chunks_retrieved: number;
   knowledge_source: string;
+  /** Real backend error detail (shown in the debug panel, never faked). */
+  stream_error?: string;
 }
 
 export type CallStage =
@@ -267,6 +269,19 @@ export function useVoiceAgent({
     }
   }, [setStage, startListening]);
 
+  // Natural inter-sentence pause. Humans do NOT pause the same length after
+  // every sentence — uniform gaps are exactly what makes TTS sound robotic.
+  // Questions get a "thinking" beat, exclamations an emphasis beat, a long
+  // sentence a slightly longer breath, and short acknowledgements flow fast.
+  const pauseAfterSentence = useCallback((sentence: string): number => {
+    const s = sentence.trim();
+    if (s.endsWith("?")) return 560; // question → thinking beat
+    if (s.endsWith("!")) return 460; // exclamation → emphasis beat
+    if (s.length > 140) return 620; // long thought → catch-up breath
+    if (s.length < 20) return 300; // short ack → keep it moving
+    return 380; // normal conversational gap
+  }, []);
+
   // ── Play the next sentence in the queue. Each sentence is a COMPLETE
   //    utterance — never cut in the middle. When the queue is empty the turn
   //    is finished and we return to LISTENING. ───────────────────────────────
@@ -291,17 +306,17 @@ export function useVoiceAgent({
     const el = audioRef.current;
     el.src = `data:audio/mp3;base64,${next.audioData}`;
     el.onended = () => {
-      // Natural conversational gap (~200ms) at sentence boundaries — one
-      // continuous speaker, never a clipped machine-gun of clips.
-      setTimeout(() => playNextInQueue(), 200);
+      // Vary the gap by sentence type — one continuous speaker with natural
+      // rhythm, never a clipped machine-gun of clips.
+      setTimeout(() => playNextInQueue(), pauseAfterSentence(next.text));
     };
     try {
       await el.play();
     } catch {
       // Autoplay blocked or aborted — skip to the next sentence.
-      setTimeout(() => playNextInQueue(), 200);
+      setTimeout(() => playNextInQueue(), pauseAfterSentence(next.text));
     }
-  }, [handleTurnEnd]);
+  }, [handleTurnEnd, pauseAfterSentence]);
 
   // ── Enqueue one streamed sentence for immediate playback ─────────────────
   // Each sentence's audio is queued the moment it arrives from the SSE
@@ -515,7 +530,23 @@ export function useVoiceAgent({
         if (e && e.name === "AbortError") {
           return;
         }
+        // The user sees a friendly message; the REAL exception is logged to
+        // the console and surfaced in the debug panel (never silently hidden).
+        const detail = e && e.message ? String(e.message) : String(e);
         console.error("Voice pipeline error:", e);
+        setDebugInfo((prev) =>
+          prev
+            ? { ...prev, stream_error: detail }
+            : {
+                retrieval_time_ms: 0,
+                llm_time_ms: 0,
+                tts_time_ms: 0,
+                total_time_ms: 0,
+                chunks_retrieved: 0,
+                knowledge_source: "",
+                stream_error: detail,
+              }
+        );
         setMessages((prev) => [
           ...prev,
           {
@@ -528,8 +559,16 @@ export function useVoiceAgent({
         processingRef.current = false;
         setIsProcessing(false);
         pendingTranscriptRef.current = "";
+        // Full recovery: stop any queued AI audio and reset the STT session
+        // so Mrs. D's trailing voice in the old mic buffer can NEVER become
+        // the next user query — same guarantee as handleTurnEnd, on the
+        // error path too (spec: AI must never hear itself).
+        stopAudioQueue();
         setStage("listening");
-        startListening();
+        stopListening();
+        if (!endedRef.current) {
+          setTimeout(() => startListening(), 150);
+        }
       }
     },
     [
@@ -538,6 +577,8 @@ export function useVoiceAgent({
       mode,
       setStage,
       startListening,
+      stopListening,
+      stopAudioQueue,
       clearSilenceTimer,
       streamConversation,
     ]
