@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { playBreath } from "../lib/breath";
 
 export interface VoiceMessage {
   role: "user" | "ai";
@@ -282,6 +283,16 @@ export function useVoiceAgent({
     return 380;
   }, []);
 
+  // How deep the breath before the next sentence should be. Questions and
+  // long thoughts get a real inhale; quick acknowledgements barely breathe.
+  const breathIntensity = useCallback((sentence: string): number => {
+    const s = sentence.trim();
+    if (s.endsWith("?")) return 0.5; // thinking beat → deeper inhale
+    if (s.length > 140) return 0.55; // long thought → real breath
+    if (s.length < 20) return 0.2; // brisk ack → tiny breath
+    return 0.35;
+  }, []);
+
   // ── Play the next sentence in the queue. Each sentence is a COMPLETE
   //    utterance — never cut in the middle. When the queue is empty the turn
   //    is finished and we return to LISTENING. ───────────────────────────────
@@ -307,8 +318,17 @@ export function useVoiceAgent({
     el.src = `data:audio/mp3;base64,${next.audioData}`;
     el.onended = () => {
       // Vary the gap by sentence type — one continuous speaker with natural
-      // rhythm, never a clipped machine-gun of clips.
-      setTimeout(() => playNextInQueue(), pauseAfterSentence(next.text));
+      // rhythm, never a clipped machine-gun of clips. During the gap, play a
+      // soft synthesized breath (skipped ~1 in 4 times so the rhythm stays
+      // organic instead of metronomic — real people don't breathe on a timer).
+      const gap = pauseAfterSentence(next.text);
+      if (Math.random() > 0.25) {
+        playBreath({
+          durationMs: gap,
+          intensity: breathIntensity(next.text),
+        });
+      }
+      setTimeout(() => playNextInQueue(), gap);
     };
     try {
       await el.play();
@@ -316,7 +336,7 @@ export function useVoiceAgent({
       // Autoplay blocked or aborted — skip to the next sentence.
       setTimeout(() => playNextInQueue(), pauseAfterSentence(next.text));
     }
-  }, [handleTurnEnd, pauseAfterSentence]);
+  }, [handleTurnEnd, pauseAfterSentence, breathIntensity]);
 
   // ── Enqueue one streamed sentence for immediate playback ─────────────────
   // Each sentence's audio is queued the moment it arrives from the SSE

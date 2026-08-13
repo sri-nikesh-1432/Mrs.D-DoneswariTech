@@ -17,6 +17,7 @@ from app.roman_telugu import (
     clean_tts_text,
     split_into_sentences,
 )
+from app.tts.raw_ssml import get_raw_synth
 
 logger = get_logger(__name__)
 
@@ -172,8 +173,9 @@ class EdgeTTSService:
             "Synthesizing %d sentences with voice %s", len(sentences), voice_to_use
         )
 
-        # Synthesize concurrently but bound the parallelism (edge-tts handles
-        # a handful of parallel connections fine; unbounded could overwhelm).
+        # Synthesize concurrently but bound the parallelism (the shared raw
+        # connection serializes internally; this just prevents unbounded task
+        # creation for long replies).
         sem = asyncio.Semaphore(4)
 
         async def _synth(sentence: str):
@@ -182,9 +184,9 @@ class EdgeTTSService:
                     spoken = clean_tts_text(normalize_for_speech(sentence))
                     if not spoken:
                         return {"text": sentence, "audio_data": None}
-                    rate, pitch = self._prosody_for(sentence)
+                    rate, pitch, volume = self._prosody_for(sentence)
                     audio = await self._synthesize_one(
-                        sentence, spoken, voice_to_use, rate, pitch
+                        sentence, spoken, voice_to_use, rate, pitch, volume
                     )
                     if not audio:
                         logger.warning("Empty TTS audio for sentence: %r", sentence[:40])
@@ -236,9 +238,9 @@ class EdgeTTSService:
                     spoken = clean_tts_text(normalize_for_speech(sentence))
                     if not spoken:
                         return index, sentence, None
-                    rate, pitch = self._prosody_for(sentence)
+                    rate, pitch, volume = self._prosody_for(sentence)
                     audio = await self._synthesize_one(
-                        sentence, spoken, voice_to_use, rate, pitch
+                        sentence, spoken, voice_to_use, rate, pitch, volume
                     )
                     return index, sentence, audio or None
                 except Exception as e:
@@ -265,15 +267,17 @@ class EdgeTTSService:
     
     # ── Natural prosody (subtle, human-like rhythm) ─────────────────────────
     # The goal is a living counsellor, not a monotone TTS demo. Per sentence
-    # we vary pitch and rate a little based on the sentence type and length:
+    # we vary rate, pitch and volume a little based on the sentence type and
+    # length:
     #   - Questions      : slight pitch rise  (sounds like a question)
-    #   - Exclamations   : slight emphasis    (+pitch)
+    #   - Exclamations   : slight emphasis    (+pitch, +volume)
     #   - Short lines    : a touch faster     (brisk "Avunu...")
     #   - Long sentences : a touch slower     (clear, unhurried information)
     # All deltas are deliberately small — big swings are what make TTS sound
     # robotic or theatrical.
     _BASE_RATE = os.getenv("TTS_RATE", "+8%")
     _BASE_PITCH = os.getenv("TTS_PITCH", "+0Hz")
+    _BASE_VOLUME = os.getenv("TTS_VOLUME", "+0%")
 
     @staticmethod
     def _parse_pct(value: str, default: int = 10) -> int:
@@ -299,36 +303,44 @@ class EdgeTTSService:
 
     def _prosody_for(self, sentence: str) -> tuple:
         """
-        Return (rate, pitch) for a single sentence so the whole reply does not
-        sound equally timed and pitched.
+        Return (rate, pitch, volume) for a single sentence so the whole reply
+        does not sound equally timed and pitched — the heart of the "human
+        engine". The deltas are tiny but real: identical prosody on every
+        sentence is exactly what reads as robotic.
         """
         base_rate = self._parse_pct(self._BASE_RATE)
         base_pitch = self._parse_hz(self._BASE_PITCH)
+        base_volume = self._parse_pct(self._BASE_VOLUME, default=0)
         s = sentence.strip()
 
         rate_delta = 0
         pitch_delta = 0
+        volume_delta = 0
 
         if s.endswith("?"):
             pitch_delta += 3          # gentle question rise
         elif s.endswith("!"):
             pitch_delta += 2          # gentle emphasis
+            volume_delta += 4
 
         length = len(s)
         if length < 20:
             rate_delta += 3           # short, brisk acknowledgement
         elif length > 130:
             rate_delta -= 2           # long sentence: calm, clear
+            volume_delta -= 3         # ...and a touch quieter (intimate)
 
         rate = base_rate + rate_delta
         pitch = base_pitch + pitch_delta
-        return f"{rate:+d}%", f"{pitch:+d}Hz"
+        volume = base_volume + volume_delta
+        return f"{rate:+d}%", f"{pitch:+d}Hz", f"{volume:+d}%"
 
-    # Natural breathing-cadence pause AFTER a sentence, in milliseconds.
-    # Humans do not pause the same length after every sentence — questions
-    # get a thinking beat, exclamations an emphasis beat, a long thought a
-    # deeper breath. These pauses live INSIDE the audio (mstts:silence) so
-    # the caller hears ONE continuous speaker, not clipped clips.
+    # Natural breathing-cadence pause AFTER a sentence, in milliseconds. Humans
+    # do not pause the same length after every sentence — questions get a
+    # thinking beat, exclamations an emphasis beat, a long thought a deeper
+    # breath. These pauses are played by the FRONTEND between audio clips (this
+    # free Edge endpoint rejects <break>/mstts:silence), giving one continuous
+    # speaker with a natural breathing rhythm.
     @staticmethod
     def _silence_for(sentence: str) -> int:
         s = sentence.strip()
@@ -342,62 +354,67 @@ class EdgeTTSService:
             return 300
         return 380
 
-    # Expressive SSML is OPT-IN (TTS_EXPRESSIVE=1). On this endpoint the SSML
-    # path (mstts:express-as + mstts:silence) synthesizes ~2.4x slower than
-    # plain per-sentence prosody and returns several times more audio bytes —
-    # which directly hurts time-to-first-audio. For a realtime voice agent,
-    # the fast plain path + per-sentence rate/pitch variation + natural
-    # inter-sentence pauses is the right balance of natural and live.
-    _EXPRESSIVE = os.getenv("TTS_EXPRESSIVE", "0").lower() in ("1", "true", "yes")
+    # Expressive mode. IMPORTANT FINDING: the free Edge endpoint silently
+    # returns ZERO audio for <mstts:express-as>, <mstts:silence> AND <break>
+    # on every voice (te/en/hi verified) — the old "express-as" path was
+    # actually producing 20-40s of escaped-tag speech garbage. What the
+    # endpoint DOES accept is <voice><prosody rate/pitch/volume>text</prosody>.
+    # So "expressive" here means: true per-sentence SSML prosody sent over a
+    # persistent websocket (no reconnect per sentence) + natural punctuation
+    # + the frontend breathing cadence. ON by default; TTS_EXPRESSIVE=0 opts out
+    # to the plain Communicate path.
+    _EXPRESSIVE = os.getenv("TTS_EXPRESSIVE", "1").lower() in ("1", "true", "yes")
 
     async def _synthesize_one(
-        self, sentence: str, spoken: str, voice: str, rate: str, pitch: str
+        self,
+        sentence: str,
+        spoken: str,
+        voice: str,
+        rate: str,
+        pitch: str,
+        volume: str,
     ) -> Optional[bytes]:
         """
-        Synthesize ONE complete sentence as audio bytes (fast path).
+        Synthesize ONE complete sentence as audio bytes.
 
-        Primary: plain synthesis with per-sentence prosody (rate/pitch) —
-        ~1.7-2.4s per sentence. Optional expressive SSML when
-        TTS_EXPRESSIVE=1: `mstts:express-as style="friendly"` plus a
-        sentence-boundary silence for a human breathing cadence, with plain
-        fallback if the voice rejects the tags.
+        Primary (expressive, default): TRUE SSML over the shared persistent
+        websocket — <voice><prosody rate/pitch/volume>text</prosody></voice> —
+        which the Edge endpoint genuinely supports, with zero reconnect
+        overhead per sentence.
+
+        Fallback: plain `edge_tts.Communicate` (escaped-text template, always
+        works) if the SSML request fails for any reason.
         """
         if self._EXPRESSIVE:
             try:
-                import edge_tts
                 xml_lang = _xml_lang_for(voice)
                 escaped = html.escape(spoken, quote=False)
-                silence_ms = self._silence_for(sentence)
                 ssml = (
-                    '<speak version="1.0" '
-                    'xmlns="http://www.w3.org/2001/10/synthesis" '
-                    'xmlns:mstts="http://www.w3.org/2001/mstts" '
-                    f'xml:lang="{xml_lang}">'
-                    '<mstts:express-as style="friendly">'
-                    f'<prosody rate="{rate}" pitch="{pitch}">{escaped}</prosody>'
-                    f'<mstts:silence type="Sentenceboundary" value="{silence_ms}ms"/>'
-                    "</mstts:express-as></speak>"
+                    "<speak version='1.0' "
+                    "xmlns='http://www.w3.org/2001/10/synthesis' "
+                    f"xml:lang='{xml_lang}'>"
+                    f"<voice name='{voice}'>"
+                    f"<prosody pitch='{pitch}' rate='{rate}' volume='{volume}'>"
+                    f"{escaped}"
+                    "</prosody>"
+                    "</voice>"
+                    "</speak>"
                 )
-                communicate = edge_tts.Communicate(
-                    ssml, voice, rate="+0%", pitch="+0Hz"
-                )
-                chunks = [
-                    c["data"] async for c in communicate.stream()
-                    if c["type"] == "audio"
-                ]
-                audio = b"".join(chunks)
+                audio = await get_raw_synth().synthesize(ssml)
                 if audio:
                     return audio
-                logger.debug("Express-as produced no audio; falling back to plain")
+                logger.debug("Expressive SSML produced no audio; falling back to plain")
             except Exception as e:
                 logger.debug(
-                    "Express-as synthesis failed (%s); falling back to plain", e
+                    "Expressive SSML failed (%s); falling back to plain", e
                 )
 
-        # Fast plain path (default): per-sentence prosody via rate/pitch.
+        # Plain fallback: per-sentence prosody via Communicate kwargs.
         try:
             import edge_tts
-            communicate = edge_tts.Communicate(spoken, voice, rate=rate, pitch=pitch)
+            communicate = edge_tts.Communicate(
+                spoken, voice, rate=rate, pitch=pitch, volume=volume
+            )
             chunks = [
                 c["data"] async for c in communicate.stream()
                 if c["type"] == "audio"

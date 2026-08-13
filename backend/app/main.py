@@ -93,6 +93,13 @@ async def lifespan(app: FastAPI):
     yield
 
     _scheduler.shutdown(wait=False)
+    # Close the persistent Edge TTS websocket so the app exits cleanly and
+    # never leaks the connection across restarts.
+    try:
+        from app.tts.raw_ssml import close_raw_synth
+        await close_raw_synth()
+    except Exception as e:
+        logger.warning("Error closing Edge TTS connection: %s", e)
     logger.info("Mrs. D shutting down.")
 
 
