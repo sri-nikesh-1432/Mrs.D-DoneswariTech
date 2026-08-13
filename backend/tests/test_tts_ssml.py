@@ -74,6 +74,24 @@ class TestExpressiveSSML:
         assert "mstts" not in ssml
         assert "<break" not in ssml
 
+    def test_prosody_for_returns_valid_formats(self):
+        """_prosody_for must always return SSML-valid rate/pitch/volume strings
+        (with organic jitter, but never malformed or out of sane bounds)."""
+        import re as _re
+        from app.tts.edge_tts_service import EdgeTTSService
+
+        service = EdgeTTSService()
+        for sentence in ("Avunu?", "Sure!", "A longer statement about fees.", "Hmm..."):
+            rate, pitch, volume = service._prosody_for(sentence)
+            assert _re.match(r"[+-]\d+%$", rate), rate
+            assert _re.match(r"[+-]\d+Hz$", pitch), pitch
+            assert _re.match(r"[+-]\d+%$", volume), volume
+            # Jitter stays within ±2 of the base deltas — never extreme.
+            # (Short questions can reach +13% rate; long quiet lines -4%.)
+            assert -15 <= int(rate[:-1]) <= 15
+            assert -6 <= int(pitch[:-2]) <= 6
+            assert -10 <= int(volume[:-1]) <= 10
+
 
 class TestRawSynthStructure:
     def test_connection_reuse_lock(self):

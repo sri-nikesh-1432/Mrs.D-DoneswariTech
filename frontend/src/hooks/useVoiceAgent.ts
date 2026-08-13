@@ -276,11 +276,15 @@ export function useVoiceAgent({
   // thought a deeper breath, short acknowledgements flow fast.
   const pauseAfterSentence = useCallback((sentence: string): number => {
     const s = sentence.trim();
-    if (s.endsWith("?")) return 560;
-    if (s.endsWith("!")) return 460;
-    if (s.length > 140) return 620;
-    if (s.length < 20) return 300;
-    return 380;
+    let base: number;
+    if (s.endsWith("?")) base = 560;
+    else if (s.endsWith("!")) base = 460;
+    else if (s.length > 140) base = 620;
+    else if (s.length < 20) base = 300;
+    else base = 380;
+    // ±12% organic jitter — real people never pause for exactly the same
+    // length; identical gaps are precisely what reads as mechanical.
+    return Math.round(base * (0.88 + Math.random() * 0.24));
   }, []);
 
   // How deep the breath before the next sentence should be. Questions and
@@ -318,11 +322,13 @@ export function useVoiceAgent({
     el.src = `data:audio/mp3;base64,${next.audioData}`;
     el.onended = () => {
       // Vary the gap by sentence type — one continuous speaker with natural
-      // rhythm, never a clipped machine-gun of clips. During the gap, play a
-      // soft synthesized breath (skipped ~1 in 4 times so the rhythm stays
-      // organic instead of metronomic — real people don't breathe on a timer).
+      // rhythm, never a clipped machine-gun of clips. While the reply is
+      // STILL TALKING (more sentences queued), breathe during the gap — a
+      // soft synthesized inhale, skipped ~1 in 4 so it stays organic. Never
+      // after the last sentence: trailing silence belongs to the caller,
+      // not the AI.
       const gap = pauseAfterSentence(next.text);
-      if (Math.random() > 0.25) {
+      if (audioQueueRef.current.length > 0 && Math.random() > 0.25) {
         playBreath({
           durationMs: gap,
           intensity: breathIntensity(next.text),

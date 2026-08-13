@@ -7,6 +7,7 @@ import asyncio
 import base64
 import html
 import os
+import random
 import re
 from typing import Optional
 import logging
@@ -329,6 +330,13 @@ class EdgeTTSService:
         elif length > 130:
             rate_delta -= 2           # long sentence: calm, clear
             volume_delta -= 3         # ...and a touch quieter (intimate)
+
+        # ±2 organic jitter so no two sentences are voiced identically —
+        # applying the same per-type deltas every time is exactly what makes
+        # TTS sound mechanical. Tiny, but real.
+        rate_delta += random.randint(-2, 2)
+        pitch_delta += random.randint(-1, 1)
+        volume_delta += random.randint(-1, 1)
 
         rate = base_rate + rate_delta
         pitch = base_pitch + pitch_delta
