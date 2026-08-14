@@ -61,6 +61,14 @@ export class VoiceActivityDetector {
   private startFrames: number;
   private silenceMs: number;
   private baseThreshold: number;
+  /**
+   * Milliseconds of genuine speech energy since the last speech start — the
+   * time the mic was actually ABOVE threshold while speaking (excludes the
+   * trailing silence that triggers onSpeechEnd). The recorder uses this to
+   * reject sub-speech blips (coughs, clicks) that would otherwise be sent to
+   * Whisper, which can hallucinate "Thank you." on near-silence.
+   */
+  private activeMs = 0;
 
   constructor(opts: VADOptions = {}, callbacks: VADCallbacks = {}) {
     this.startFrames = opts.startFrames ?? 3;
@@ -148,11 +156,20 @@ export class VoiceActivityDetector {
     this.framesAbove = 0;
   }
 
+  /**
+   * Milliseconds of genuine speech energy captured in the CURRENT speaking
+   * segment (0 while silent). Read inside onSpeechEnd to gate the recording.
+   */
+  get activeSpeechMs(): number {
+    return this.activeMs;
+  }
+
   /** Force-reset the speech state (e.g. after a barge-in or turn end). */
   reset(): void {
     this._isSpeaking = false;
     this.framesAbove = 0;
     this.silentSince = 0;
+    this.activeMs = 0;
   }
 
   private loop = () => {
@@ -203,6 +220,10 @@ export class VoiceActivityDetector {
         this._isSpeaking = true;
         this.silentSince = 0;
         this.onSpeechStart?.();
+      } else if (this._isSpeaking) {
+        // Genuine speech energy while speaking → count toward the speech
+        // duration used to validate the recording.
+        this.activeMs += dt;
       }
     } else {
       this.framesAbove = 0;
@@ -211,7 +232,10 @@ export class VoiceActivityDetector {
         if (this.silentSince >= this.silenceMs) {
           this._isSpeaking = false;
           this.silentSince = 0;
+          // Fire the callback BEFORE resetting so the hook can read how much
+          // real speech this segment contained.
           this.onSpeechEnd?.();
+          this.activeMs = 0;
         }
       }
     }

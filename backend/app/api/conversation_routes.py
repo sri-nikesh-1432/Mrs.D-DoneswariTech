@@ -45,9 +45,22 @@ LANGUAGE_INSTRUCTION = (
     "BEHAVIOUR (follow strictly):\n"
     "- NEVER restate, translate, or paraphrase the caller's words. No 'మీరు ... అని అర్థమైంది', "
     "  no 'you asked about...', no 'according to your question'. Act on their intent directly.\n"
-    "- Acknowledge warmly in ONE short phrase, then answer or guide. E.g. 'అవును, తప్పకుండా. ...'\n"
-    "- Keep it SHORT like a phone call: 1-3 sentences for simple questions. Don't dump everything.\n"
-    "- End with a relevant warm follow-up question when natural.\n"
+    "- Acknowledge naturally and briefly ONLY when it fits — and VARY it by context. Never start "
+    "  every answer with 'అవును, తప్పకుండా'. Choose the opener that matches the meaning: 'సరే, ...', "
+    "  'ఖచ్చితంగా, ...', 'తప్పకుండా చెప్తాను', 'Sure, ...', 'Okay, ...', 'అవును, ...', 'ఆ విషయం గురించి చెప్తాను...' "
+    "  or simply answer directly with no filler. Never repeat the same opener twice in a row.\n"
+    "- ANSWER COMPLETELY. When the caller asks for details (fee structure, hostel, transport, "
+    "  documents, admission), give the FULL breakdown from the knowledge in one natural reply. "
+    "  Do NOT give a one-line answer and immediately ask another question.\n"
+    "- NEVER end with a follow-up question just to keep the call going. Ask ONLY when genuinely "
+    "  needed to disambiguate (e.g. which course). After answering, stop and let the caller speak. "
+    "  Silence is allowed — do not fill it.\n"
+    "- DO NOT HALLUCINATE. Use ONLY the provided knowledge. If the answer is not in the knowledge, "
+    "  say naturally: 'ఆ వివరాలు నాకు ప్రస్తుతం అందుబాటులో ఉన్న information లో లేవు' (or in English "
+    "  for English callers) and invite them to ask about something that is covered. Never invent "
+    "  fees, dates, courses, or facilities.\n"
+    "- Keep it SHORT like a phone call: 2-5 conversational sentences for a simple question; a "
+    "  complete but natural sequence for complex requests.\n"
     "- NATURAL TELUGU-ENGLISH CODE-MIXING IS EXPECTED: an educated Telugu counsellor mixes "
     "  English words naturally. Write Telugu words in Telugu script, keep conversational "
     "  English words (fee, hostel, bus, campus, college, admission, process, course, details, "
@@ -64,10 +77,9 @@ LANGUAGE_INSTRUCTION = (
     "\n"
     "Vary sentence lengths; mix short acknowledgements and longer answers so it sounds spoken. "
     "End questions with '?' and statements with '.' for natural intonation. "
-    "Use '...' occasionally after a longer statement to mark a natural pause/breath "
-    "(e.g. 'అవును, తప్పకుండా...') and an occasional natural spoken filler when thinking "
-    "('Hmm...', 'సరే...', 'Okay...') — like a real telecaller on a live call — but never "
-    "overuse either. "
+    "Use '...' occasionally after a longer statement to mark a natural pause/breath, and an "
+    "occasional natural spoken filler when thinking ('Hmm...', 'సరే...', 'Okay...') — like a real "
+    "telecaller on a live call — but never overuse either. "
     "Speak like a warm professional counsellor: confident, concise, human."
 )
 
@@ -177,6 +189,38 @@ async def stream_conversation(
             llm_ms = 0
             tts_ms = 0
             first_sentence_ms = 0
+
+            # ── TURN VALIDATION (spec §2, §20, §47) ──────────────────────────
+            # The agent must NEVER generate a response unless a NEW, VALID user
+            # utterance has actually been detected. This is the API-level guard:
+            # empty / whitespace-only / pure-noise turns ("Thank you." from a
+            # Whisper hallucination, keyboard clicks, TTS echo with no text)
+            # are dropped BEFORE any RAG/LLM/TTS work — no tokens, no audio.
+            # The frontend already filters; this is defence in depth so a stray
+            # request can never cause a phantom reply.
+            if not is_greeting and (
+                not user_input or not user_input.strip()
+            ):
+                logger.info("Stream turn dropped: empty user_input (conv=%s)", conv_id)
+                yield sse_event(
+                    "done",
+                    {
+                        "ai_response": "",
+                        "conversation_id": conv_id,
+                        "sentence_count": 0,
+                        "debug_info": {
+                            "retrieval_time_ms": 0,
+                            "llm_time_ms": 0,
+                            "tts_time_ms": 0,
+                            "first_sentence_ms": 0,
+                            "total_time_ms": round((time.time() - turn_start) * 1000),
+                            "sentence_count": 0,
+                            "knowledge_source": "none",
+                            "dropped_empty_turn": True,
+                        },
+                    },
+                )
+                return
             # ── Same detection/transliteration as the non-streaming routes ──
             detected_lang = _detect_language(user_input, hint=language)
             llm_input = transliterate_roman_telugu(user_input)
@@ -549,6 +593,21 @@ async def process_test_conversation(
     logger.info(f"Is Greeting: {is_greeting}")
 
     try:
+        # ── Turn validation (spec §2, §20): empty/noise turns never reach the
+        #    LLM — no phantom replies from silence.
+        if not is_greeting and (
+            not user_input or not user_input.strip()
+        ):
+            return {
+                "ai_response": "",
+                "audio_data": None,
+                "sentence_audios": [],
+                "debug_info": {
+                    "total_time_ms": 0,
+                    "dropped_empty_turn": True,
+                },
+            }
+
         # Handle /insert command for JSON retriever
         if user_input.strip().startswith("/insert"):
             insert_content = user_input.strip()[7:].strip()
@@ -766,6 +825,21 @@ async def process_conversation(
     logger.info(f"Memory Length: {len(memory)}")
 
     try:
+        # ── Turn validation (spec §2, §20): empty/noise turns never reach the
+        #    LLM — no phantom replies from silence.
+        if not is_greeting and (
+            not user_input or not user_input.strip()
+        ):
+            return {
+                "ai_response": "",
+                "audio_data": None,
+                "sentence_audios": [],
+                "debug_info": {
+                    "total_time_ms": 0,
+                    "dropped_empty_turn": True,
+                },
+            }
+
         # Handle /insert command for quick knowledge updates
         if user_input.strip().startswith("/insert"):
             insert_start = time.time()

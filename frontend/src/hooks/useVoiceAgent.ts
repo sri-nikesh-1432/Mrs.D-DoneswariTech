@@ -15,6 +15,8 @@ export interface VoiceDebugInfo {
   total_time_ms: number;
   /** Time-to-first-audio: ms from turn start until the first sentence plays. */
   first_sentence_ms?: number;
+  /** Frontend-measured TTFA: ms from speech end until the first audio plays. */
+  ttfa_ms?: number;
   chunks_retrieved: number;
   knowledge_source: string;
   /** Real backend error detail (shown in the debug panel, never faked). */
@@ -27,6 +29,26 @@ export type CallStage =
   | "listening"
   | "thinking"
   | "speaking"
+  | "error";
+
+/**
+ * Internal conversation state machine (spec §4). The public `callStage` is a
+ * UI projection of this machine — the machine itself is what gates behaviour:
+ *
+ *   IDLE → CONNECTING → LISTENING ⇄ USER_SPEAKING → PROCESSING → AI_SPEAKING
+ *   AI_SPEAKING → INTERRUPTED → (backchannel) AI_SPEAKING | (genuine) PROCESSING
+ *   any → RECOVERING → LISTENING; any → ENDING
+ */
+export type FsmState =
+  | "idle"
+  | "connecting"
+  | "listening"
+  | "user_speaking"
+  | "processing"
+  | "ai_speaking"
+  | "interrupted"
+  | "recovering"
+  | "ending"
   | "error";
 
 interface UseVoiceAgentOptions {
@@ -108,6 +130,151 @@ function normalizeTranscript(text: string): string {
   return text.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+/**
+ * ── Utterance validation (spec §2, §20, §21, §47, §50, §53) ─────────────
+ * A transcript only becomes a USER TURN when it passes ALL gates:
+ *   VAD confidence (≥ min speech ms) + text quality + noise filter +
+ *   backchannel filter + duplicate check + echo check.
+ * Anything else is silently dropped — the agent NEVER responds to it.
+ */
+
+/** Minimum recorded speech length before Whisper is even called (ms). */
+const MIN_SPEECH_MS = 350;
+
+/** Max age of a transcript considered "recent" for duplicate detection (ms). */
+const DUPLICATE_WINDOW_MS = 8000;
+
+/**
+ * Backchannels (spec §6, §50): sounds that mean "I'm listening, keep going"
+ * — NOT a request to take the floor. When one of these is the whole
+ * utterance, the AI keeps talking (or resumes) and nothing is sent to the LLM.
+ */
+const BACKCHANNEL_TOKENS = new Set([
+  // English / roman
+  "mm", "mhm", "mhmm", "hmm", "hm", "uh", "um", "umm", "aah", "ah",
+  "oh", "ok", "okay", "okayyy", "right", "yes", "yeah", "yep", "yup",
+  "haa", "ha", "aha", "haan", "huh", "haanji", "accha", "achha",
+  "okie", "k", "kk", "cool", "fine", "got it", "alright", "sure",
+  // Telugu backchannels (roman)
+  "avunu", "avuna", "avn", "alage", "alaga", "sare", "sar", "sari",
+  "sarle", "parledu", "parledhu", "parled", "baane", "bavundi",
+  // Telugu script backchannels
+  "సరే", "అవును", "అలాగే", "సర్లే", "పర్లేదు", "ఓహ్", "అవునా", "హ్మ్",
+  // Hindi / other
+  "theek", "theek hai", "theekhai", "hmm hmm", "haanji",
+]);
+
+/**
+ * Genuine interruption words (spec §6): these mean "stop, I want the floor".
+ * If an utterance contains ANY of these, it is a real barge-in, never a
+ * backchannel — even alongside filler words.
+ */
+const INTERRUPTION_TOKENS = new Set([
+  "wait", "waitwait", "stop", "hold", "minute", "min", "ledu", "ledhu",
+  "no", "na", "actually", "listen", "sorry", "aa", "ఆగండి", "లేదు",
+  "ఒక్క నిమిషం", "నిమిషం", "చెప్పండి", "అడగనా", "మధ్యలో", "mundu",
+  "mundhu", "malli", "okk", "okkanimisham", "adaganu", "adagana",
+]);
+
+/** Non-speech tokens that carry no conversational content (spec §52). */
+const NOISE_TOKENS = new Set([
+  "a", "aa", "aaa", "e", "ee", "eee", "u", "uu", "o", "oo", "er",
+  "eh", "huh", "huhh", "tch", "tsk", "psst", "click", "clk", "beep",
+  // Whisper's bracket/annotation tokens for background audio — never speech.
+  "music", "song", "applause", "silence", "background", "noise",
+  "[music]", "[noise]", "[silence]", "[applause]", "[laughter]",
+  "(music)", "(noise)", "(silence)", "(applause)", "(laughter)",
+]);
+
+/**
+ * True when the whole utterance is just backchannel filler — the caller is
+ * acknowledging, not taking the floor. "Hmm okay" → true; "wait fee entha?"
+ * → false (contains an interruption token).
+ */
+export function isBackchannelUtterance(raw: string): boolean {
+  const text = raw.trim();
+  if (!text) return false;
+  const tokens = text
+    .toLowerCase()
+    .replace(/[.,!?…\-]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!tokens.length) return false;
+  // Any genuine interruption word → definitely NOT a backchannel.
+  if (tokens.some((t) => INTERRUPTION_TOKENS.has(t))) return false;
+  return tokens.every((t) => BACKCHANNEL_TOKENS.has(t));
+}
+
+/**
+ * True when the text is empty, pure punctuation, a single repeated character,
+ * or one of the known non-speech noise tokens — never a user turn.
+ */
+export function isNoiseUtterance(raw: string): boolean {
+  const text = raw.trim();
+  if (!text) return false;
+  const letters = text.replace(/[^\p{L}\p{N}]/gu, "");
+  if (letters.length < 2) return true; // "a", ".", "!"
+  const tokens = text.toLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length === 1) {
+    const t = tokens[0].replace(/[.,!?…]/g, "");
+    // single repeated char: "aaaaa", "hhhh"
+    if (/^(.)\1{2,}$/.test(t)) return true;
+    if (NOISE_TOKENS.has(t)) return true;
+  }
+  return false;
+}
+
+/**
+ * True when the transcript is an echo of the AI's own last spoken words
+ * (spec §48): TTS leakage back through the mic. Whisper sometimes hears the
+ * AI's voice and repeats a chunk of it verbatim ("...తప్పకుండా...") — that
+ * is NOT a user turn.
+ *
+ * Deliberately STRICT: only near-verbatim repetition is an echo. A genuine
+ * follow-up like "hostel fee entha?" shares common words (hostel, fee) with
+ * the AI's previous answer and must NEVER be dropped (spec §30, §54).
+ */
+export function isEchoOfLastAI(text: string, lastAIText: string): boolean {
+  const t = normalizeTranscript(text);
+  const ai = normalizeTranscript(lastAIText);
+  if (!t || !ai || t.length < 10) return false;
+  const tWords = t.split(/\s+/).filter(Boolean);
+  const aiWordSet = new Set(ai.split(/\s+/).filter(Boolean));
+  if (tWords.length < 4) return false;
+  // Heavy overlap (≥ 3 of every 4 words identical to the AI's last words)
+  // = Whisper heard Mrs. D, not a new question.
+  let hits = 0;
+  for (const w of tWords) if (aiWordSet.has(w)) hits++;
+  const overlap = hits / tWords.length;
+  if (overlap >= 0.75) return true;
+  // A long verbatim tail of the AI's last sentence (≥ 5 words) is an echo.
+  if (tWords.length >= 5 && ai.includes(t)) return true;
+  return false;
+}
+
+/**
+ * Stable language tracking (spec §18, §51): one noisy English-looking
+ * transcript must NOT flip a Telugu conversation to English. Only switch when
+ * a majority of the last few utterances agree on the new language.
+ */
+export function stableLanguage(
+  detected: string,
+  history: string[]
+): { lang: string; history: string[] } {
+  const hist = [...history, detected].slice(-3);
+  const counts: Record<string, number> = {};
+  for (const l of hist) counts[l] = (counts[l] || 0) + 1;
+  let best = hist[hist.length - 1];
+  let bestCount = 0;
+  for (const [l, c] of Object.entries(counts)) {
+    if (c > bestCount) {
+      best = l;
+      bestCount = c;
+    }
+  }
+  return { lang: best, history: hist };
+}
+
 /** Whisper ISO-639-1 codes → UI language names (auto-detected per utterance). */
 const LANG_CODE_TO_NAME: Record<string, string> = {
   te: "Telugu",
@@ -161,10 +328,40 @@ export function useVoiceAgent({
   const conversationId = useRef(`voice_${Date.now()}`);
 
   // ── Mutable pipeline state (refs avoid stale closures) ─────────────────────
+  // The REAL conversation state machine (spec §4) lives in fsmRef; callStage
+  // is only its UI projection. Behaviour gates on fsmRef — never on the UI
+  // label. Transitions: IDLE→CONNECTING→LISTENING⇄USER_SPEAKING→PROCESSING→
+  // AI_SPEAKING→(INTERRUPTED)→LISTENING; every failure path → RECOVERING→
+  // LISTENING; ENDING on hang-up.
+  // stageRef mirrors the UI projection for the few places that still read it.
   const stageRef = useRef<CallStage>("idle");
-  const setStage = useCallback((s: CallStage) => {
-    stageRef.current = s;
-    setCallStage(s);
+  const fsmRef = useRef<FsmState>("idle");
+  const setFsm = useCallback((next: FsmState) => {
+    fsmRef.current = next;
+    // Project the machine onto the UI label set the components already render.
+    let stage: CallStage;
+    switch (next) {
+      case "connecting":
+        stage = "connecting";
+        break;
+      case "processing":
+        stage = "thinking";
+        break;
+      case "ai_speaking":
+        stage = "speaking";
+        break;
+      case "error":
+        stage = "error";
+        break;
+      case "ending":
+      case "idle":
+        stage = "idle";
+        break;
+      default: // listening, user_speaking, interrupted, recovering
+        stage = "listening";
+    }
+    stageRef.current = stage;
+    setCallStage(stage);
   }, []);
 
   const processingRef = useRef(false); // true while STT→LLM→TTS is running
@@ -186,10 +383,32 @@ export function useVoiceAgent({
   const aiRafRef = useRef(0);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recChunksRef = useRef<Blob[]>([]);
+  const activeSpeechMsRef = useRef(0); // genuine speech energy in the last segment
   const transcribingRef = useRef(false); // one STT request at a time
   const handleVadStartRef = useRef<() => void>(() => {});
   const handleVadEndRef = useRef<() => void>(() => {});
   const transcribeBlobRef = useRef<(blob: Blob) => void>(() => {});
+
+  // ── Phantom-suppression state (spec §2, §20, §21, §48) ──────────────────
+  // lastAITextRef: the AI's most recent spoken text — used to reject Whisper
+  // echoes of Mrs. D's own voice as user turns (AI must never hear itself).
+  const lastAITextRef = useRef("");
+  // Ring of recent processed transcripts (normalized) with timestamps — the
+  // same utterance arriving twice (stale STT stream, double VAD fire) is
+  // dropped, never processed twice.
+  const recentTranscriptsRef = useRef<Array<{ norm: string; at: number }>>([]);
+  // Recent per-utterance language detections → stable conversation language.
+  const langHistoryRef = useRef<string[]>([]);
+  // True while the AI's audio is PAUSED awaiting barge-in classification
+  // (the queue is held, not destroyed — a backchannel lets Mrs. D continue).
+  const bargeInPausedRef = useRef(false);
+  // Monotonic response id (spec §59, §60): only the LATEST active response
+  // may enqueue/play audio. A stale stream's sentences are discarded even if
+  // its abort races with a new turn.
+  const activeResponseIdRef = useRef(0);
+  // Frontend TTFA (spec §27): when the user's speech ended → first AI audio.
+  const ttfaStartRef = useRef(0);
+  const ttfaRef = useRef<number | null>(null);
 
   // ── Sentence audio queue (ONE queue per conversation) ─────────────────────
   // Responses arrive as sentence-level audio chunks. They are played strictly
@@ -323,6 +542,7 @@ export function useVoiceAgent({
 
   // ── Stop the audio queue immediately (barge-in, new response, end call) ───
   const stopAudioQueue = useCallback(() => {
+    bargeInPausedRef.current = false;
     queueActiveRef.current = false;
     audioQueueRef.current = [];
     if (audioRef.current) {
@@ -331,6 +551,39 @@ export function useVoiceAgent({
       audioRef.current.onended = null;
     }
   }, []);
+
+  // ── Semantic barge-in: PAUSE (don't destroy) the queue ───────────────────
+  // When VAD hears speech while Mrs. D is talking, we stop her audio fast
+  // (spec §7: interruption must be immediate) but HOLD the remaining queue.
+  // The utterance is transcribed; if it is a backchannel ("haa", "okay",
+  // "hmm") the AI simply CONTINUES from where it paused (spec §50); only a
+  // genuine question clears the queue.
+  const pauseAudioQueue = useCallback(() => {
+    bargeInPausedRef.current = true;
+    audioRef.current?.pause();
+  }, []);
+
+  const resumeAudioQueue = useCallback(() => {
+    if (!bargeInPausedRef.current) return;
+    bargeInPausedRef.current = false;
+    // Resume the paused sentence if it is still loaded, else continue the
+    // queue from the next sentence. If there was nothing to resume (the
+    // barge-in happened while THINKING, before any audio), go back to
+    // LISTENING cleanly.
+    const el = audioRef.current;
+    if (el && el.src && el.currentTime > 0 && el.currentTime < el.duration) {
+      setFsm("ai_speaking");
+      el.play().catch(() => playNextInQueueRef.current());
+    } else if (queueActiveRef.current || audioQueueRef.current.length > 0) {
+      // Sentences may have accumulated while paused — activate the queue so
+      // they actually play (a backchannel while THINKING must not lose them).
+      queueActiveRef.current = true;
+      setFsm("ai_speaking");
+      playNextInQueueRef.current();
+    } else {
+      setFsm("listening");
+    }
+  }, [setFsm]);
 
   // ── Cancel any in-flight streaming fetch (barge-in, end call, new turn) ──
   const stopStreaming = useCallback(() => {
@@ -341,14 +594,23 @@ export function useVoiceAgent({
     }
   }, []);
 
+  // Forward ref so resumeAudioQueue (defined before playNextInQueue) can
+  // continue the queue after a backchannel pause.
+  const playNextInQueueRef = useRef<() => void>(() => {});
+
   // ── Turn end: clear buffers, THEN listen for new audio only ───────────────
   const handleTurnEnd = useCallback(() => {
     processingRef.current = false;
     setIsProcessing(false);
     queueActiveRef.current = false;
     audioQueueRef.current = [];
+    bargeInPausedRef.current = false;
     aiFinishedAtRef.current = Date.now();
-    setStage("listening");
+    // Reset the TTFA clock so the next turn measures fresh from its own
+    // speech end (spec §27).
+    ttfaStartRef.current = 0;
+    ttfaRef.current = null;
+    setFsm("listening");
     const pending = pendingTranscriptRef.current;
     pendingTranscriptRef.current = "";
     setInputText("");
@@ -385,7 +647,7 @@ export function useVoiceAgent({
         setTimeout(() => startListening(), 120);
       }
     }
-  }, [setStage, startListening, startVAD, vadSupported]);
+  }, [setFsm, startListening, startVAD, vadSupported]);
 
   // Natural inter-sentence pause (the "breathing" cadence). Humans do NOT
   // pause the same length after every sentence — uniform gaps are exactly
@@ -419,6 +681,9 @@ export function useVoiceAgent({
   //    is finished and we return to LISTENING. ───────────────────────────────
   const playNextInQueue = useCallback(async () => {
     if (endedRef.current || !queueActiveRef.current) return;
+    // While a barge-in is being classified the queue is PAUSED — never play
+    // over the caller until we know whether they backchanneled or interrupted.
+    if (bargeInPausedRef.current) return;
     const next = audioQueueRef.current.shift();
     if (!next) {
       queueActiveRef.current = false;
@@ -435,6 +700,7 @@ export function useVoiceAgent({
     // Reset the barge-in cooldown per sentence so the caller can interrupt
     // between sentences, but the AI's own first few syllables can't trigger it.
     aiSpeakStartedAtRef.current = Date.now();
+    setFsm("ai_speaking");
     const el = audioRef.current;
     el.src = `data:audio/mp3;base64,${next.audioData}`;
     el.onended = () => {
@@ -459,25 +725,37 @@ export function useVoiceAgent({
       // Autoplay blocked or aborted — skip to the next sentence.
       setTimeout(() => playNextInQueue(), pauseAfterSentence(next.text));
     }
-  }, [handleTurnEnd, pauseAfterSentence, breathIntensity]);
+  }, [handleTurnEnd, pauseAfterSentence, breathIntensity, setFsm]);
+  playNextInQueueRef.current = playNextInQueue;
 
   // ── Enqueue one streamed sentence for immediate playback ─────────────────
   // Each sentence's audio is queued the moment it arrives from the SSE
   // stream; if nothing is playing yet, playback begins right away so the
-  // caller hears a live response instead of a 30-second wait.
+  // caller hears a live response instead of a 30-second wait. Sentences from
+  // a STALE response (spec §60) are discarded — only the active response id
+  // may own the audio output.
   const enqueueStreamedSentence = useCallback(
-    (s: { text: string; audioData: string }) => {
+    (s: { text: string; audioData: string }, responseId: number) => {
       if (endedRef.current) return;
+      if (responseId !== activeResponseIdRef.current) return; // stale response
+      // While a barge-in is being classified, Mrs. D is PAUSED — hold the
+      // sentence without touching the FSM so the INTERRUPTED state survives
+      // until the transcript decides (backchannel → resume, genuine → clear).
+      if (bargeInPausedRef.current) {
+        audioQueueRef.current.push(s);
+        queueActiveRef.current = true; // a resume must play these
+        return;
+      }
       if (!queueActiveRef.current) {
         audioQueueRef.current = [s];
         queueActiveRef.current = true;
-        setStage("speaking");
+        setFsm("ai_speaking");
         playNextInQueue();
       } else {
         audioQueueRef.current.push(s);
       }
     },
-    [playNextInQueue, setStage]
+    [playNextInQueue, setFsm]
   );
 
   // ── Consume the /stream SSE endpoint ─────────────────────────────────────
@@ -494,6 +772,10 @@ export function useVoiceAgent({
       const controller = new AbortController();
       streamAbortRef.current = controller;
       streamActiveRef.current = true;
+      // Each stream is one RESPONSE (spec §59). Only the latest response may
+      // enqueue audio; a barge-in/new turn bumps the id so a late sentence
+      // from the old stream can never play over the new one.
+      const responseId = ++activeResponseIdRef.current;
       try {
         const response = await fetch(`/api/conversation/stream?${params}`, {
           method: "POST",
@@ -528,10 +810,17 @@ export function useVoiceAgent({
                 } else if (eventName === "sentence") {
                   onSentence(data.text || "");
                   if (data.audio_data) {
-                    enqueueStreamedSentence({
-                      text: data.text || "",
-                      audioData: data.audio_data,
-                    });
+                    // First playable sentence of this response → frontend TTFA.
+                    if (ttfaRef.current === null && ttfaStartRef.current) {
+                      ttfaRef.current = Date.now() - ttfaStartRef.current;
+                    }
+                    enqueueStreamedSentence(
+                      {
+                        text: data.text || "",
+                        audioData: data.audio_data,
+                      },
+                      responseId
+                    );
                   }
                 } else if (eventName === "done") {
                   onDone(data.ai_response || "", data.debug_info || null);
@@ -544,17 +833,25 @@ export function useVoiceAgent({
           }
         }
       } finally {
-        streamActiveRef.current = false;
-        if (streamAbortRef.current === controller) {
-          streamAbortRef.current = null;
+        // Only the ACTIVE response may touch shared stream state. A stale
+        // stream's finally (aborted by a barge-in/new turn) must never clear
+        // streamActiveRef or abort the NEW controller (spec §59, §60).
+        if (responseId === activeResponseIdRef.current) {
+          streamActiveRef.current = false;
+          if (streamAbortRef.current === controller) {
+            streamAbortRef.current = null;
+          }
         }
         // The stream ended but produced no playable audio → close the turn so
         // the mic returns to LISTENING instead of hanging on THINKING. Skipped
-        // when the call ended (endCall owns that transition) or when a barge-in
+        // when the call ended (endCall owns that transition), when this stream
+        // is no longer the ACTIVE response (a barge-in/new turn superseded it —
+        // that flow owns the transition, spec §59/§60), or when a barge-in
         // already moved to LISTENING (there the silence timer owns the
         // re-submit — never submit a half-spoken interruption).
         if (
           !endedRef.current &&
+          responseId === activeResponseIdRef.current &&
           stageRef.current !== "listening" &&
           !queueActiveRef.current
         ) {
@@ -565,9 +862,16 @@ export function useVoiceAgent({
     [enqueueStreamedSentence, handleTurnEnd]
   );
 
-  // ── Barge-in: user talks while AI is speaking → stop TTS, queue speech ────
+  // ── Barge-in (recognition-fallback path): user talks while AI is speaking
+  //    → stop TTS, queue speech. (The VAD path uses pauseAudioQueue + semantic
+  //    classification instead — see handleVadSpeechStart/transcribeBlob.)
   const handleBargeIn = useCallback(
     (text: string) => {
+      // Semantic gate (spec §50): a pure backchannel is NOT a barge-in — the
+      // AI keeps talking.
+      if (isBackchannelUtterance(text) || isNoiseUtterance(text)) {
+        return;
+      }
       stopAudioQueue();
       stopStreaming();
       clearSilenceTimer();
@@ -575,12 +879,17 @@ export function useVoiceAgent({
       setIsProcessing(false);
       pendingTranscriptRef.current = text;
       setInputText(text);
-      setDetectedLanguage(detectLanguage(text));
-      setStage("listening");
+      const { lang, history } = stableLanguage(
+        detectLanguage(text),
+        langHistoryRef.current
+      );
+      langHistoryRef.current = history;
+      setDetectedLanguage(lang);
+      setFsm("listening");
       // Submit after the user pauses — same silence logic as normal turns.
       armSilenceTimer();
     },
-    [armSilenceTimer, clearSilenceTimer, setStage, stopAudioQueue, stopStreaming]
+    [armSilenceTimer, clearSilenceTimer, setFsm, stopAudioQueue, stopStreaming]
   );
 
   // ── Submit an utterance through the chosen pipeline ───────────────────────
@@ -588,28 +897,74 @@ export function useVoiceAgent({
     async (text: string) => {
       const normalized = normalizeTranscript(text);
       if (!normalized) return;
-      if (processingRef.current) return;
+      // State machine gate (spec §2): a NEW turn may only start from
+      // LISTENING / USER_SPEAKING / INTERRUPTED. Never while processing or
+      // while the AI is mid-sentence (a barge-in first moves to INTERRUPTED).
+      const fsmNow = fsmRef.current;
+      if (
+        fsmNow === "processing" ||
+        fsmNow === "ai_speaking" ||
+        fsmNow === "connecting"
+      ) {
+        return;
+      }
 
+      // ── VALIDATION GATES (spec §20, §21): only a NEW, VALID user utterance
+      //    reaches the LLM. The VAD path already filtered (duration, noise,
+      //    backchannel, echo) — this is the final guard shared by all inputs.
+      if (isNoiseUtterance(text)) {
+        console.log("[VoiceAgent] Noise utterance ignored:", text);
+        return;
+      }
+      if (isBackchannelUtterance(text)) {
+        console.log("[VoiceAgent] Backchannel ignored:", text);
+        return;
+      }
+      if (isEchoOfLastAI(text, lastAITextRef.current)) {
+        console.log("[VoiceAgent] Echo of AI's own voice ignored:", text);
+        return;
+      }
+      // Duplicate within the recent window (stale STT stream / double fire).
+      const now = Date.now();
+      recentTranscriptsRef.current = recentTranscriptsRef.current.filter(
+        (t) => now - t.at < DUPLICATE_WINDOW_MS
+      );
+      if (recentTranscriptsRef.current.some((t) => t.norm === normalized)) {
+        console.log("[VoiceAgent] Recent duplicate ignored:", text);
+        return;
+      }
       // Duplicate filter: never re-send the same transcript twice in a row.
       if (normalized === lastProcessedRef.current) {
         console.log("[VoiceAgent] Duplicate transcript ignored:", text);
         return;
       }
       lastProcessedRef.current = normalized;
+      recentTranscriptsRef.current.push({ norm: normalized, at: now });
       processingRef.current = true;
       setIsProcessing(true);
       clearSilenceTimer();
       setInputText("");
       pendingTranscriptRef.current = "";
 
+      // Frontend TTFA (spec §27): start at the user's last word if the VAD
+      // path already stamped it; text input falls back to now.
+      if (!ttfaStartRef.current) ttfaStartRef.current = Date.now();
+      ttfaRef.current = null;
+
       setMessages((prev) => [
         ...prev,
         { role: "user", content: text, timestamp: new Date().toISOString() },
       ]);
-      setStage("thinking");
+      setFsm("processing");
 
       try {
-        const lang = detectLanguage(text);
+        // Stable language (spec §18): one noisy "Thank you" must not flip a
+        // Telugu conversation to English — only a majority of recent turns.
+        const { lang, history } = stableLanguage(
+          detectLanguage(text),
+          langHistoryRef.current
+        );
+        langHistoryRef.current = history;
         setDetectedLanguage(lang);
 
         const params = new URLSearchParams({
@@ -648,7 +1003,10 @@ export function useVoiceAgent({
           },
           (fullText, debug) => {
             if (fullText) aiAccumulated = fullText;
-            if (debug) setDebugInfo(debug);
+            if (debug) {
+              // Merge the frontend-measured TTFA into the backend debug info.
+              setDebugInfo({ ...debug, ttfa_ms: ttfaRef.current ?? undefined });
+            }
           },
           (lang) => {
             if (lang) setDetectedLanguage(lang);
@@ -657,6 +1015,9 @@ export function useVoiceAgent({
 
         // Finalize the AI message with the canonical response text.
         const aiText = aiAccumulated || "I'm sorry, I couldn't respond.";
+        // Remember what Mrs. D last said — used to reject echoes of her own
+        // voice as user turns (spec §48: AI must never hear itself).
+        if (aiText.trim()) lastAITextRef.current = aiText;
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last && last.role === "ai") {
@@ -707,7 +1068,7 @@ export function useVoiceAgent({
         // the next user query — same guarantee as handleTurnEnd, on the
         // error path too (spec: AI must never hear itself).
         stopAudioQueue();
-        setStage("listening");
+        setFsm("recovering");
         stopListening();
         if (!endedRef.current) {
           setTimeout(() => startListening(), 150);
@@ -718,7 +1079,7 @@ export function useVoiceAgent({
       instituteId,
       knowledgeFile,
       mode,
-      setStage,
+      setFsm,
       startListening,
       stopListening,
       stopAudioQueue,
@@ -757,7 +1118,18 @@ export function useVoiceAgent({
           type: rec.mimeType || "audio/webm",
         });
         recChunksRef.current = [];
-        if (blob.size > 200) transcribeBlobRef.current(blob);
+        // VAD confidence gate (spec §20): only recordings with ≥ MIN_SPEECH_MS
+        // of GENUINE speech energy are sent to Whisper — a sub-speech blip
+        // (cough, click, keyboard) or near-silence is NEVER transcribed, so
+        // silence can never hallucinate a "Thank you".
+        const activeMs = activeSpeechMsRef.current;
+        if (blob.size > 200 && activeMs >= MIN_SPEECH_MS) {
+          transcribeBlobRef.current(blob);
+        } else {
+          // Too short / empty → not speech. If this was a barge-in attempt,
+          // let Mrs. D continue where she paused.
+          if (bargeInPausedRef.current) resumeAudioQueueRef.current();
+        }
       };
       recorderRef.current = rec;
       rec.start();
@@ -777,75 +1149,169 @@ export function useVoiceAgent({
     }
   }, []);
 
+  // Forward ref so the recorder's onstop (defined above resumeAudioQueue) can
+  // resume the AI after a too-short barge-in attempt.
+  const resumeAudioQueueRef = useRef<() => void>(() => {});
+
   // ── VAD speech events ─────────────────────────────────────────────────────
-  // Speech START: while Mrs. D is talking this is a barge-in (stop TTS + the
-  // stream immediately, then capture the caller). While listening it simply
-  // begins a new recording. Never fires while thinking/processing.
+  // Speech START (spec §5, §6, §7): while Mrs. D is talking this is a POTENTIAL
+  // barge-in. We pause her audio FAST (spec §7 — never wait for the sentence
+  // to finish) and capture the caller; the transcript then decides (semantic
+  // classification) whether it was a backchannel (resume AI) or a genuine
+  // interruption (clear + process).
   const handleVadSpeechStart = useCallback(() => {
-    const stage = stageRef.current;
-    if (endedRef.current || processingRef.current) return;
+    const fsm = fsmRef.current;
+    if (endedRef.current) return;
     // Post-TTS grace: ignore anything within ~450ms of the AI finishing —
     // the AI's own trailing audio in the mic must never start a recording.
     if (Date.now() - aiFinishedAtRef.current < 450) {
       vadRef.current?.reset();
       return;
     }
-    if (stage === "speaking") {
+    if (fsm === "ai_speaking" || fsm === "processing") {
       // Barge-in cooldown: ignore audio during the first ~400ms of a sentence
       // so the AI's own voice (or echo) can never trigger an interruption.
-      if (Date.now() - aiSpeakStartedAtRef.current < 400) {
+      if (
+        fsm === "ai_speaking" &&
+        Date.now() - aiSpeakStartedAtRef.current < 400
+      ) {
         vadRef.current?.reset();
         return;
       }
-      stopAudioQueue();
-      stopStreaming();
+      // INTERRUPTED: pause Mrs. D immediately (fast stop), hold her queue,
+      // cancel the stream only at classification — a backchannel must let
+      // her continue. (Interrupting during THINKING cancels nothing yet;
+      // classifyBargeIn will discard the unplayed LLM output.)
+      pauseAudioQueue();
       processingRef.current = false;
       setIsProcessing(false);
-      setStage("listening");
+      setFsm("interrupted");
+      // INTERRUPTED → capture the caller's speech (barge-in candidate).
+      setIsUserSpeaking(true);
+      startRecording();
+      return;
     }
-    if (stage === "listening" || stage === "speaking") {
+    if (fsm === "listening") {
+      // LISTENING → USER_SPEAKING: real speech detected, capture it.
+      setFsm("user_speaking");
       setIsUserSpeaking(true);
       startRecording();
     }
-  }, [setStage, startRecording, stopAudioQueue, stopStreaming]);
+  }, [pauseAudioQueue, setFsm, startRecording]);
 
   const handleVadSpeechEnd = useCallback(() => {
+    // Capture how much REAL speech this segment contained BEFORE the VAD
+    // resets its counter (it resets right after firing onSpeechEnd).
+    activeSpeechMsRef.current = vadRef.current?.activeSpeechMs ?? 0;
     setIsUserSpeaking(false);
+    // Frontend TTFA (spec §27) starts at the user's LAST WORD (speech end),
+    // not at LLM submission — the perceived latency the caller feels.
+    ttfaStartRef.current = Date.now();
+    // USER_SPEAKING/INTERRUPTED → back to LISTENING: the caller yielded; the
+    // transcript (if any) decides what happens next.
+    if (fsmRef.current === "user_speaking") setFsm("listening");
     stopRecording();
-  }, [stopRecording]);
+  }, [setFsm, stopRecording]);
 
   // Keep the detector's callbacks pointed at the LATEST closures.
   handleVadStartRef.current = handleVadSpeechStart;
   handleVadEndRef.current = handleVadSpeechEnd;
+  resumeAudioQueueRef.current = resumeAudioQueue;
 
-  // Transcribe an utterance blob → feed the transcript into the pipeline.
-  const transcribeBlob = useCallback(async (blob: Blob) => {
-    if (endedRef.current || transcribingRef.current) return;
-    transcribingRef.current = true;
-    try {
-      const form = new FormData();
-      form.append("audio", blob, "utterance.webm");
-      const res = await fetch("/api/conversation/transcribe", {
-        method: "POST",
-        body: form,
-      });
-      if (!res.ok) throw new Error(`STT ${res.status}`);
-      const data = await res.json();
-      const text = (data.text || "").trim();
-      if (text) {
+  // ── Semantic barge-in classification (spec §6, §50) ──────────────────────
+  // After the AI was paused for a possible barge-in, this decides what the
+  // captured speech actually was:
+  //   backchannel / noise / echo / duplicate  → resume Mrs. D (allow continue)
+  //   anything else                           → genuine interruption: discard
+  //     her held queue + cancel the stream, then process the new turn.
+  // Returns true when the utterance should proceed to the pipeline.
+  const classifyBargeIn = useCallback((): boolean => {
+    if (!bargeInPausedRef.current) return true; // not a barge-in context
+    stopStreaming();
+    stopAudioQueue();
+    setFsm("listening"); // submitSpeech will move to PROCESSING
+    return false;
+  }, [setFsm, stopAudioQueue, stopStreaming]);
+
+  // Transcribe an utterance blob → validate → feed the pipeline.
+  // The ONLY path where recorded speech becomes a user turn; every phantom
+  // (noise, backchannel, echo, duplicate, silence) is dropped right here.
+  const transcribeBlob = useCallback(
+    async (blob: Blob) => {
+      if (endedRef.current || transcribingRef.current) return;
+      transcribingRef.current = true;
+      try {
+        const form = new FormData();
+        form.append("audio", blob, "utterance.webm");
+        const res = await fetch("/api/conversation/transcribe", {
+          method: "POST",
+          body: form,
+        });
+        if (!res.ok) throw new Error(`STT ${res.status}`);
+        const data = await res.json();
+        const text = (data.text || "").trim();
+
+        // ── VALIDATION GATES ──────────────────────────────────────────────
+        // 1) Empty transcript → nothing to say. Silence does nothing.
+        if (!text) {
+          resumeAudioQueueRef.current();
+          return;
+        }
+        // 2) Noise (single char, repeated char, known non-speech tokens).
+        if (isNoiseUtterance(text)) {
+          console.log("[VoiceAgent] STT noise dropped:", text);
+          resumeAudioQueueRef.current();
+          return;
+        }
+        // 3) Echo of Mrs. D's own last words (spec §48) — Whisper heard HER.
+        if (isEchoOfLastAI(text, lastAITextRef.current)) {
+          console.log("[VoiceAgent] STT echo of AI dropped:", text);
+          resumeAudioQueueRef.current();
+          return;
+        }
+        // 4) Duplicate within the window (stale buffer / double STT fire).
+        const norm = normalizeTranscript(text);
+        const now = Date.now();
+        recentTranscriptsRef.current = recentTranscriptsRef.current.filter(
+          (t) => now - t.at < DUPLICATE_WINDOW_MS
+        );
+        if (recentTranscriptsRef.current.some((t) => t.norm === norm)) {
+          console.log("[VoiceAgent] STT duplicate dropped:", text);
+          resumeAudioQueueRef.current();
+          return;
+        }
+        // 5) Backchannel ("haa", "okay", "hmm", "avunu"...) — if the AI was
+        //    paused for this, she CONTINUES; never sent to the LLM.
+        if (isBackchannelUtterance(text)) {
+          console.log("[VoiceAgent] STT backchannel dropped:", text);
+          resumeAudioQueueRef.current();
+          return;
+        }
+
+        // Genuine utterance: if this started as a barge-in, discard the held
+        // AI queue + cancel her stream NOW (spec §7: fast, complete stop).
+        classifyBargeIn();
+
+        // Stable language (spec §18): majority of recent detections.
         const langName = LANG_CODE_TO_NAME[data.language] || "English";
-        setDetectedLanguage(langName);
+        const { lang, history } = stableLanguage(
+          langName,
+          langHistoryRef.current
+        );
+        langHistoryRef.current = history;
+        setDetectedLanguage(lang);
         submitSpeechRef.current(text);
+      } catch (e) {
+        console.error("Transcription failed:", e);
+        // STT failure is NOT a user turn — resume a paused AI, stay silent
+        // otherwise (spec §63: never fake a transcript, never send empty text).
+        resumeAudioQueueRef.current();
+      } finally {
+        transcribingRef.current = false;
       }
-    } catch (e) {
-      console.error("Transcription failed:", e);
-      setError("Could not understand that. Please try again or type your message.");
-      // Clear the error once the caller tries again / next turn succeeds.
-      setTimeout(() => setError(""), 4000);
-    } finally {
-      transcribingRef.current = false;
-    }
-  }, []);
+    },
+    [classifyBargeIn]
+  );
   transcribeBlobRef.current = transcribeBlob;
 
   // ── Input setup (once per mount) ──────────────────────────────────────────
@@ -950,7 +1416,14 @@ export function useVoiceAgent({
       if (finalTranscript) {
         pendingTranscriptRef.current = finalTranscript;
         setInputText(finalTranscript);
-        const lang = detectLanguage(finalTranscript);
+        // Stable language (spec §18): one noisy utterance must not flip the
+        // whole conversation. The final language is decided by the majority
+        // of recent turns, so a lone "Thank you" never switches Telugu → En.
+        const { lang, history } = stableLanguage(
+          detectLanguage(finalTranscript),
+          langHistoryRef.current
+        );
+        langHistoryRef.current = history;
         setDetectedLanguage(lang);
         try {
           recognition.lang = LANGUAGE_VOICES[lang] || "en-IN";
@@ -1007,7 +1480,7 @@ export function useVoiceAgent({
         audioRef.current.pause();
       }
     };
-  }, [armSilenceTimer, clearSilenceTimer, handleBargeIn, setStage, silenceTimeoutMs, vadSupported]);
+  }, [armSilenceTimer, clearSilenceTimer, handleBargeIn, setFsm, silenceTimeoutMs, vadSupported]);
 
   // ── Mrs. D's live waveform (AI audio analyser) ────────────────────────────
   // captureStream() on the <audio> element gives us her actual output without
@@ -1070,7 +1543,9 @@ export function useVoiceAgent({
     setDebugInfo(null);
     pendingTranscriptRef.current = "";
     lastProcessedRef.current = "";
-    setStage("connecting");
+    recentTranscriptsRef.current = [];
+    langHistoryRef.current = [];
+    setFsm("connecting");
 
     try {
       const params = new URLSearchParams({
@@ -1110,12 +1585,17 @@ export function useVoiceAgent({
         },
         (fullText, debug) => {
           if (fullText) greetingAccum = fullText;
-          if (debug) setDebugInfo(debug);
+          if (debug) {
+            setDebugInfo({ ...debug, ttfa_ms: ttfaRef.current ?? undefined });
+          }
         },
         (lang) => {
           if (lang) setDetectedLanguage(lang);
         }
       );
+      // Remember what Mrs. D greeted with — her own words must never be
+      // replayed back to her as a user turn (spec §48).
+      if (greetingAccum.trim()) lastAITextRef.current = greetingAccum;
       // Safety net: if the greeting produced no sentences at all, keep the
       // transcript from being blank.
       setMessages((prev) =>
@@ -1133,14 +1613,14 @@ export function useVoiceAgent({
       if (e && e.name === "AbortError") return;
       console.error("Error starting call:", e);
       setError("Failed to connect to the voice agent. Is the backend running?");
-      setStage("error");
+      setFsm("error");
     }
   }, [
     detectedLanguage,
     instituteId,
     knowledgeFile,
     mode,
-    setStage,
+    setFsm,
     streamConversation,
   ]);
 
@@ -1173,7 +1653,7 @@ export function useVoiceAgent({
     setMessages([]);
     setDebugInfo(null);
     setInputText("");
-    setStage("idle");
+    setFsm("ending");
     try {
       await fetch(
         `/api/conversation/end?conversation_id=${conversationId.current}`,
@@ -1183,7 +1663,7 @@ export function useVoiceAgent({
       /* ignore */
     }
     onEnded?.();
-  }, [onEnded, setStage, stopListening, stopAudioQueue, stopStreaming]);
+  }, [onEnded, setFsm, stopListening, stopAudioQueue, stopStreaming]);
 
   return {
     callStage,

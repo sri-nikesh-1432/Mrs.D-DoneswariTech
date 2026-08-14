@@ -489,6 +489,18 @@ export default function ActiveCall() {
                   {Math.round(debugInfo.first_sentence_ms ?? 0)}ms
                 </span>
               </div>
+              {/* Frontend TTFA: speech-end → first audio heard (the metric the
+                  caller actually perceives; target < 900ms, spec §27). */}
+              {debugInfo.ttfa_ms != null && (
+                <div className="flex items-center justify-between bg-orange-500/10 border border-orange-500/30 rounded-xl p-4">
+                  <span className="text-orange-300 text-xs uppercase tracking-wider">
+                    Frontend TTFA
+                  </span>
+                  <span className="font-mono text-orange-300 text-xl font-bold">
+                    {Math.round(debugInfo.ttfa_ms)}ms
+                  </span>
+                </div>
+              )}
 
               <div className="flex items-center gap-2 text-sm bg-white/5 p-4 rounded-xl border border-white/10">
                 <Brain className="w-4 h-4 text-purple-400" />

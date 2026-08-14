@@ -536,6 +536,18 @@ export default function VoiceTestingConsole() {
                   </div>
                 </div>
 
+                {/* Frontend TTFA: speech-end → first audio heard (spec §27). */}
+                {debugInfo.ttfa_ms != null && (
+                  <div className="bg-orange-500/10 border border-orange-500/30 rounded-xl p-3 flex items-center justify-between">
+                    <div className="text-orange-300 text-[10px] uppercase tracking-wider">
+                      Frontend TTFA
+                    </div>
+                    <div className="font-mono text-orange-300 text-base font-bold">
+                      {Math.round(debugInfo.ttfa_ms)}ms
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex items-center gap-2 text-xs bg-white/5 p-2.5 rounded-xl border border-white/10">
                   <Brain className="w-4 h-4 text-purple-400 shrink-0" />
                   <span className="text-slate-300">
