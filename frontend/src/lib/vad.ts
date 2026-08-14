@@ -47,6 +47,14 @@ export class VoiceActivityDetector {
    */
   dynamicThreshold: (() => number) | null = null;
 
+  /**
+   * Optional adaptive end-of-turn silence (spec §23). Returns how many ms of
+   * QUIET should end the current utterance — humans pause mid-sentence, so a
+   * long thought deserves more patience than a one-word "Avunu". When null,
+   * the fixed `silenceMs` option is used.
+   */
+  dynamicSilenceMs: (() => number) | null = null;
+
   private ctx: AudioContext | null = null;
   private stream_: MediaStream | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
@@ -105,6 +113,10 @@ export class VoiceActivityDetector {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
+          // Mono gives Whisper a single clean channel and makes VAD energy
+          // measurements consistent on any device (stereo mics otherwise
+          // halve/double the RMS depending on the OS mixer).
+          channelCount: 1,
         },
       });
       this.source = this.ctx.createMediaStreamSource(this.stream_);
@@ -117,6 +129,7 @@ export class VoiceActivityDetector {
       this.framesAbove = 0;
       this._isSpeaking = false;
       this.silentSince = 0;
+      this.activeMs = 0;
       this.running = true;
       this.lastFrame = performance.now();
       this.rafId = requestAnimationFrame(this.loop);
@@ -154,6 +167,8 @@ export class VoiceActivityDetector {
     this.timeData = null;
     this._isSpeaking = false;
     this.framesAbove = 0;
+    this.silentSince = 0;
+    this.activeMs = 0;
   }
 
   /**
@@ -201,17 +216,20 @@ export class VoiceActivityDetector {
     }
 
     const now = performance.now();
-    const dt = now - this.lastFrame;
+    // Clamp dt: a single slow frame (tab switch, GC pause) must not count as
+    // a full second of silence and end the turn mid-word.
+    const dt = Math.min(now - this.lastFrame, 100);
     this.lastFrame = now;
 
     // Adaptive noise floor: slowly track the background level while silent,
     // so a noisy room doesn't block quiet speakers and a quiet room still
-    // catches soft voices.
-    if (!this._isSpeaking) {
+    // catches soft voices. Frozen while anyone is speaking (user OR AI — the
+    // AI's voice bleeding into the mic must never inflate the floor).
+    const dyn = this.dynamicThreshold ? this.dynamicThreshold() : 0;
+    if (!this._isSpeaking && dyn === 0) {
       this.noiseFloor =
         this.noiseFloor * 0.97 + Math.min(rms, 0.1) * 0.03;
     }
-    const dyn = this.dynamicThreshold ? this.dynamicThreshold() : 0;
     const threshold = Math.max(this.baseThreshold, this.noiseFloor * 2.2, dyn);
 
     if (rms > threshold) {
@@ -221,15 +239,23 @@ export class VoiceActivityDetector {
         this.silentSince = 0;
         this.onSpeechStart?.();
       } else if (this._isSpeaking) {
-        // Genuine speech energy while speaking → count toward the speech
-        // duration used to validate the recording.
+        // Speech continues → genuine speech energy (drives the recorder's
+        // min-duration gate). CRITICAL: reset the silence clock too — a brief
+        // mid-thought pause must not accumulate with the NEXT pause; silence
+        // only counts while CONSECUTIVELY below threshold.
+        this.silentSince = 0;
         this.activeMs += dt;
       }
     } else {
       this.framesAbove = 0;
       if (this._isSpeaking) {
         this.silentSince += dt;
-        if (this.silentSince >= this.silenceMs) {
+        // Adaptive end-of-turn patience (spec §23): longer utterances wait
+        // longer before yielding the floor.
+        const effSilence = this.dynamicSilenceMs
+          ? Math.max(400, this.dynamicSilenceMs())
+          : this.silenceMs;
+        if (this.silentSince >= effSilence) {
           this._isSpeaking = false;
           this.silentSince = 0;
           // Fire the callback BEFORE resetting so the hook can read how much

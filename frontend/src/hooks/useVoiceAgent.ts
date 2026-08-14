@@ -138,8 +138,16 @@ function normalizeTranscript(text: string): string {
  * Anything else is silently dropped — the agent NEVER responds to it.
  */
 
-/** Minimum recorded speech length before Whisper is even called (ms). */
-const MIN_SPEECH_MS = 350;
+/**
+ * Minimum GENUINE speech energy (ms above threshold) before Whisper is called.
+ * Measured on real speech time, not wall-clock: a quick "Hi" is ~200-300ms of
+ * actual voice, so this must stay low enough to catch short utterances while
+ * still killing sub-speech blips (clicks, coughs < 200ms of energy).
+ */
+const MIN_SPEECH_MS = 200;
+
+/** Hard cap for a single STT request — a hung backend must not wedge input. */
+const STT_TIMEOUT_MS = 20000;
 
 /** Max age of a transcript considered "recent" for duplicate detection (ms). */
 const DUPLICATE_WINDOW_MS = 8000;
@@ -383,8 +391,17 @@ export function useVoiceAgent({
   const aiRafRef = useRef(0);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recChunksRef = useRef<Blob[]>([]);
-  const activeSpeechMsRef = useRef(0); // genuine speech energy in the last segment
+  // Genuine speech energy in the CURRENT segment, snapshotted per-recording
+  // (the shared ref is only read at stop time so a fast second utterance can
+  // never skew the previous recording's min-speech gate).
+  const activeSpeechMsRef = useRef(0);
   const transcribingRef = useRef(false); // one STT request at a time
+  const recSpeechMsRef = useRef(0); // per-recording snapshot of genuine speech ms
+  // Utterances recorded while a previous STT request is still in flight —
+  // they are transcribed in order when the current one finishes. Without
+  // this, a caller who speaks again during the ~1s Whisper call would be
+  // silently unheard (the classic "not listening" bug).
+  const pendingBlobsRef = useRef<Blob[]>([]);
   const handleVadStartRef = useRef<() => void>(() => {});
   const handleVadEndRef = useRef<() => void>(() => {});
   const transcribeBlobRef = useRef<(blob: Blob) => void>(() => {});
@@ -1099,7 +1116,10 @@ export function useVoiceAgent({
   // input. This is the fix for "not listening": it detects ANY voice.
   const startRecording = useCallback(() => {
     const stream = vadRef.current?.stream;
-    if (!stream || recorderRef.current || transcribingRef.current) return;
+    // NOTE: transcribingRef deliberately NOT checked — a caller who speaks
+    // while the previous utterance is being transcribed must still be heard
+    // (the blob is queued and processed when STT frees up).
+    if (!stream || recorderRef.current) return;
     try {
       const mime =
         MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
@@ -1122,7 +1142,7 @@ export function useVoiceAgent({
         // of GENUINE speech energy are sent to Whisper — a sub-speech blip
         // (cough, click, keyboard) or near-silence is NEVER transcribed, so
         // silence can never hallucinate a "Thank you".
-        const activeMs = activeSpeechMsRef.current;
+        const activeMs = recSpeechMsRef.current;
         if (blob.size > 200 && activeMs >= MIN_SPEECH_MS) {
           transcribeBlobRef.current(blob);
         } else {
@@ -1141,6 +1161,10 @@ export function useVoiceAgent({
   const stopRecording = useCallback(() => {
     const rec = recorderRef.current;
     if (rec && rec.state !== "inactive") {
+      // Snapshot the genuine-speech duration NOW — onstop fires asynchronously
+      // and a fast second utterance could otherwise overwrite it before the
+      // gate reads it (per-recording capture, not shared state).
+      recSpeechMsRef.current = activeSpeechMsRef.current;
       try {
         rec.stop();
       } catch {
@@ -1238,15 +1262,32 @@ export function useVoiceAgent({
   // (noise, backchannel, echo, duplicate, silence) is dropped right here.
   const transcribeBlob = useCallback(
     async (blob: Blob) => {
-      if (endedRef.current || transcribingRef.current) return;
+      if (endedRef.current) return;
+      // One STT request at a time: if a previous utterance is still being
+      // transcribed, queue this one (in order) instead of dropping it — the
+      // caller's words are never lost just because Whisper is busy.
+      if (transcribingRef.current) {
+        pendingBlobsRef.current.push(blob);
+        return;
+      }
       transcribingRef.current = true;
       try {
         const form = new FormData();
         form.append("audio", blob, "utterance.webm");
-        const res = await fetch("/api/conversation/transcribe", {
-          method: "POST",
-          body: form,
-        });
+        // Timeout guard: a hung STT backend must never wedge the input
+        // pipeline (spec §63: STT failures recover to LISTENING).
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), STT_TIMEOUT_MS);
+        let res: Response;
+        try {
+          res = await fetch("/api/conversation/transcribe", {
+            method: "POST",
+            body: form,
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timer);
+        }
         if (!res.ok) throw new Error(`STT ${res.status}`);
         const data = await res.json();
         const text = (data.text || "").trim();
@@ -1308,6 +1349,12 @@ export function useVoiceAgent({
         resumeAudioQueueRef.current();
       } finally {
         transcribingRef.current = false;
+        // Transcribe the next queued utterance (if any) — never lose speech
+        // captured while the previous STT request was in flight.
+        const next = pendingBlobsRef.current.shift();
+        if (next && !endedRef.current) {
+          transcribeBlobRef.current(next);
+        }
       }
     },
     [classifyBargeIn]
@@ -1338,6 +1385,18 @@ export function useVoiceAgent({
           return Math.max(0.03, aiRmsRef.current * 1.2 + 0.02);
         }
         return 0;
+      };
+      // Adaptive end-of-turn silence (spec §23): humans pause mid-sentence,
+      // so the wait before "speech ended" scales with how long the caller has
+      // been talking — a one-word "Avunu" yields fast, a long thought gets
+      // patience. Never so short the caller is cut off mid-word.
+      vad.dynamicSilenceMs = () => {
+        const spoken = vad.activeSpeechMs;
+        let scale = 1;
+        if (spoken < 600) scale = 0.75; // brisk: short ack / quick question
+        else if (spoken > 4000) scale = 1.5; // patient: long detailed answer
+        else if (spoken > 1800) scale = 1.2; // mid-length thought
+        return Math.min(Math.max(silenceTimeoutMs * 0.7 * scale, 800), 2600);
       };
       vadRef.current = vad;
       micLevelsRef.current = vad.levels;
