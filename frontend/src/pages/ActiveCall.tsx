@@ -16,6 +16,7 @@ import {
   PhoneOff,
   XCircle,
   CheckCircle2,
+  Terminal,
 } from "lucide-react";
 import { useVoiceAgent } from "../hooks/useVoiceAgent";
 import Markdown from "../components/Markdown";
@@ -368,6 +369,13 @@ export default function ActiveCall() {
                 <RefreshCw className="w-4 h-4" />
               </button>
             </div>
+
+            {error && (
+              <div className="flex items-center gap-2 bg-amber-500/15 border border-amber-500/30 text-amber-200 text-xs px-3 py-2 rounded-lg mb-3">
+                <Terminal className="w-3.5 h-3.5 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
 
             <div className="flex gap-3">
               <motion.button

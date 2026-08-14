@@ -69,6 +69,7 @@ export default function VoiceTestingConsole() {
     isListening,
     debugInfo,
     detectedLanguage,
+    error,
     conversationId,
     startCall,
     endCall,
@@ -135,7 +136,8 @@ export default function VoiceTestingConsole() {
           <PhoneOff className="w-12 h-12 text-red-400 mx-auto mb-4" />
           <h1 className="text-2xl font-bold mb-3 text-white">{t("error")}</h1>
           <p className="text-slate-400 text-sm mb-6">
-            Is the backend running? Please retry or go back to the console.
+            {error ||
+              "Is the backend running? Please retry or go back to the console."}
           </p>
           <div className="space-y-2.5">
             <button
@@ -401,6 +403,16 @@ export default function VoiceTestingConsole() {
               ))}
             </AnimatePresence>
           </div>
+
+          {/* Error banner — real reason, not a fake "backend down" screen */}
+          {error && (
+            <div className="shrink-0 px-3 pt-2">
+              <div className="max-w-4xl mx-auto flex items-center gap-2 bg-amber-500/15 border border-amber-500/30 text-amber-200 text-xs px-3 py-2 rounded-lg">
+                <Terminal className="w-3.5 h-3.5 shrink-0" />
+                <span>{error}</span>
+              </div>
+            </div>
+          )}
 
           {/* Input */}
           <div className="shrink-0 border-t border-white/10 bg-black/20 backdrop-blur-2xl p-3">

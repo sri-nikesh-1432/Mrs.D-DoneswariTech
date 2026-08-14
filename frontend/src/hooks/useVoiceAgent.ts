@@ -723,9 +723,21 @@ export function useVoiceAgent({
 
     recognition.onerror = (event: any) => {
       console.error("Speech recognition error:", event.error);
-      if (event.error === "not-allowed") {
-        setError("Microphone access denied. Please allow microphone access.");
-        setStage("error");
+      if (
+        event.error === "not-allowed" ||
+        event.error === "service-not-allowed"
+      ) {
+        // The microphone is blocked — this is NOT a backend failure. Do NOT
+        // flip the call into the "connection error" screen (whose hardcoded
+        // message would claim the backend is down while it is actually fine):
+        // keep the conversation usable in text mode and tell the user the
+        // REAL reason instead.
+        listeningRef.current = false;
+        setIsListening(false);
+        setError(
+          "Microphone access is blocked. Allow the microphone for this site " +
+            "in the browser, or type your message below to continue the call."
+        );
       }
     };
 
