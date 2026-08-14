@@ -9,7 +9,7 @@ import uuid
 import base64
 import asyncio
 import re as _re
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
@@ -22,6 +22,7 @@ from app.rag.embeddings import generate_embeddings
 from app.rag.vector_store import vector_store
 from app.rag.json_retriever import get_json_retriever
 from app.tts.edge_tts_service import EdgeTTSService
+from app.stt.groq_stt import transcribe_audio as groq_transcribe_audio
 from app.logs.logger import get_logger
 from app.roman_telugu import looks_roman_telugu, transliterate_roman_telugu
 
@@ -440,6 +441,38 @@ async def stream_conversation(
 def sse_event(event: str, data: dict) -> str:
     """Format one SSE event frame."""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@router.post("/transcribe")
+async def transcribe_utterance(
+    audio: UploadFile = File(...),
+):
+    """
+    Transcribe a recorded utterance from the real-time VAD pipeline.
+
+    The frontend detects speech with Web Audio (any voice, any language),
+    records the utterance with MediaRecorder, and uploads the blob here.
+    Whisper Large V3 Turbo auto-detects the language, so a Telugu caller,
+    a Hindi caller, and an English caller all "just work" — no language
+    selection required.
+
+    Returns: {"text": str, "language": "te"|"hi"|"en"|...}
+    """
+    audio_bytes = await audio.read()
+    if not audio_bytes or len(audio_bytes) < 100:
+        raise HTTPException(
+            status_code=400, detail="Audio file is too small or empty"
+        )
+    try:
+        result = await groq_transcribe_audio(
+            audio_bytes, filename=audio.filename or "audio.webm"
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error("Transcription route error: %s", e)
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {e}")
 
 
 @router.post("/end")

@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useVoiceAgent } from "../hooks/useVoiceAgent";
 import Markdown from "./Markdown";
+import VoiceWaveform from "./VoiceWaveform";
 import { useTranslation } from "../i18n";
 import { saveSimulatorCall } from "../services/api";
 
@@ -60,6 +61,9 @@ export default function AICallSimulator({
     sendMessage,
     toggleListening,
     audioRef,
+    isUserSpeaking,
+    micLevelsRef,
+    aiLevelsRef,
   } = useVoiceAgent({ mode: "process", instituteId, silenceTimeoutMs: 2000, initialLanguage: lang });
 
   useEffect(() => {
@@ -216,23 +220,27 @@ export default function AICallSimulator({
             </div>
           </div>
 
-          {/* Wave Animation */}
-          {callStage === "speaking" && (
-            <div className="flex items-center gap-1 mb-6">
-              {[...Array(5)].map((_, i) => (
-                <motion.div
-                  key={i}
-                  className="w-1 bg-purple-400 rounded-full"
-                  animate={{ height: [10, 30, 10] }}
-                  transition={{
-                    duration: 0.5,
-                    repeat: Infinity,
-                    delay: i * 0.1,
-                  }}
-                />
-              ))}
-            </div>
-          )}
+          {/* Real-time voice wave — reacts to ACTUAL sound (user's mic while
+              listening, Mrs. D's audio while speaking). No fake animation. */}
+          <div className="w-full max-w-xl mb-6">
+            <VoiceWaveform
+              levelsRef={callStage === "speaking" ? aiLevelsRef : micLevelsRef}
+              active={callStage === "listening" || callStage === "speaking"}
+              color={
+                callStage === "speaking"
+                  ? "ai"
+                  : isUserSpeaking
+                  ? "user"
+                  : "idle"
+              }
+              className="w-full h-12"
+            />
+            {callStage === "listening" && isUserSpeaking && (
+              <div className="text-center text-[11px] font-medium text-green-400 mt-1">
+                You're speaking… (any voice works)
+              </div>
+            )}
+          </div>
 
           {/* Messages */}
           <div

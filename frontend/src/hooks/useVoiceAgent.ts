@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { playBreath } from "../lib/breath";
+import { VoiceActivityDetector, isVADSupported } from "../lib/vad";
 
 export interface VoiceMessage {
   role: "user" | "ai";
@@ -37,6 +38,12 @@ interface UseVoiceAgentOptions {
   silenceTimeoutMs?: number;
   /** Language hint sent to the backend. */
   initialLanguage?: string;
+  /**
+   * Use the real-time Web Audio VAD + Groq Whisper pipeline instead of the
+   * flaky webkitSpeechRecognition. Catches ANY voice in ANY language via raw
+   * mic energy (default: true when the browser supports it).
+   */
+  useVAD?: boolean;
   onEnded?: () => void;
 }
 
@@ -101,6 +108,16 @@ function normalizeTranscript(text: string): string {
   return text.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+/** Whisper ISO-639-1 codes → UI language names (auto-detected per utterance). */
+const LANG_CODE_TO_NAME: Record<string, string> = {
+  te: "Telugu",
+  hi: "Hindi",
+  ta: "Tamil",
+  kn: "Kannada",
+  ml: "Malayalam",
+  en: "English",
+};
+
 /**
  * useVoiceAgent — the ONE conversation state machine for the whole voice UI.
  *
@@ -124,6 +141,7 @@ export function useVoiceAgent({
   instituteId = 1,
   silenceTimeoutMs = 1300,
   initialLanguage = "English",
+  useVAD = true,
   onEnded,
 }: UseVoiceAgentOptions = {}) {
   const [callStage, setCallStage] = useState<CallStage>("idle");
@@ -134,6 +152,9 @@ export function useVoiceAgent({
   const [debugInfo, setDebugInfo] = useState<VoiceDebugInfo | null>(null);
   const [detectedLanguage, setDetectedLanguage] = useState(initialLanguage);
   const [error, setError] = useState("");
+  // Real-time indicator: the caller is currently speaking (VAD caught their
+  // voice) — drives the live waveform colour and orb glow.
+  const [isUserSpeaking, setIsUserSpeaking] = useState(false);
 
   const recognitionRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -152,6 +173,23 @@ export function useVoiceAgent({
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listeningRef = useRef(false);
   const endedRef = useRef(false); // endCall idempotency guard
+
+  // ── Real-time VAD (Web Audio) — the PRIMARY input path ────────────────────
+  // Replaces webkitSpeechRecognition: raw mic energy is analysed directly so
+  // ANY voice (any language, any accent, any volume) is detected; utterances
+  // are recorded and transcribed by Groq Whisper (auto language detection).
+  const vadSupported = useVAD && isVADSupported();
+  const vadRef = useRef<VoiceActivityDetector | null>(null);
+  const micLevelsRef = useRef<Float32Array>(new Float32Array(48)); // caller wave
+  const aiLevelsRef = useRef<Float32Array>(new Float32Array(48)); // Mrs. D wave
+  const aiRmsRef = useRef(0); // Mrs. D's output level (barge-in threshold anchor)
+  const aiRafRef = useRef(0);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recChunksRef = useRef<Blob[]>([]);
+  const transcribingRef = useRef(false); // one STT request at a time
+  const handleVadStartRef = useRef<() => void>(() => {});
+  const handleVadEndRef = useRef<() => void>(() => {});
+  const transcribeBlobRef = useRef<(blob: Blob) => void>(() => {});
 
   // ── Sentence audio queue (ONE queue per conversation) ─────────────────────
   // Responses arrive as sentence-level audio chunks. They are played strictly
@@ -216,11 +254,48 @@ export function useVoiceAgent({
     }, adaptiveSilenceTimeout(pendingTranscriptRef.current));
   }, [adaptiveSilenceTimeout, clearSilenceTimer]);
 
+  // ── VAD lifecycle (real-time mic energy — the PRIMARY input) ─────────────
+  const startVAD = useCallback(async () => {
+    if (!vadRef.current) return;
+    const ok = await vadRef.current.start();
+    if (!ok && listeningRef.current && !endedRef.current) {
+      // Mic denied / hardware failure — this is NOT a backend outage. Keep the
+      // conversation usable in text mode and tell the user the real reason.
+      listeningRef.current = false;
+      setIsListening(false);
+      setError(
+        "Microphone access is blocked. Allow the microphone for this site " +
+          "in the browser, or type your message below to continue the call."
+      );
+    }
+  }, []);
+
+  const stopVAD = useCallback(() => {
+    vadRef.current?.stop();
+    setIsUserSpeaking(false);
+    // Discard any in-flight recording (never transcribe a half-spoken clip).
+    const rec = recorderRef.current;
+    if (rec && rec.state !== "inactive") {
+      rec.onstop = null;
+      try {
+        rec.stop();
+      } catch {
+        /* ignore */
+      }
+    }
+    recorderRef.current = null;
+    recChunksRef.current = [];
+  }, []);
+
   // ── Recognition lifecycle: exactly ONE active session ─────────────────────
   const stopListening = useCallback(() => {
     listeningRef.current = false;
     setIsListening(false);
     clearSilenceTimer();
+    if (vadSupported) {
+      stopVAD();
+      return;
+    }
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
@@ -228,19 +303,23 @@ export function useVoiceAgent({
         /* already stopped */
       }
     }
-  }, [clearSilenceTimer]);
+  }, [clearSilenceTimer, stopVAD, vadSupported]);
 
   const startListening = useCallback(() => {
-    if (!recognitionRef.current) return;
     if (listeningRef.current) return; // never start a second session
     listeningRef.current = true;
     setIsListening(true);
+    if (vadSupported) {
+      void startVAD();
+      return;
+    }
+    if (!recognitionRef.current) return;
     try {
       recognitionRef.current.start();
     } catch {
       /* may throw if already started */
     }
-  }, []);
+  }, [startVAD, vadSupported]);
 
   // ── Stop the audio queue immediately (barge-in, new response, end call) ───
   const stopAudioQueue = useCallback(() => {
@@ -276,6 +355,19 @@ export function useVoiceAgent({
     if (pending.trim() && pending.trim() !== lastProcessedRef.current) {
       // Speech captured during the turn (barge-in) — submit it now.
       submitSpeechRef.current(pending);
+    } else if (vadSupported) {
+      // The VAD session keeps running continuously across turns — just reset
+      // its speech state so the AI's own trailing audio in the mic buffer can
+      // NEVER be recorded as the next user query (spec: reset STT after TTS).
+      vadRef.current?.reset();
+      listeningRef.current = true;
+      setIsListening(true);
+      if (!endedRef.current) {
+        // Ensure the mic is live (first listening starts here after greeting)
+        // and re-arm cleanly: short delay lets the AI's last syllables drain.
+        void startVAD();
+        setTimeout(() => vadRef.current?.reset(), 120);
+      }
     } else {
       // Fresh STT session: stop the old (continuous) recognition and start a
       // brand-new one so the AI's own trailing audio in the old mic buffer can
@@ -293,7 +385,7 @@ export function useVoiceAgent({
         setTimeout(() => startListening(), 120);
       }
     }
-  }, [setStage, startListening]);
+  }, [setStage, startListening, startVAD, vadSupported]);
 
   // Natural inter-sentence pause (the "breathing" cadence). Humans do NOT
   // pause the same length after every sentence — uniform gaps are exactly
@@ -639,8 +731,156 @@ export function useVoiceAgent({
   const submitSpeechRef = useRef(submitSpeech);
   submitSpeechRef.current = submitSpeech;
 
-  // ── Speech recognition setup (once per mount) ─────────────────────────────
+  // ── Real-time VAD → MediaRecorder → Whisper STT ──────────────────────────
+  // When the VAD catches speech, a recording starts; when the caller pauses,
+  // the recording is sent to /api/conversation/transcribe (Whisper auto-
+  // detects the language) and the transcript feeds the SAME pipeline as typed
+  // input. This is the fix for "not listening": it detects ANY voice.
+  const startRecording = useCallback(() => {
+    const stream = vadRef.current?.stream;
+    if (!stream || recorderRef.current || transcribingRef.current) return;
+    try {
+      const mime =
+        MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+          ? "audio/webm;codecs=opus"
+          : MediaRecorder.isTypeSupported("audio/webm")
+          ? "audio/webm"
+          : "audio/mp4";
+      const rec = new MediaRecorder(stream, { mimeType: mime });
+      recChunksRef.current = [];
+      rec.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) recChunksRef.current.push(e.data);
+      };
+      rec.onstop = () => {
+        recorderRef.current = null;
+        const blob = new Blob(recChunksRef.current, {
+          type: rec.mimeType || "audio/webm",
+        });
+        recChunksRef.current = [];
+        if (blob.size > 200) transcribeBlobRef.current(blob);
+      };
+      recorderRef.current = rec;
+      rec.start();
+    } catch (e) {
+      console.error("MediaRecorder start failed:", e);
+    }
+  }, []);
+
+  const stopRecording = useCallback(() => {
+    const rec = recorderRef.current;
+    if (rec && rec.state !== "inactive") {
+      try {
+        rec.stop();
+      } catch {
+        /* already stopped */
+      }
+    }
+  }, []);
+
+  // ── VAD speech events ─────────────────────────────────────────────────────
+  // Speech START: while Mrs. D is talking this is a barge-in (stop TTS + the
+  // stream immediately, then capture the caller). While listening it simply
+  // begins a new recording. Never fires while thinking/processing.
+  const handleVadSpeechStart = useCallback(() => {
+    const stage = stageRef.current;
+    if (endedRef.current || processingRef.current) return;
+    // Post-TTS grace: ignore anything within ~450ms of the AI finishing —
+    // the AI's own trailing audio in the mic must never start a recording.
+    if (Date.now() - aiFinishedAtRef.current < 450) {
+      vadRef.current?.reset();
+      return;
+    }
+    if (stage === "speaking") {
+      // Barge-in cooldown: ignore audio during the first ~400ms of a sentence
+      // so the AI's own voice (or echo) can never trigger an interruption.
+      if (Date.now() - aiSpeakStartedAtRef.current < 400) {
+        vadRef.current?.reset();
+        return;
+      }
+      stopAudioQueue();
+      stopStreaming();
+      processingRef.current = false;
+      setIsProcessing(false);
+      setStage("listening");
+    }
+    if (stage === "listening" || stage === "speaking") {
+      setIsUserSpeaking(true);
+      startRecording();
+    }
+  }, [setStage, startRecording, stopAudioQueue, stopStreaming]);
+
+  const handleVadSpeechEnd = useCallback(() => {
+    setIsUserSpeaking(false);
+    stopRecording();
+  }, [stopRecording]);
+
+  // Keep the detector's callbacks pointed at the LATEST closures.
+  handleVadStartRef.current = handleVadSpeechStart;
+  handleVadEndRef.current = handleVadSpeechEnd;
+
+  // Transcribe an utterance blob → feed the transcript into the pipeline.
+  const transcribeBlob = useCallback(async (blob: Blob) => {
+    if (endedRef.current || transcribingRef.current) return;
+    transcribingRef.current = true;
+    try {
+      const form = new FormData();
+      form.append("audio", blob, "utterance.webm");
+      const res = await fetch("/api/conversation/transcribe", {
+        method: "POST",
+        body: form,
+      });
+      if (!res.ok) throw new Error(`STT ${res.status}`);
+      const data = await res.json();
+      const text = (data.text || "").trim();
+      if (text) {
+        const langName = LANG_CODE_TO_NAME[data.language] || "English";
+        setDetectedLanguage(langName);
+        submitSpeechRef.current(text);
+      }
+    } catch (e) {
+      console.error("Transcription failed:", e);
+      setError("Could not understand that. Please try again or type your message.");
+      // Clear the error once the caller tries again / next turn succeeds.
+      setTimeout(() => setError(""), 4000);
+    } finally {
+      transcribingRef.current = false;
+    }
+  }, []);
+  transcribeBlobRef.current = transcribeBlob;
+
+  // ── Input setup (once per mount) ──────────────────────────────────────────
   useEffect(() => {
+    // Real-time VAD is the PRIMARY input: raw mic energy detects ANY voice in
+    // ANY language, utterances are recorded and transcribed by Whisper. Only
+    // fall back to the browser speech API when Web Audio VAD can't run.
+    if (vadSupported) {
+      const vad = new VoiceActivityDetector(
+        {
+          silenceMs: Math.min(Math.max(silenceTimeoutMs * 0.7, 900), 1600),
+          buckets: 48,
+        },
+        {
+          onSpeechStart: () => handleVadStartRef.current(),
+          onSpeechEnd: () => handleVadEndRef.current(),
+        }
+      );
+      // While Mrs. D is speaking, the mic hears her own voice too — raise the
+      // effective threshold so only the CALLER's voice (louder than the AI)
+      // can trigger a barge-in.
+      vad.dynamicThreshold = () => {
+        if (stageRef.current === "speaking") {
+          return Math.max(0.03, aiRmsRef.current * 1.2 + 0.02);
+        }
+        return 0;
+      };
+      vadRef.current = vad;
+      micLevelsRef.current = vad.levels;
+      return () => {
+        vad.stop();
+        vadRef.current = null;
+      };
+    }
+
     if (
       !("webkitSpeechRecognition" in window) &&
       !("SpeechRecognition" in window)
@@ -767,7 +1007,60 @@ export function useVoiceAgent({
         audioRef.current.pause();
       }
     };
-  }, [armSilenceTimer, clearSilenceTimer, handleBargeIn, setStage]);
+  }, [armSilenceTimer, clearSilenceTimer, handleBargeIn, setStage, silenceTimeoutMs, vadSupported]);
+
+  // ── Mrs. D's live waveform (AI audio analyser) ────────────────────────────
+  // captureStream() on the <audio> element gives us her actual output without
+  // rerouting it through a MediaElementSource (which can only be created once
+  // per element — captureStream has no such restriction, so it survives
+  // React StrictMode's double-mount cleanly). The analyser feeds aiLevelsRef
+  // (waveform) + aiRmsRef (used to raise the VAD barge-in threshold above
+  // her own voice so the AI can never interrupt herself).
+  useEffect(() => {
+    const el = audioRef.current as (HTMLAudioElement & { captureStream?: () => MediaStream }) | null;
+    if (!el || typeof el.captureStream !== "function") return;
+    let ctx: AudioContext | null = null;
+    let analyser: AnalyserNode | null = null;
+    try {
+      const Ctor = window.AudioContext || (window as any).webkitAudioContext;
+      ctx = new Ctor();
+      const stream = el.captureStream!();
+      const src = ctx.createMediaStreamSource(stream);
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.25;
+      src.connect(analyser);
+    } catch (e) {
+      console.warn("AI audio analyser unavailable:", e);
+      return;
+    }
+    if (!analyser) return;
+    const freq = new Uint8Array(analyser.frequencyBinCount);
+    const levels = aiLevelsRef.current;
+    const N = levels.length;
+    const per = Math.max(1, Math.floor(freq.length / N));
+    const loop = () => {
+      aiRafRef.current = requestAnimationFrame(loop);
+      analyser.getByteFrequencyData(freq);
+      let sum = 0;
+      for (let b = 0; b < N; b++) {
+        let peak = 0;
+        const start = b * per;
+        const end = Math.min(freq.length, start + per);
+        for (let i = start; i < end; i++) {
+          if (freq[i] > peak) peak = freq[i];
+        }
+        levels[b] = peak / 255;
+        sum += peak;
+      }
+      aiRmsRef.current = sum / (N * 255);
+    };
+    aiRafRef.current = requestAnimationFrame(loop);
+    return () => {
+      cancelAnimationFrame(aiRafRef.current);
+      ctx?.close().catch(() => {});
+    };
+  }, [audioRef]);
 
   // ── Greeting on mount ──────────────────────────────────────────────────────
   const startCall = useCallback(async () => {
@@ -912,5 +1205,10 @@ export function useVoiceAgent({
     toggleListening,
     startListening,
     stopListening,
+    // Real-time voice UX
+    vadSupported,
+    isUserSpeaking,
+    micLevelsRef, // live caller waveform (0..1 per bar)
+    aiLevelsRef, // live Mrs. D waveform (0..1 per bar)
   };
 }

@@ -21,6 +21,7 @@ import {
 import { useVoiceAgent } from "../hooks/useVoiceAgent";
 import Markdown from "../components/Markdown";
 import LanguageSwitcher from "../components/LanguageSwitcher";
+import VoiceWaveform from "../components/VoiceWaveform";
 import { useTranslation } from "../i18n";
 import { saveSimulatorCall } from "../services/api";
 
@@ -70,6 +71,9 @@ export default function ActiveCall() {
     sendMessage,
     toggleListening,
     audioRef,
+    isUserSpeaking,
+    micLevelsRef,
+    aiLevelsRef,
   } = useVoiceAgent({ mode: "test", knowledgeFile, silenceTimeoutMs: 2000, initialLanguage: lang });
 
   // Start the call automatically on mount
@@ -226,7 +230,9 @@ export default function ActiveCall() {
           >
             <div
               className={`absolute inset-0 rounded-full blur-3xl ${
-                callStage === "listening"
+                isUserSpeaking
+                  ? "bg-green-500/30 animate-pulse"
+                  : callStage === "listening"
                   ? "bg-purple-500/20 animate-pulse"
                   : callStage === "thinking"
                   ? "bg-blue-500/20 animate-pulse"
@@ -237,16 +243,21 @@ export default function ActiveCall() {
             />
 
             <div
-              className={`relative w-56 h-56 rounded-full bg-gradient-to-br from-purple-500/20 to-blue-500/20 flex items-center justify-center border-2 border-purple-500/30 shadow-2xl ${
-                callStage === "listening" ? "animate-pulse" : ""
-              }`}
+              className={`relative w-56 h-56 rounded-full bg-gradient-to-br from-purple-500/20 to-blue-500/20 flex items-center justify-center border-2 ${
+                isUserSpeaking
+                  ? "border-green-500/60 shadow-green-500/40"
+                  : "border-purple-500/30"
+              } shadow-2xl ${callStage === "listening" ? "animate-pulse" : ""}`}
             >
               {callStage === "connecting" && (
                 <Loader2 className="w-28 h-28 text-yellow-400 animate-spin" />
               )}
-              {callStage === "listening" && (
-                <Mic className="w-28 h-28 text-purple-300" />
-              )}
+              {callStage === "listening" &&
+                (isUserSpeaking ? (
+                  <Mic className="w-28 h-28 text-green-400 animate-pulse" />
+                ) : (
+                  <Mic className="w-28 h-28 text-purple-300" />
+                ))}
               {callStage === "thinking" && (
                 <Brain className="w-28 h-28 text-blue-400 animate-pulse" />
               )}
@@ -276,23 +287,27 @@ export default function ActiveCall() {
             </motion.div>
           </motion.div>
 
-          {/* Wave Animation */}
-          {callStage === "speaking" && (
-            <div className="flex items-center gap-1.5 mb-12">
-              {[...Array(12)].map((_, i) => (
-                <motion.div
-                  key={i}
-                  className="w-2 bg-gradient-to-t from-purple-500 to-blue-500 rounded-full"
-                  animate={{ height: [20, 60, 20] }}
-                  transition={{
-                    duration: 0.6,
-                    repeat: Infinity,
-                    delay: i * 0.05,
-                  }}
-                />
-              ))}
-            </div>
-          )}
+          {/* Real-time voice wave — reacts to ACTUAL sound (user's mic while
+              listening, Mrs. D's audio while speaking). No fake animation. */}
+          <div className="w-full max-w-xl mb-12">
+            <VoiceWaveform
+              levelsRef={callStage === "speaking" ? aiLevelsRef : micLevelsRef}
+              active={callStage === "listening" || callStage === "speaking"}
+              color={
+                callStage === "speaking"
+                  ? "ai"
+                  : isUserSpeaking
+                  ? "user"
+                  : "idle"
+              }
+              className="w-full h-16"
+            />
+            {callStage === "listening" && isUserSpeaking && (
+              <div className="text-center text-xs font-medium text-green-400 mt-2">
+                You're speaking… (any voice works — Telugu, Hindi, Tamil, English)
+              </div>
+            )}
+          </div>
 
           {/* Messages — auto-scrolls to newest, full conversation retained */}
           <div

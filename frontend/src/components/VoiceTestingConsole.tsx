@@ -23,6 +23,7 @@ import {
 import { useVoiceAgent } from "../hooks/useVoiceAgent";
 import Markdown from "./Markdown";
 import LanguageSwitcher from "./LanguageSwitcher";
+import VoiceWaveform from "./VoiceWaveform";
 import { useTranslation } from "../i18n";
 import { saveSimulatorCall } from "../services/api";
 
@@ -76,6 +77,9 @@ export default function VoiceTestingConsole() {
     sendMessage,
     toggleListening,
     audioRef,
+    isUserSpeaking,
+    micLevelsRef,
+    aiLevelsRef,
   } = useVoiceAgent({ mode: "test", knowledgeFile: KNOWLEDGE_FILE, initialLanguage: lang });
 
   // Auto-scroll to newest message
@@ -328,23 +332,27 @@ export default function VoiceTestingConsole() {
               </div>
             </div>
 
-            {/* Wave */}
-            {callStage === "speaking" && (
-              <div className="flex items-center gap-1 mt-3 h-5">
-                {[...Array(12)].map((_, i) => (
-                  <motion.div
-                    key={i}
-                    className="w-1 bg-gradient-to-t from-purple-500 to-blue-500 rounded-full"
-                    animate={{ height: [6, 20, 6] }}
-                    transition={{
-                      duration: 0.6,
-                      repeat: Infinity,
-                      delay: i * 0.05,
-                    }}
-                  />
-                ))}
-              </div>
-            )}
+            {/* Real-time voice wave — reacts to ACTUAL sound (user's mic while
+                listening, Mrs. D's audio while speaking). No fake animation. */}
+            <div className="w-full max-w-md mt-3">
+              <VoiceWaveform
+                levelsRef={callStage === "speaking" ? aiLevelsRef : micLevelsRef}
+                active={callStage === "listening" || callStage === "speaking"}
+                color={
+                  callStage === "speaking"
+                    ? "ai"
+                    : isUserSpeaking
+                    ? "user"
+                    : "idle"
+                }
+                className="w-full h-12"
+              />
+              {callStage === "listening" && isUserSpeaking && (
+                <div className="text-center text-[11px] font-medium text-green-400 mt-1">
+                  You're speaking… (any voice — Telugu, Hindi, Tamil, English)
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Conversation */}
