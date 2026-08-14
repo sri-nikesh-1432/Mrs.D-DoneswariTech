@@ -455,6 +455,18 @@ export default function ActiveCall() {
                 </div>
               </div>
 
+              {/* Time-to-first-audio — the metric that decides "feels human"
+                  vs "feels robotic" (target: ~100-200ms after the LLM's first
+                  tokens). The backend reports it per turn. */}
+              <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+                <span className="text-amber-300 text-xs uppercase tracking-wider">
+                  {t("firstAudio")}
+                </span>
+                <span className="font-mono text-amber-300 text-xl font-bold">
+                  {Math.round(debugInfo.first_sentence_ms ?? 0)}ms
+                </span>
+              </div>
+
               <div className="flex items-center gap-2 text-sm bg-white/5 p-4 rounded-xl border border-white/10">
                 <Brain className="w-4 h-4 text-purple-400" />
                 <span className="text-slate-300">

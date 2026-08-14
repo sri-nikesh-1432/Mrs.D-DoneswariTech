@@ -12,6 +12,8 @@ export interface VoiceDebugInfo {
   llm_time_ms: number;
   tts_time_ms: number;
   total_time_ms: number;
+  /** Time-to-first-audio: ms from turn start until the first sentence plays. */
+  first_sentence_ms?: number;
   chunks_retrieved: number;
   knowledge_source: string;
   /** Real backend error detail (shown in the debug panel, never faked). */
@@ -168,13 +170,36 @@ export function useVoiceAgent({
   const streamAbortRef = useRef<AbortController | null>(null);
   const streamActiveRef = useRef(false);
 
-  // ── Silence / VAD: fire after ~1.3s with no new speech ────────────────────
+  // ── Silence / VAD: fire after no new speech for a while ────────────────────
   const clearSilenceTimer = useCallback(() => {
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
     }
   }, []);
+
+  // ── ADAPTIVE TURN-TAKING ───────────────────────────────────────────────────
+  // A FIXED silence timeout is exactly what makes a voice agent feel robotic:
+  // it cuts people off mid-thought on long answers and feels sluggish on short
+  // ones. Humans pause mid-sentence, take breaths, say "um" while they think —
+  // so the wait must scale with what has been said so far:
+  //   - one-word acknowledgements ("Avunu", "Ok")  → brisk, ~0.75×
+  //   - a typical short question                        → base
+  //   - long, complex utterances (details, lists)       → patient, up to 1.35×
+  // plus ±10% organic jitter so no two pauses are ever identical. Clamped to a
+  // sane range so the caller is never cut off mid-word NOR left hanging.
+  const adaptiveSilenceTimeout = useCallback(
+    (pending: string): number => {
+      const len = pending.trim().length;
+      let scale = 1;
+      if (len < 15) scale = 0.75; // brisk: "Avunu..." "Okay"
+      else if (len > 80) scale = 1.35; // patient: long detailed thought
+      else if (len > 40) scale = 1.15; // a little patience mid-length
+      const jitter = 0.9 + Math.random() * 0.2;
+      return Math.min(Math.max(silenceTimeoutMs * scale * jitter, 800), 2600);
+    },
+    [silenceTimeoutMs]
+  );
 
   const armSilenceTimer = useCallback(() => {
     clearSilenceTimer();
@@ -188,8 +213,8 @@ export function useVoiceAgent({
         pendingTranscriptRef.current = "";
         submitSpeechRef.current(pending);
       }
-    }, silenceTimeoutMs);
-  }, [silenceTimeoutMs, clearSilenceTimer]);
+    }, adaptiveSilenceTimeout(pendingTranscriptRef.current));
+  }, [adaptiveSilenceTimeout, clearSilenceTimer]);
 
   // ── Recognition lifecycle: exactly ONE active session ─────────────────────
   const stopListening = useCallback(() => {
