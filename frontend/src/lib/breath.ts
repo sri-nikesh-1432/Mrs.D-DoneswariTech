@@ -435,3 +435,163 @@ export function shouldInsertFiller(
 
   return false;
 }
+
+// ── Background Ambient Sound ──────────────────────────────────────────────
+// Subtle room tone that plays throughout the call — mimics the low-level
+// background noise of a real office environment. This is a key Retell AI
+// technique for making conversations feel grounded in reality.
+//
+// The sound is extremely quiet (-35 to -40 dBFS) and uses band-limited
+// noise shaped like a quiet office: low-frequency hum (HVAC) + mid-frequency
+// presence (distant activity). It should be barely perceptible.
+
+let ambientNode: AudioBufferSourceNode | null = null;
+let ambientGain: GainNode | null = null;
+let ambientRunning = false;
+
+/**
+ * Start subtle background ambient sound. No-op if already running or if
+ * Web Audio is unavailable.
+ */
+export function startAmbient(): void {
+  if (ambientRunning) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  try {
+    // Generate a long buffer of shaped noise (10 seconds, looped)
+    const duration = 10;
+    const frames = ctx.sampleRate * duration;
+    const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+
+    // Shaped noise: low-frequency rumble + mid-frequency presence
+    let prevSample = 0;
+    for (let i = 0; i < frames; i++) {
+      const white = Math.random() * 2 - 1;
+      // Brown noise integration (low-frequency emphasis)
+      prevSample = (prevSample + 0.02 * white) / 1.02;
+      // Mix white (10%) + brown (90%) for natural room tone
+      data[i] = prevSample * 0.9 + white * 0.1;
+    }
+
+    ambientNode = ctx.createBufferSource();
+    ambientNode.buffer = buffer;
+    ambientNode.loop = true;
+
+    // Low-pass: room tone is muffled, not hissy
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = 400;
+    filter.Q.value = 0.5;
+
+    ambientGain = ctx.createGain();
+    ambientGain.gain.value = 0.015; // Very quiet: -36 dBFS approx
+
+    ambientNode.connect(filter);
+    filter.connect(ambientGain);
+    ambientGain.connect(ctx.destination);
+
+    ambientNode.start();
+    ambientRunning = true;
+  } catch {
+    // Ambient is cosmetic — never break the call
+  }
+}
+
+/**
+ * Stop the background ambient sound.
+ */
+export function stopAmbient(): void {
+  if (!ambientRunning) return;
+  try {
+    ambientNode?.stop();
+    ambientNode?.disconnect();
+  } catch {
+    /* ignore */
+  }
+  ambientNode = null;
+  ambientGain = null;
+  ambientRunning = false;
+}
+
+// ── Backchanneling (Agent Acknowledgment While User Talks) ────────────────
+// When the user is speaking, the agent occasionally makes soft acknowledgment
+// sounds: "mm-hmm", "right", "I see". This is a key Retell AI feature —
+// it signals "I'm listening" and makes the conversation feel alive.
+
+const BACKCHANNEL_SOUNDS: Array<
+  { text: string; f0: number; formants: [number, number, number]; dur: [number, number] }
+> = [
+  // "mm-hmm" — nasal acknowledgment (closed mouth)
+  { text: "mm-hmm", f0: 200, formants: [300, 2500, 3200], dur: [0.3, 0.5] },
+  // "hmm" — soft thinking acknowledgment
+  { text: "hmm", f0: 190, formants: [280, 2400, 3100], dur: [0.2, 0.4] },
+  // "right" — verbal acknowledgment
+  { text: "right", f0: 195, formants: [500, 1400, 2600], dur: [0.2, 0.35] },
+  // "ah" — realization sound
+  { text: "ah", f0: 210, formants: [700, 1200, 2800], dur: [0.15, 0.3] },
+];
+
+let backchannelTimer: ReturnType<typeof setTimeout> | null = null;
+let lastBackchannelAt = 0;
+
+/**
+ * Play a subtle backchannel sound while the user is talking.
+ * Rate-limited: no more than once every 4 seconds.
+ */
+export function playBackchannel(): void {
+  if (document.hidden) return;
+  const now = Date.now();
+  if (now - lastBackchannelAt < 4000) return; // Rate limit
+  lastBackchannelAt = now;
+
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  const def = BACKCHANNEL_SOUNDS[Math.floor(Math.random() * BACKCHANNEL_SOUNDS.length)];
+  const duration = def.dur[0] + Math.random() * (def.dur[1] - def.dur[0]);
+  const buffer = synthesizeFiller(ctx, {
+    f0: def.f0,
+    formants: def.formants,
+    bw: [80, 150, 200],
+    dur: [duration, duration],
+    amp: 0.03, // Very quiet — background acknowledgment
+    nasal: def.text.includes("m"),
+  }, duration);
+
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+
+  const gain = ctx.createGain();
+  gain.gain.value = 0.4; // Quiet — the user is talking, not the agent
+
+  source.connect(gain);
+  gain.connect(ctx.destination);
+
+  source.start();
+  source.stop(now + duration + 0.05);
+}
+
+/**
+ * Start periodic backchanneling while the user speaks.
+ * Plays a soft "mm-hmm" / "hmm" / "right" every 3-6 seconds.
+ */
+export function startBackchanneling(): void {
+  stopBackchanneling();
+  const tick = () => {
+    playBackchannel();
+    backchannelTimer = setTimeout(tick, 3000 + Math.random() * 3000);
+  };
+  backchannelTimer = setTimeout(tick, 2000 + Math.random() * 2000);
+}
+
+/**
+ * Stop backchanneling.
+ */
+export function stopBackchanneling(): void {
+  if (backchannelTimer) {
+    clearTimeout(backchannelTimer);
+    backchannelTimer = null;
+  }
+}

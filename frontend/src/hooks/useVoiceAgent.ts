@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { playBreath, playFiller, playThinkingPause, shouldInsertFiller } from "../lib/breath";
+import { playBreath, playFiller, shouldInsertFiller, startAmbient, stopAmbient, startBackchanneling, stopBackchanneling } from "../lib/breath";
 import { VoiceActivityDetector, isVADSupported } from "../lib/vad";
 import { encodeWavPcm16 } from "../lib/wav";
 
@@ -347,6 +347,8 @@ export function useVoiceAgent({
   const [isProcessing, setIsProcessing] = useState(false);
   const [debugInfo, setDebugInfo] = useState<VoiceDebugInfo | null>(null);
   const [detectedLanguage, setDetectedLanguage] = useState(initialLanguage);
+  const detectedLanguageRef = useRef(initialLanguage);
+  useEffect(() => { detectedLanguageRef.current = detectedLanguage; }, [detectedLanguage]);
   const [error, setError] = useState("");
   // Real-time indicator: the caller is currently speaking (VAD caught their
   // voice) — drives the live waveform colour and orb glow.
@@ -826,7 +828,7 @@ export function useVoiceAgent({
             // Vocalized hesitation: "hmm...", "uhh..."
             playFiller({
               context: next.text.endsWith("?") ? "acknowledging" : "thinking",
-              language: detectedLanguage,
+              language: detectedLanguageRef.current,
             });
           } else {
             // Soft breath between sentences
@@ -1302,6 +1304,9 @@ export function useVoiceAgent({
       setIsUserSpeaking(true);
       ensureCapture();
       startPartialLoopRef.current();
+      // While the user talks, the agent makes soft "mm-hmm" sounds
+      // to signal active listening (Retell AI backchanneling).
+      if (fsm === "listening") startBackchanneling();
     }
   }, [clearFinalizeTimer, ensureCapture, pauseAudioQueue, setFsm]);
 
@@ -1310,6 +1315,7 @@ export function useVoiceAgent({
     // (the detector resets its own counter right after this callback).
     turnSpeechMsRef.current += vadRef.current?.activeSpeechMs ?? 0;
     setIsUserSpeaking(false);
+    stopBackchanneling(); // User stopped talking — stop acknowledging
     // Frontend TTFA (spec §27) starts at the user's LAST WORD (speech end),
     // not at LLM submission — the perceived latency the caller feels.
     ttfaStartRef.current = Date.now();
@@ -1872,6 +1878,7 @@ export function useVoiceAgent({
     lastPartialRef.current = null;
     stopPartialLoop();
     clearFinalizeTimer();
+    startAmbient(); // Subtle room tone for realism
     setFsm("connecting");
 
     try {
@@ -1978,6 +1985,8 @@ export function useVoiceAgent({
     stopAudioQueue();
     stopStreaming();
     stopPartialLoop();
+    stopAmbient();
+    stopBackchanneling();
     clearFinalizeTimer();
     captureActiveRef.current = false;
     setPartialTranscript("");
