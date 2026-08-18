@@ -64,6 +64,7 @@ export default function VoiceTestingConsole() {
 
   const {
     callStage,
+    fsmState,
     messages,
     inputText,
     setInputText,
@@ -78,6 +79,8 @@ export default function VoiceTestingConsole() {
     toggleListening,
     audioRef,
     isUserSpeaking,
+    partialTranscript,
+    voiceStats,
     micLevelsRef,
     aiLevelsRef,
   } = useVoiceAgent({ mode: "test", knowledgeFile: KNOWLEDGE_FILE, initialLanguage: lang });
@@ -352,6 +355,14 @@ export default function VoiceTestingConsole() {
                   You're speaking… (any voice — Telugu, Hindi, Tamil, English)
                 </div>
               )}
+              {/* Live streaming-STT partial — updates as the caller talks
+                  (spec §7: "naku... naku mee... naku mee college..."). */}
+              {isUserSpeaking && partialTranscript && (
+                <div className="text-center text-xs text-slate-300 mt-1 px-3 py-1.5 bg-white/5 border border-green-500/20 rounded-lg truncate">
+                  <span className="text-green-400 mr-1">›</span>
+                  {partialTranscript}
+                </div>
+              )}
             </div>
           </div>
 
@@ -547,6 +558,50 @@ export default function VoiceTestingConsole() {
                     </div>
                   </div>
                 )}
+
+                {/* Voice engine (spec §34): engineering-only counters — the
+                    conversation transcript and TTS payload never contain these. */}
+                <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-xl p-3">
+                  <div className="text-cyan-300 text-[10px] uppercase tracking-wider mb-2">
+                    Voice engine
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">FSM</span>
+                      <span className="font-mono text-cyan-200">{fsmState}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Turns</span>
+                      <span className="font-mono text-cyan-200">
+                        {voiceStats.utterances}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Partials</span>
+                      <span className="font-mono text-cyan-200">
+                        {voiceStats.partials}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Barge-ins</span>
+                      <span className="font-mono text-cyan-200">
+                        {voiceStats.bargeIns}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">False det.</span>
+                      <span className="font-mono text-cyan-200">
+                        {voiceStats.falseDetections}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Corrections</span>
+                      <span className="font-mono text-cyan-200">
+                        {voiceStats.corrections}
+                      </span>
+                    </div>
+                  </div>
+                </div>
 
                 <div className="flex items-center gap-2 text-xs bg-white/5 p-2.5 rounded-xl border border-white/10">
                   <Brain className="w-4 h-4 text-purple-400 shrink-0" />

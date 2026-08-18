@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { playBreath } from "../lib/breath";
+import { playBreath, playFiller, playThinkingPause, shouldInsertFiller } from "../lib/breath";
 import { VoiceActivityDetector, isVADSupported } from "../lib/vad";
+import { encodeWavPcm16 } from "../lib/wav";
 
 export interface VoiceMessage {
   role: "user" | "ai";
@@ -21,6 +22,23 @@ export interface VoiceDebugInfo {
   knowledge_source: string;
   /** Real backend error detail (shown in the debug panel, never faked). */
   stream_error?: string;
+}
+
+/**
+ * Voice-engine analytics (spec §34 — engineering only, never spoken, never in
+ * the conversation transcript). Counters accumulate for the whole session.
+ */
+export interface VoiceStats {
+  /** Live STT partial transcripts produced this session. */
+  partials: number;
+  /** Confirmed barge-ins (caller took the floor while Mrs. D was speaking). */
+  bargeIns: number;
+  /** Utterances dropped by the phantom gates (noise/echo/backchannel/dup). */
+  falseDetections: number;
+  /** Final transcript differed from the last live partial. */
+  corrections: number;
+  /** Turns actually submitted to the LLM. */
+  utterances: number;
 }
 
 export type CallStage =
@@ -148,6 +166,9 @@ const MIN_SPEECH_MS = 200;
 
 /** Hard cap for a single STT request — a hung backend must not wedge input. */
 const STT_TIMEOUT_MS = 20000;
+
+/** Minimum PCM window for a valid utterance (16 kHz × 200 ms of speech). */
+const MIN_SPEECH_SAMPLES = 3200;
 
 /** Max age of a transcript considered "recent" for duplicate detection (ms). */
 const DUPLICATE_WINDOW_MS = 8000;
@@ -314,7 +335,7 @@ export function useVoiceAgent({
   mode = "test",
   knowledgeFile = "institute.json",
   instituteId = 1,
-  silenceTimeoutMs = 1300,
+  silenceTimeoutMs = 900,
   initialLanguage = "English",
   useVAD = true,
   onEnded,
@@ -330,6 +351,18 @@ export function useVoiceAgent({
   // Real-time indicator: the caller is currently speaking (VAD caught their
   // voice) — drives the live waveform colour and orb glow.
   const [isUserSpeaking, setIsUserSpeaking] = useState(false);
+  /** Live STT partial of the caller's in-progress utterance (streaming STT). */
+  const [partialTranscript, setPartialTranscript] = useState("");
+  /** The RAW FSM state (spec §4) — INTERRUPTED/RECOVERING visible to the UI. */
+  const [fsmState, setFsmState] = useState<FsmState>("idle");
+  /** Voice-engine analytics counters (spec §34). */
+  const [voiceStats, setVoiceStats] = useState<VoiceStats>({
+    partials: 0,
+    bargeIns: 0,
+    falseDetections: 0,
+    corrections: 0,
+    utterances: 0,
+  });
 
   const recognitionRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -346,6 +379,7 @@ export function useVoiceAgent({
   const fsmRef = useRef<FsmState>("idle");
   const setFsm = useCallback((next: FsmState) => {
     fsmRef.current = next;
+    setFsmState(next);
     // Project the machine onto the UI label set the components already render.
     let stage: CallStage;
     switch (next) {
@@ -370,6 +404,10 @@ export function useVoiceAgent({
     }
     stageRef.current = stage;
     setCallStage(stage);
+    // While Mrs. D is speaking, the mic hears her own voice — raise the
+    // Silero speech-probability threshold so only the CALLER's clear voice
+    // (never her echo) can trigger a barge-in (spec §5, §38).
+    vadRef.current?.setAISpeaking(next === "ai_speaking");
   }, []);
 
   const processingRef = useRef(false); // true while STT→LLM→TTS is running
@@ -379,32 +417,57 @@ export function useVoiceAgent({
   const listeningRef = useRef(false);
   const endedRef = useRef(false); // endCall idempotency guard
 
-  // ── Real-time VAD (Web Audio) — the PRIMARY input path ────────────────────
-  // Replaces webkitSpeechRecognition: raw mic energy is analysed directly so
-  // ANY voice (any language, any accent, any volume) is detected; utterances
-  // are recorded and transcribed by Groq Whisper (auto language detection).
+  // ── Real-time VAD (Silero ML) — the PRIMARY input path ───────────────────
+  // Silero VAD returns a neural speech-probability per frame, so keyboard,
+  // fan, chair noise, coughs and the AI's own echo can never start a turn
+  // (spec §6: amplitude alone is not speech). Speech is captured into a
+  // continuous 16 kHz PCM window inside the detector; streaming STT partials
+  // and the final transcription both come from that window — the mic itself
+  // NEVER restarts between turns.
   const vadSupported = useVAD && isVADSupported();
   const vadRef = useRef<VoiceActivityDetector | null>(null);
   const micLevelsRef = useRef<Float32Array>(new Float32Array(48)); // caller wave
   const aiLevelsRef = useRef<Float32Array>(new Float32Array(48)); // Mrs. D wave
   const aiRmsRef = useRef(0); // Mrs. D's output level (barge-in threshold anchor)
   const aiRafRef = useRef(0);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const recChunksRef = useRef<Blob[]>([]);
-  // Genuine speech energy in the CURRENT segment, snapshotted per-recording
-  // (the shared ref is only read at stop time so a fast second utterance can
-  // never skew the previous recording's min-speech gate).
-  const activeSpeechMsRef = useRef(0);
+  // True once the current turn's PCM capture has started (first speech onset).
+  const captureActiveRef = useRef(false);
+  // Genuine ML-detected speech ms accumulated for the CURRENT merged turn —
+  // drives the min-duration gate AND the adaptive merge grace (long thoughts
+  // get more patience before the turn is finalized).
+  const turnSpeechMsRef = useRef(0);
   const transcribingRef = useRef(false); // one STT request at a time
-  const recSpeechMsRef = useRef(0); // per-recording snapshot of genuine speech ms
-  // Utterances recorded while a previous STT request is still in flight —
-  // they are transcribed in order when the current one finishes. Without
-  // this, a caller who speaks again during the ~1s Whisper call would be
-  // silently unheard (the classic "not listening" bug).
-  const pendingBlobsRef = useRef<Blob[]>([]);
+  // A finalize arrived while an STT request was in flight — re-run it as soon
+  // as the in-flight request finishes (the final must always see the COMPLETE
+  // utterance window; a stale partial must never become the turn).
+  const finalizeQueuedRef = useRef(false);
+  const finalizingRef = useRef(false); // re-entrancy guard for finalizeTurn
+  // The utterance window parked while waiting for the STT lock — a retry
+  // consumes the SAME snapshot, so the final can never be truncated.
+  const finalizeWindowRef = useRef<Float32Array | null>(null);
+  // Adaptive merge grace: fires when the caller has been quiet long enough to
+  // own the floor. Delays finalizing so mid-thought pauses ("Naaku ... kavali...
+  // fee kuda cheppandi") stay ONE turn (spec §8, §40).
+  const finalizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Streaming-STT partial cadence: while the caller speaks, a best-effort
+  // partial transcript is requested on this cadence to update the live text.
+  const partialTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The most recent partial transcript (+when) — finalize reuses it when fresh
+  // (no wasted Whisper call) and counts corrections when it changed.
+  const lastPartialRef = useRef<{ text: string; norm: string; at: number } | null>(null);
   const handleVadStartRef = useRef<() => void>(() => {});
   const handleVadEndRef = useRef<() => void>(() => {});
-  const transcribeBlobRef = useRef<(blob: Blob) => void>(() => {});
+
+  // ── Voice-engine analytics counters (spec §34) ───────────────────────────
+  const partialCountRef = useRef(0);
+  const bargeInCountRef = useRef(0);
+  const falseDetectionRef = useRef(0);
+  const sttCorrectionsRef = useRef(0);
+  const utteranceIdRef = useRef(0); // monotonic per-turn id (spec §35)
+
+  const bumpStats = useCallback((patch: Partial<VoiceStats>) => {
+    setVoiceStats((prev) => ({ ...prev, ...patch }));
+  }, []);
 
   // ── Phantom-suppression state (spec §2, §20, §21, §48) ──────────────────
   // lastAITextRef: the AI's most recent spoken text — used to reject Whisper
@@ -452,6 +515,26 @@ export function useVoiceAgent({
     }
   }, []);
 
+  // ── Merged-utterance finalize timer (spec §8, §40) ───────────────────────
+  // Speech END does not finalize the turn: the caller may pause mid-thought
+  // ("Naaku sixth class admission kavali... fee details kuda cheppandi" is ONE
+  // turn). We wait an adaptive grace; if they resume, the timer is cancelled
+  // and the same PCM window keeps growing. Only when the grace expires does
+  // the utterance get transcribed + submitted.
+  const clearFinalizeTimer = useCallback(() => {
+    if (finalizeTimerRef.current) {
+      clearTimeout(finalizeTimerRef.current);
+      finalizeTimerRef.current = null;
+    }
+  }, []);
+
+  const stopPartialLoop = useCallback(() => {
+    if (partialTimerRef.current) {
+      clearTimeout(partialTimerRef.current);
+      partialTimerRef.current = null;
+    }
+  }, []);
+
   // ── ADAPTIVE TURN-TAKING ───────────────────────────────────────────────────
   // A FIXED silence timeout is exactly what makes a voice agent feel robotic:
   // it cuts people off mid-thought on long answers and feels sluggish on short
@@ -466,11 +549,11 @@ export function useVoiceAgent({
     (pending: string): number => {
       const len = pending.trim().length;
       let scale = 1;
-      if (len < 15) scale = 0.75; // brisk: "Avunu..." "Okay"
-      else if (len > 80) scale = 1.35; // patient: long detailed thought
-      else if (len > 40) scale = 1.15; // a little patience mid-length
+      if (len < 15) scale = 0.7;  // brisk: "Avunu..." "Okay"
+      else if (len > 80) scale = 1.2; // patient: long detailed thought
+      else if (len > 40) scale = 1.05; // a little patience mid-length
       const jitter = 0.9 + Math.random() * 0.2;
-      return Math.min(Math.max(silenceTimeoutMs * scale * jitter, 800), 2600);
+      return Math.min(Math.max(silenceTimeoutMs * scale * jitter, 500), 2200);
     },
     [silenceTimeoutMs]
   );
@@ -490,7 +573,7 @@ export function useVoiceAgent({
     }, adaptiveSilenceTimeout(pendingTranscriptRef.current));
   }, [adaptiveSilenceTimeout, clearSilenceTimer]);
 
-  // ── VAD lifecycle (real-time mic energy — the PRIMARY input) ─────────────
+  // ── VAD lifecycle (Silero ML — the PRIMARY input) ────────────────────────
   const startVAD = useCallback(async () => {
     if (!vadRef.current) return;
     const ok = await vadRef.current.start();
@@ -509,19 +592,11 @@ export function useVoiceAgent({
   const stopVAD = useCallback(() => {
     vadRef.current?.stop();
     setIsUserSpeaking(false);
-    // Discard any in-flight recording (never transcribe a half-spoken clip).
-    const rec = recorderRef.current;
-    if (rec && rec.state !== "inactive") {
-      rec.onstop = null;
-      try {
-        rec.stop();
-      } catch {
-        /* ignore */
-      }
-    }
-    recorderRef.current = null;
-    recChunksRef.current = [];
-  }, []);
+    setPartialTranscript("");
+    captureActiveRef.current = false;
+    stopPartialLoop();
+    clearFinalizeTimer();
+  }, [clearFinalizeTimer, stopPartialLoop]);
 
   // ── Recognition lifecycle: exactly ONE active session ─────────────────────
   const stopListening = useCallback(() => {
@@ -627,6 +702,11 @@ export function useVoiceAgent({
     // speech end (spec §27).
     ttfaStartRef.current = 0;
     ttfaRef.current = null;
+    stopPartialLoop();
+    clearFinalizeTimer();
+    captureActiveRef.current = false;
+    setPartialTranscript("");
+    lastPartialRef.current = null;
     setFsm("listening");
     const pending = pendingTranscriptRef.current;
     pendingTranscriptRef.current = "";
@@ -664,7 +744,14 @@ export function useVoiceAgent({
         setTimeout(() => startListening(), 120);
       }
     }
-  }, [setFsm, startListening, startVAD, vadSupported]);
+  }, [
+    clearFinalizeTimer,
+    setFsm,
+    startListening,
+    startVAD,
+    stopPartialLoop,
+    vadSupported,
+  ]);
 
   // Natural inter-sentence pause (the "breathing" cadence). Humans do NOT
   // pause the same length after every sentence — uniform gaps are exactly
@@ -723,16 +810,32 @@ export function useVoiceAgent({
     el.onended = () => {
       // Vary the gap by sentence type — one continuous speaker with natural
       // rhythm, never a clipped machine-gun of clips. While the reply is
-      // STILL TALKING (more sentences queued), breathe during the gap — a
-      // soft synthesized inhale, skipped ~1 in 4 so it stays organic. Never
-      // after the last sentence: trailing silence belongs to the caller,
-      // not the AI.
+      // STILL TALKING (more sentences queued), insert a natural pause:
+      //   - Filler sounds ("hmm", "uhh") simulate thinking between sentences
+      //   - Breath sounds simulate natural inhales
+      //   - ~35% of gaps are completely silent (varied, never mechanical)
+      // Never after the last sentence: trailing silence belongs to the caller.
       const gap = pauseAfterSentence(next.text);
-      if (audioQueueRef.current.length > 0 && Math.random() > 0.25) {
-        playBreath({
-          durationMs: gap,
-          intensity: breathIntensity(next.text),
-        });
+      const sentenceIndex = audioQueueRef.current.length;
+      const hasMore = audioQueueRef.current.length > 0;
+      if (hasMore) {
+        // 65% chance of an audio cue (filler or breath), 35% silent
+        if (Math.random() < 0.65) {
+          const isFirstSentence = sentenceIndex >= (audioQueueRef.current.length);
+          if (shouldInsertFiller(next.text, isFirstSentence, sentenceIndex)) {
+            // Vocalized hesitation: "hmm...", "uhh..."
+            playFiller({
+              context: next.text.endsWith("?") ? "acknowledging" : "thinking",
+              language: detectedLanguage,
+            });
+          } else {
+            // Soft breath between sentences
+            playBreath({
+              durationMs: gap,
+              intensity: breathIntensity(next.text),
+            });
+          }
+        }
       }
       setTimeout(() => playNextInQueue(), gap);
     };
@@ -881,7 +984,7 @@ export function useVoiceAgent({
 
   // ── Barge-in (recognition-fallback path): user talks while AI is speaking
   //    → stop TTS, queue speech. (The VAD path uses pauseAudioQueue + semantic
-  //    classification instead — see handleVadSpeechStart/transcribeBlob.)
+  //    classification instead — see handleVadSpeechStart/finalizeTurn.)
   const handleBargeIn = useCallback(
     (text: string) => {
       // Semantic gate (spec §50): a pure backchannel is NOT a barge-in — the
@@ -914,6 +1017,9 @@ export function useVoiceAgent({
     async (text: string) => {
       const normalized = normalizeTranscript(text);
       if (!normalized) return;
+      // Stop any live voice-capture timers — this turn is now official.
+      stopPartialLoop();
+      clearFinalizeTimer();
       // State machine gate (spec §2): a NEW turn may only start from
       // LISTENING / USER_SPEAKING / INTERRUPTED. Never while processing or
       // while the AI is mid-sentence (a barge-in first moves to INTERRUPTED).
@@ -957,6 +1063,9 @@ export function useVoiceAgent({
       }
       lastProcessedRef.current = normalized;
       recentTranscriptsRef.current.push({ norm: normalized, at: now });
+      // Every utterance gets a unique id (spec §35) + counts toward analytics.
+      utteranceIdRef.current++;
+      bumpStats({ utterances: utteranceIdRef.current });
       processingRef.current = true;
       setIsProcessing(true);
       clearSilenceTimer();
@@ -1093,6 +1202,8 @@ export function useVoiceAgent({
       }
     },
     [
+      bumpStats,
+      clearFinalizeTimer,
       instituteId,
       knowledgeFile,
       mode,
@@ -1101,6 +1212,7 @@ export function useVoiceAgent({
       stopListening,
       stopAudioQueue,
       clearSilenceTimer,
+      stopPartialLoop,
       streamConversation,
     ]
   );
@@ -1109,73 +1221,40 @@ export function useVoiceAgent({
   const submitSpeechRef = useRef(submitSpeech);
   submitSpeechRef.current = submitSpeech;
 
-  // ── Real-time VAD → MediaRecorder → Whisper STT ──────────────────────────
-  // When the VAD catches speech, a recording starts; when the caller pauses,
-  // the recording is sent to /api/conversation/transcribe (Whisper auto-
-  // detects the language) and the transcript feeds the SAME pipeline as typed
-  // input. This is the fix for "not listening": it detects ANY voice.
-  const startRecording = useCallback(() => {
-    const stream = vadRef.current?.stream;
-    // NOTE: transcribingRef deliberately NOT checked — a caller who speaks
-    // while the previous utterance is being transcribed must still be heard
-    // (the blob is queued and processed when STT frees up).
-    if (!stream || recorderRef.current) return;
-    try {
-      const mime =
-        MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-          ? "audio/webm;codecs=opus"
-          : MediaRecorder.isTypeSupported("audio/webm")
-          ? "audio/webm"
-          : "audio/mp4";
-      const rec = new MediaRecorder(stream, { mimeType: mime });
-      recChunksRef.current = [];
-      rec.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) recChunksRef.current.push(e.data);
-      };
-      rec.onstop = () => {
-        recorderRef.current = null;
-        const blob = new Blob(recChunksRef.current, {
-          type: rec.mimeType || "audio/webm",
-        });
-        recChunksRef.current = [];
-        // VAD confidence gate (spec §20): only recordings with ≥ MIN_SPEECH_MS
-        // of GENUINE speech energy are sent to Whisper — a sub-speech blip
-        // (cough, click, keyboard) or near-silence is NEVER transcribed, so
-        // silence can never hallucinate a "Thank you".
-        const activeMs = recSpeechMsRef.current;
-        if (blob.size > 200 && activeMs >= MIN_SPEECH_MS) {
-          transcribeBlobRef.current(blob);
-        } else {
-          // Too short / empty → not speech. If this was a barge-in attempt,
-          // let Mrs. D continue where she paused.
-          if (bargeInPausedRef.current) resumeAudioQueueRef.current();
-        }
-      };
-      recorderRef.current = rec;
-      rec.start();
-    } catch (e) {
-      console.error("MediaRecorder start failed:", e);
-    }
-  }, []);
-
-  const stopRecording = useCallback(() => {
-    const rec = recorderRef.current;
-    if (rec && rec.state !== "inactive") {
-      // Snapshot the genuine-speech duration NOW — onstop fires asynchronously
-      // and a fast second utterance could otherwise overwrite it before the
-      // gate reads it (per-recording capture, not shared state).
-      recSpeechMsRef.current = activeSpeechMsRef.current;
-      try {
-        rec.stop();
-      } catch {
-        /* already stopped */
-      }
-    }
-  }, []);
-
-  // Forward ref so the recorder's onstop (defined above resumeAudioQueue) can
-  // resume the AI after a too-short barge-in attempt.
+  // Forward ref so finalizeTurn (defined after resumeAudioQueue) can resume
+  // the AI after a backchannel / too-short barge-in attempt.
   const resumeAudioQueueRef = useRef<() => void>(() => {});
+
+  // ── Capture: start the current turn's PCM window (one continuous stream) ──
+  // The detector's 16 kHz window grows from the caller's FIRST speech onset
+  // until finalize — mid-thought pauses merge into the same window (spec §8).
+  const ensureCapture = useCallback(() => {
+    if (captureActiveRef.current) return;
+    captureActiveRef.current = true;
+    turnSpeechMsRef.current = 0;
+    // Fresh window: any stale audio (e.g. the AI's trailing voice) is gone.
+    vadRef.current?.reset();
+  }, []);
+
+  // How long to wait after speech END before finalizing the turn. Scales with
+  // how much the caller has said: a one-word "Avunu" is brisk, a long detailed
+  // thought gets real patience (humans pause mid-sentence, spec §8/§40).
+  const adaptiveMergeSilence = useCallback((): number => {
+    const spoken = turnSpeechMsRef.current;
+    let base = 650;  // Faster base: 600-700ms target TTFA
+    if (spoken > 4000) base = 1000;
+    else if (spoken > 1800) base = 800;
+    else if (spoken > 800) base = 700;
+    const jitter = 0.9 + Math.random() * 0.2;
+    return Math.min(Math.max(base * jitter, 450), 1800);
+  }, []);
+
+  const armFinalizeTimer = useCallback(() => {
+    clearFinalizeTimer();
+    finalizeTimerRef.current = setTimeout(() => {
+      void finalizeTurnRef.current();
+    }, adaptiveMergeSilence());
+  }, [adaptiveMergeSilence, clearFinalizeTimer]);
 
   // ── VAD speech events ─────────────────────────────────────────────────────
   // Speech START (spec §5, §6, §7): while Mrs. D is talking this is a POTENTIAL
@@ -1186,56 +1265,59 @@ export function useVoiceAgent({
   const handleVadSpeechStart = useCallback(() => {
     const fsm = fsmRef.current;
     if (endedRef.current) return;
-    // Post-TTS grace: ignore anything within ~450ms of the AI finishing —
-    // the AI's own trailing audio in the mic must never start a recording.
-    if (Date.now() - aiFinishedAtRef.current < 450) {
-      vadRef.current?.reset();
-      return;
-    }
+    // Post-TTS grace: ignore anything within ~350ms of the AI finishing —
+    // the AI's own trailing audio in the mic must never start a capture.
+    if (Date.now() - aiFinishedAtRef.current < 350) return;
     if (fsm === "ai_speaking" || fsm === "processing") {
       // Barge-in cooldown: ignore audio during the first ~400ms of a sentence
       // so the AI's own voice (or echo) can never trigger an interruption.
       if (
         fsm === "ai_speaking" &&
-        Date.now() - aiSpeakStartedAtRef.current < 400
+        Date.now() - aiSpeakStartedAtRef.current < 300
       ) {
-        vadRef.current?.reset();
         return;
       }
+      // The caller resumed during a pause — keep merging, don't finalize.
+      clearFinalizeTimer();
       // INTERRUPTED: pause Mrs. D immediately (fast stop), hold her queue,
       // cancel the stream only at classification — a backchannel must let
       // her continue. (Interrupting during THINKING cancels nothing yet;
-      // classifyBargeIn will discard the unplayed LLM output.)
+      // the partial/final classification will discard unplayed LLM output.)
       pauseAudioQueue();
       processingRef.current = false;
       setIsProcessing(false);
       setFsm("interrupted");
-      // INTERRUPTED → capture the caller's speech (barge-in candidate).
       setIsUserSpeaking(true);
-      startRecording();
+      ensureCapture();
+      startPartialLoopRef.current();
       return;
     }
-    if (fsm === "listening") {
-      // LISTENING → USER_SPEAKING: real speech detected, capture it.
-      setFsm("user_speaking");
+    if (fsm === "listening" || fsm === "user_speaking" || fsm === "interrupted") {
+      // User resumed mid-thought → cancel the finalize timer, keep the SAME
+      // PCM window (one merged turn, spec §40). While INTERRUPTED the AI
+      // stays paused until the transcript classifies this as backchannel
+      // (resume) or a genuine question (process).
+      clearFinalizeTimer();
+      if (fsm === "listening") setFsm("user_speaking");
       setIsUserSpeaking(true);
-      startRecording();
+      ensureCapture();
+      startPartialLoopRef.current();
     }
-  }, [pauseAudioQueue, setFsm, startRecording]);
+  }, [clearFinalizeTimer, ensureCapture, pauseAudioQueue, setFsm]);
 
   const handleVadSpeechEnd = useCallback(() => {
-    // Capture how much REAL speech this segment contained BEFORE the VAD
-    // resets its counter (it resets right after firing onSpeechEnd).
-    activeSpeechMsRef.current = vadRef.current?.activeSpeechMs ?? 0;
+    // Accumulate genuine ML-detected speech for the CURRENT merged turn
+    // (the detector resets its own counter right after this callback).
+    turnSpeechMsRef.current += vadRef.current?.activeSpeechMs ?? 0;
     setIsUserSpeaking(false);
     // Frontend TTFA (spec §27) starts at the user's LAST WORD (speech end),
     // not at LLM submission — the perceived latency the caller feels.
     ttfaStartRef.current = Date.now();
-    // USER_SPEAKING/INTERRUPTED → back to LISTENING: the caller yielded; the
-    // transcript (if any) decides what happens next.
+    // USER_SPEAKING/INTERRUPTED → the caller yielded. Do NOT finalize yet:
+    // arm the adaptive merge grace so a mid-thought pause isn't cut off.
     if (fsmRef.current === "user_speaking") setFsm("listening");
-    stopRecording();
-  }, [setFsm, stopRecording]);
+    if (captureActiveRef.current) armFinalizeTimer();
+  }, [armFinalizeTimer, setFsm]);
 
   // Keep the detector's callbacks pointed at the LATEST closures.
   handleVadStartRef.current = handleVadSpeechStart;
@@ -1257,25 +1339,31 @@ export function useVoiceAgent({
     return false;
   }, [setFsm, stopAudioQueue, stopStreaming]);
 
-  // Transcribe an utterance blob → validate → feed the pipeline.
-  // The ONLY path where recorded speech becomes a user turn; every phantom
-  // (noise, backchannel, echo, duplicate, silence) is dropped right here.
-  const transcribeBlob = useCallback(
-    async (blob: Blob) => {
-      if (endedRef.current) return;
-      // One STT request at a time: if a previous utterance is still being
-      // transcribed, queue this one (in order) instead of dropping it — the
-      // caller's words are never lost just because Whisper is busy.
+  // ── ONE STT call site (partial + final), with a shared in-flight lock ────
+  // The 16 kHz PCM window is encoded as WAV and posted to the existing
+  // /api/conversation/transcribe endpoint (Groq Whisper, auto language).
+  //   - A partial that finds the lock busy is DROPPED (best-effort, spec §7).
+  //   - A final that finds the lock busy marks finalizeQueued — the in-flight
+  //     request re-runs finalizeTurn when it finishes, so the final ALWAYS
+  //     sees the complete utterance window (never a stale partial).
+  const requestTranscription = useCallback(
+    async (
+      samples: Float32Array,
+      kind: "partial" | "final"
+    ): Promise<{ text: string; language?: string } | null> => {
       if (transcribingRef.current) {
-        pendingBlobsRef.current.push(blob);
-        return;
+        if (kind === "final") finalizeQueuedRef.current = true;
+        return null;
       }
       transcribingRef.current = true;
       try {
+        const wav = encodeWavPcm16(samples, 16000);
         const form = new FormData();
-        form.append("audio", blob, "utterance.webm");
-        // Timeout guard: a hung STT backend must never wedge the input
-        // pipeline (spec §63: STT failures recover to LISTENING).
+        form.append(
+          "audio",
+          new Blob([wav], { type: "audio/wav" }),
+          "utterance.wav"
+        );
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), STT_TIMEOUT_MS);
         let res: Response;
@@ -1290,114 +1378,276 @@ export function useVoiceAgent({
         }
         if (!res.ok) throw new Error(`STT ${res.status}`);
         const data = await res.json();
-        const text = (data.text || "").trim();
-
-        // ── VALIDATION GATES ──────────────────────────────────────────────
-        // 1) Empty transcript → nothing to say. Silence does nothing.
-        if (!text) {
-          resumeAudioQueueRef.current();
-          return;
-        }
-        // 2) Noise (single char, repeated char, known non-speech tokens).
-        if (isNoiseUtterance(text)) {
-          console.log("[VoiceAgent] STT noise dropped:", text);
-          resumeAudioQueueRef.current();
-          return;
-        }
-        // 3) Echo of Mrs. D's own last words (spec §48) — Whisper heard HER.
-        if (isEchoOfLastAI(text, lastAITextRef.current)) {
-          console.log("[VoiceAgent] STT echo of AI dropped:", text);
-          resumeAudioQueueRef.current();
-          return;
-        }
-        // 4) Duplicate within the window (stale buffer / double STT fire).
-        const norm = normalizeTranscript(text);
-        const now = Date.now();
-        recentTranscriptsRef.current = recentTranscriptsRef.current.filter(
-          (t) => now - t.at < DUPLICATE_WINDOW_MS
-        );
-        if (recentTranscriptsRef.current.some((t) => t.norm === norm)) {
-          console.log("[VoiceAgent] STT duplicate dropped:", text);
-          resumeAudioQueueRef.current();
-          return;
-        }
-        // 5) Backchannel ("haa", "okay", "hmm", "avunu"...) — if the AI was
-        //    paused for this, she CONTINUES; never sent to the LLM.
-        if (isBackchannelUtterance(text)) {
-          console.log("[VoiceAgent] STT backchannel dropped:", text);
-          resumeAudioQueueRef.current();
-          return;
-        }
-
-        // Genuine utterance: if this started as a barge-in, discard the held
-        // AI queue + cancel her stream NOW (spec §7: fast, complete stop).
-        classifyBargeIn();
-
-        // Stable language (spec §18): majority of recent detections.
-        const langName = LANG_CODE_TO_NAME[data.language] || "English";
-        const { lang, history } = stableLanguage(
-          langName,
-          langHistoryRef.current
-        );
-        langHistoryRef.current = history;
-        setDetectedLanguage(lang);
-        submitSpeechRef.current(text);
+        return { text: (data.text || "").trim(), language: data.language };
       } catch (e) {
-        console.error("Transcription failed:", e);
-        // STT failure is NOT a user turn — resume a paused AI, stay silent
-        // otherwise (spec §63: never fake a transcript, never send empty text).
-        resumeAudioQueueRef.current();
+        console.error(`[VoiceAgent] STT ${kind} failed:`, e);
+        return null;
       } finally {
         transcribingRef.current = false;
-        // Transcribe the next queued utterance (if any) — never lose speech
-        // captured while the previous STT request was in flight.
-        const next = pendingBlobsRef.current.shift();
-        if (next && !endedRef.current) {
-          transcribeBlobRef.current(next);
+        // A finalize arrived while this request was in flight — re-run it now
+        // that the lock is free (the window has the complete utterance).
+        if (finalizeQueuedRef.current && !endedRef.current) {
+          finalizeQueuedRef.current = false;
+          void finalizeTurnRef.current();
         }
       }
     },
-    [classifyBargeIn]
+    []
   );
-  transcribeBlobRef.current = transcribeBlob;
+
+  // ── Live partial transcript (streaming STT feel, spec §7) ────────────────
+  // Partials update the UI as the caller speaks ("naku... naku mee college...")
+  // and — while the AI is paused for a barge-in — classify the interruption
+  // EARLY from the partial text: a genuine question stops Mrs. D immediately
+  // (spec §9); a backchannel/echo keeps her paused until finalize resumes her.
+  // Partials are NEVER sent to the LLM (spec §7).
+  const handlePartialText = useCallback(
+    (text: string, lang?: string) => {
+      void lang;
+      const norm = normalizeTranscript(text);
+      lastPartialRef.current = { text, norm, at: Date.now() };
+      setPartialTranscript(text);
+      setInputText(text);
+      partialCountRef.current++;
+      bumpStats({ partials: partialCountRef.current });
+
+      // Echo suppression (spec §5): while Mrs. D's audio is paused for a
+      // possible barge-in, a partial that is purely her own words is HER
+      // voice through the mic — not the caller taking the floor.
+      if (bargeInPausedRef.current) {
+        if (
+          isNoiseUtterance(text) ||
+          isBackchannelUtterance(text) ||
+          isEchoOfLastAI(text, lastAITextRef.current)
+        ) {
+          return; // finalize will resume Mrs. D
+        }
+        // GENUINE interruption — stop her NOW (spec §9: do not finish the
+        // sentence, do not keep the old stream/queue).
+        bargeInCountRef.current++;
+        bumpStats({ bargeIns: bargeInCountRef.current });
+        stopStreaming();
+        stopAudioQueue();
+        setFsm("listening");
+      }
+    },
+    [bumpStats, setFsm, stopAudioQueue, stopStreaming]
+  );
+
+  // ── Streaming-STT partial loop (best-effort cadence) ─────────────────────
+  const PARTIAL_INTERVAL_MS = 2500; // min NEW speech between partial requests (faster feedback)
+  const PARTIAL_TICK_MS = 700;
+  const startPartialLoop = useCallback(() => {
+    if (partialTimerRef.current) return;
+    const tick = () => {
+      partialTimerRef.current = null;
+      if (endedRef.current || !captureActiveRef.current) return;
+      const vad = vadRef.current;
+      if (!vad) return;
+      const window = vad.getPcmWindow();
+      // Only worthwhile once real speech has accumulated AND enough NEW speech
+      // arrived since the last partial (rate-limit friendly: ~1 partial per
+      // 3.5s of talking on the free Groq tier).
+      if (
+        window.length >= MIN_SPEECH_SAMPLES &&
+        Date.now() - (lastPartialRef.current?.at || 0) >= PARTIAL_INTERVAL_MS &&
+        !transcribingRef.current
+      ) {
+        void requestTranscription(vad.getPcmWindow(), "partial").then((r) => {
+          if (r && r.text) handlePartialText(r.text, r.language);
+        });
+      }
+      partialTimerRef.current = setTimeout(tick, PARTIAL_TICK_MS);
+    };
+    partialTimerRef.current = setTimeout(tick, PARTIAL_TICK_MS);
+  }, [requestTranscription, handlePartialText]);
+  const startPartialLoopRef = useRef(startPartialLoop);
+  startPartialLoopRef.current = startPartialLoop;
+
+  // ── Finalize the merged utterance (speech end + adaptive grace) ───────────
+  // The ONLY path where recorded speech becomes a user turn; every phantom
+  // (noise, backchannel, echo, duplicate, silence) is dropped right here.
+  const finalizeTurn = useCallback(async () => {
+    if (endedRef.current) return;
+    clearFinalizeTimer();
+    stopPartialLoop();
+    const vad = vadRef.current;
+    if (!vad) return;
+    const fsm = fsmRef.current;
+    // Never finalize while the AI is mid-speech or mid-thought — a barge-in
+    // that is still being classified owns this window. Retry shortly.
+    if (fsm === "ai_speaking" || fsm === "processing") {
+      armFinalizeTimer();
+      return;
+    }
+    if (finalizingRef.current) return;
+    finalizingRef.current = true;
+    try {
+      // Snapshot the utterance window ONCE. A queued retry (STT was busy)
+      // consumes the SAME parked snapshot — the final can never be truncated
+      // by a mid-request clear.
+      const window = finalizeWindowRef.current ?? vad.getPcmWindow();
+      // Read the fresh-partial BEFORE clearing (the fast path reuses it).
+      const lastPartial = lastPartialRef.current;
+      if (!window.length) {
+        finalizeWindowRef.current = null;
+        return;
+      }
+      finalizeWindowRef.current = null;
+      // Free the window + flags NOW (single-shot per turn) — but only after
+      // the snapshot, so the final always sees the complete utterance.
+      captureActiveRef.current = false;
+      vad.reset();
+      setPartialTranscript("");
+      setInputText("");
+      lastPartialRef.current = null;
+
+      // Minimum genuine speech (200ms) — silence / sub-speech blips produce
+      // NO transcript, NO LLM call, NO audio (spec §37).
+      if (
+        window.length < MIN_SPEECH_SAMPLES ||
+        turnSpeechMsRef.current < MIN_SPEECH_MS
+      ) {
+        turnSpeechMsRef.current = 0;
+        resumeAudioQueueRef.current(); // backchannel/noise → Mrs. D continues
+        return;
+      }
+      turnSpeechMsRef.current = 0;
+
+      // Fresh partial within the last 1.5s? Reuse it (no wasted Whisper call).
+      let text = "";
+      let lang: string | undefined;
+      if (lastPartial && Date.now() - lastPartial.at < 1500) {
+        text = lastPartial.text;
+      } else {
+        // STT is busy with a partial — park the window and let the in-flight
+        // request re-run us when the lock frees (never drop the utterance).
+        if (transcribingRef.current) {
+          finalizeWindowRef.current = window;
+          finalizeQueuedRef.current = true;
+          return;
+        }
+        const r = await requestTranscription(window, "final");
+        if (!r || !r.text) {
+          // STT failure is NOT a user turn — resume a paused AI, stay silent
+          // otherwise (spec §47: never fake a transcript).
+          resumeAudioQueueRef.current();
+          return;
+        }
+        text = r.text;
+        lang = r.language;
+        // The final differed from the last partial → STT correction (spec §34).
+        if (lastPartial && lastPartial.norm !== normalizeTranscript(text)) {
+          sttCorrectionsRef.current++;
+          bumpStats({ corrections: sttCorrectionsRef.current });
+        }
+      }
+
+      // ── VALIDATION GATES (defense in depth — Silero already filtered) ────
+      if (!text) {
+        resumeAudioQueueRef.current();
+        return;
+      }
+      if (isNoiseUtterance(text)) {
+        falseDetectionRef.current++;
+        bumpStats({ falseDetections: falseDetectionRef.current });
+        console.log("[VoiceAgent] STT noise dropped:", text);
+        resumeAudioQueueRef.current();
+        return;
+      }
+      if (isEchoOfLastAI(text, lastAITextRef.current)) {
+        falseDetectionRef.current++;
+        bumpStats({ falseDetections: falseDetectionRef.current });
+        console.log("[VoiceAgent] STT echo of AI dropped:", text);
+        resumeAudioQueueRef.current();
+        return;
+      }
+      // Duplicate within the window (stale buffer / double STT fire).
+      const norm = normalizeTranscript(text);
+      const now = Date.now();
+      recentTranscriptsRef.current = recentTranscriptsRef.current.filter(
+        (t) => now - t.at < DUPLICATE_WINDOW_MS
+      );
+      if (recentTranscriptsRef.current.some((t) => t.norm === norm)) {
+        falseDetectionRef.current++;
+        bumpStats({ falseDetections: falseDetectionRef.current });
+        console.log("[VoiceAgent] STT duplicate dropped:", text);
+        resumeAudioQueueRef.current();
+        return;
+      }
+      if (isBackchannelUtterance(text)) {
+        falseDetectionRef.current++;
+        bumpStats({ falseDetections: falseDetectionRef.current });
+        console.log("[VoiceAgent] STT backchannel dropped:", text);
+        resumeAudioQueueRef.current();
+        return;
+      }
+
+      // Genuine utterance: if this started as a barge-in, discard the held AI
+      // queue + cancel her stream NOW (spec §7: fast, complete stop).
+      classifyBargeIn();
+
+      // Stable language (spec §18): majority of recent detections — a lone
+      // noisy partial must never flip the conversation language.
+      const langName = LANG_CODE_TO_NAME[lang as string] || detectLanguage(text);
+      const { lang: stable, history } = stableLanguage(
+        langName,
+        langHistoryRef.current
+      );
+      langHistoryRef.current = history;
+      setDetectedLanguage(stable);
+      submitSpeechRef.current(text);
+    } finally {
+      // The queued retry is owned by requestTranscription's finally (it fires
+      // only when the STT lock actually frees) — re-running from here would
+      // busy-loop while the lock is still held.
+      finalizingRef.current = false;
+    }
+  }, [
+    armFinalizeTimer,
+    bumpStats,
+    classifyBargeIn,
+    clearFinalizeTimer,
+    requestTranscription,
+    stopPartialLoop,
+  ]);
+  const finalizeTurnRef = useRef(finalizeTurn);
+  finalizeTurnRef.current = finalizeTurn;
 
   // ── Input setup (once per mount) ──────────────────────────────────────────
   useEffect(() => {
-    // Real-time VAD is the PRIMARY input: raw mic energy detects ANY voice in
-    // ANY language, utterances are recorded and transcribed by Whisper. Only
-    // fall back to the browser speech API when Web Audio VAD can't run.
+    // Real-time VAD is the PRIMARY input: Silero ML speech detection (a neural
+    // speech probability per frame) catches ANY human voice in ANY language
+    // while ignoring fans, keyboards, coughs and the AI's own echo. The
+    // utterance is captured into a 16 kHz PCM window and transcribed by Groq
+    // Whisper (auto language). Only fall back to the browser speech API when
+    // the Silero pipeline can't run.
     if (vadSupported) {
       const vad = new VoiceActivityDetector(
         {
-          silenceMs: Math.min(Math.max(silenceTimeoutMs * 0.7, 900), 1600),
+          // ML end-of-speech patience: ~850ms of below-threshold audio ends a
+          // segment. Shorter = faster TTFA (target 600-700ms). The hook's
+          // adaptive merge grace extends it for long thoughts.
+          redemptionMs: 850,
+          minSpeechMs: 300,
+          preSpeechPadMs: 400,
+          positiveThreshold: 0.3,
+          negativeThreshold: 0.25,
           buckets: 48,
         },
         {
           onSpeechStart: () => handleVadStartRef.current(),
           onSpeechEnd: () => handleVadEndRef.current(),
+          // Too-short segment (cough/click/fan): the ML already judged it
+          // noise — nothing is transcribed. If Mrs. D was paused for a
+          // possible barge-in, let her continue. NEVER touch the current
+          // merge window: a real utterance may still be in progress.
+          onVADMisfire: () => {
+            setIsUserSpeaking(false);
+            resumeAudioQueueRef.current();
+          },
         }
       );
-      // While Mrs. D is speaking, the mic hears her own voice too — raise the
-      // effective threshold so only the CALLER's voice (louder than the AI)
-      // can trigger a barge-in.
-      vad.dynamicThreshold = () => {
-        if (stageRef.current === "speaking") {
-          return Math.max(0.03, aiRmsRef.current * 1.2 + 0.02);
-        }
-        return 0;
-      };
-      // Adaptive end-of-turn silence (spec §23): humans pause mid-sentence,
-      // so the wait before "speech ended" scales with how long the caller has
-      // been talking — a one-word "Avunu" yields fast, a long thought gets
-      // patience. Never so short the caller is cut off mid-word.
-      vad.dynamicSilenceMs = () => {
-        const spoken = vad.activeSpeechMs;
-        let scale = 1;
-        if (spoken < 600) scale = 0.75; // brisk: short ack / quick question
-        else if (spoken > 4000) scale = 1.5; // patient: long detailed answer
-        else if (spoken > 1800) scale = 1.2; // mid-length thought
-        return Math.min(Math.max(silenceTimeoutMs * 0.7 * scale, 800), 2600);
-      };
       vadRef.current = vad;
       micLevelsRef.current = vad.levels;
       return () => {
@@ -1465,7 +1715,7 @@ export function useVoiceAgent({
       // Post-TTS grace window: ignore any final transcript arriving right
       // after the AI stopped speaking (echo/trailing audio) — real new speech
       // will arrive a moment later and be captured by the fresh session.
-      if (Date.now() - aiFinishedAtRef.current < 450) {
+      if (Date.now() - aiFinishedAtRef.current < 350) {
         return;
       }
 
@@ -1604,6 +1854,24 @@ export function useVoiceAgent({
     lastProcessedRef.current = "";
     recentTranscriptsRef.current = [];
     langHistoryRef.current = [];
+    // Fresh session analytics (spec §34).
+    partialCountRef.current = 0;
+    bargeInCountRef.current = 0;
+    falseDetectionRef.current = 0;
+    sttCorrectionsRef.current = 0;
+    utteranceIdRef.current = 0;
+    setVoiceStats({
+      partials: 0,
+      bargeIns: 0,
+      falseDetections: 0,
+      corrections: 0,
+      utterances: 0,
+    });
+    setPartialTranscript("");
+    captureActiveRef.current = false;
+    lastPartialRef.current = null;
+    stopPartialLoop();
+    clearFinalizeTimer();
     setFsm("connecting");
 
     try {
@@ -1675,11 +1943,13 @@ export function useVoiceAgent({
       setFsm("error");
     }
   }, [
+    clearFinalizeTimer,
     detectedLanguage,
     instituteId,
     knowledgeFile,
     mode,
     setFsm,
+    stopPartialLoop,
     streamConversation,
   ]);
 
@@ -1707,6 +1977,10 @@ export function useVoiceAgent({
     stopListening();
     stopAudioQueue();
     stopStreaming();
+    stopPartialLoop();
+    clearFinalizeTimer();
+    captureActiveRef.current = false;
+    setPartialTranscript("");
     processingRef.current = false;
     pendingTranscriptRef.current = "";
     setMessages([]);
@@ -1722,10 +1996,19 @@ export function useVoiceAgent({
       /* ignore */
     }
     onEnded?.();
-  }, [onEnded, setFsm, stopListening, stopAudioQueue, stopStreaming]);
+  }, [
+    clearFinalizeTimer,
+    onEnded,
+    setFsm,
+    stopListening,
+    stopAudioQueue,
+    stopPartialLoop,
+    stopStreaming,
+  ]);
 
   return {
     callStage,
+    fsmState,
     messages,
     inputText,
     setInputText,
@@ -1747,6 +2030,8 @@ export function useVoiceAgent({
     // Real-time voice UX
     vadSupported,
     isUserSpeaking,
+    partialTranscript,
+    voiceStats,
     micLevelsRef, // live caller waveform (0..1 per bar)
     aiLevelsRef, // live Mrs. D waveform (0..1 per bar)
   };

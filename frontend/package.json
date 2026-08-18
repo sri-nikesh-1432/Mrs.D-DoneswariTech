@@ -9,6 +9,7 @@
     "preview": "vite preview --port 5176"
   },
   "dependencies": {
+    "@ricky0123/vad-web": "^0.0.29",
     "@tanstack/react-query": "^5.0.0",
     "@tanstack/react-table": "^8.0.0",
     "axios": "^1.6.0",

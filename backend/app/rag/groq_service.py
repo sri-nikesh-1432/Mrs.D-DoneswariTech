@@ -25,7 +25,7 @@ def _model_chain() -> list:
     for m in models:
         if m and m not in seen:
             seen.append(m)
-    return seen or ["llama-3.3-70b-versatile"]
+    return seen or ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
 
 
 def _is_rate_limit(e: Exception) -> bool:

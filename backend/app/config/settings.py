@@ -41,7 +41,7 @@ class Settings(BaseSettings):
         # Only models VALID on this tier (verified via models.list). A dead
         # model in the chain would raise a 400 that kills the call — never
         # worse than the 429 it exists to recover from.
-        default=["llama-3.1-8b-instant"],
+        default=["llama-3.1-8b-instant", "gemma2-9b-it"],
         env="GROQ_FALLBACK_MODELS",
     )
     

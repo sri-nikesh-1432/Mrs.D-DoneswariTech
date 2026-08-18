@@ -27,3 +27,11 @@
 ## Tests
 - [x] Add tests for Roman Telugu detection + number normalization
 - [x] Run pytest and verify (43 passed)
+
+## Realtime pipeline rebuild (true streaming, ML VAD)
+- [x] `frontend/public/vad/` - Silero VAD v5 model + worklet + onnxruntime wasm (local, no CDN)
+- [x] `frontend/src/lib/vad.ts` - replace energy/RMS VAD with Silero ML VAD (neural speech probability; fan/keyboard/cough/echo can never start a turn). Same public interface + 16 kHz PCM window + `setAISpeaking()` threshold lift while Mrs. D talks
+- [x] `frontend/src/lib/wav.ts` - PCM16 WAV encoder (no MediaRecorder round-trip)
+- [x] `frontend/src/hooks/useVoiceAgent.ts` - merged-utterance turn detection (mid-thought pauses stay ONE turn), streaming STT partials (live "naku... naku mee..." text, never sent to LLM), partial-based semantic barge-in (genuine question stops Mrs. D immediately; backchannel resumes her), PCM-window finalize with STT-lock parking (never drops an utterance), echo suppression on partials, spec §34 analytics counters (partials/barge-ins/false detections/corrections/turns) + `fsmState`/`partialTranscript` exposure
+- [x] `frontend/src/components/VoiceTestingConsole.tsx` - live partial transcript + Voice engine analytics panel
+- [x] Verify: tsc + vite build green; backend pytest 43 passed; /vad assets served; headless Chrome (fake mic) reaches LISTENING with zero console errors and zero phantom STT calls

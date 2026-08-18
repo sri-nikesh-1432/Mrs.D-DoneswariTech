@@ -306,8 +306,11 @@ class EdgeTTSService:
         """
         Return (rate, pitch, volume) for a single sentence so the whole reply
         does not sound equally timed and pitched — the heart of the "human
-        engine". The deltas are tiny but real: identical prosody on every
-        sentence is exactly what reads as robotic.
+        engine". The deltas create real prosodic variation:
+          - Questions slow slightly + pitch rise (real question intonation)
+          - Short acks are brisk + higher pitch ("సరే, ...")
+          - Long info is calm + slightly quieter (clear, unhurried)
+          - Each sentence gets organic jitter so no two are identical
         """
         base_rate = self._parse_pct(self._BASE_RATE)
         base_pitch = self._parse_hz(self._BASE_PITCH)
@@ -318,25 +321,42 @@ class EdgeTTSService:
         pitch_delta = 0
         volume_delta = 0
 
+        # ── Sentence type modifiers ──
         if s.endswith("?"):
-            pitch_delta += 3          # gentle question rise
+            pitch_delta += 4          # question rise — sounds like a question
+            rate_delta -= 1           # slightly slower for clarity
         elif s.endswith("!"):
-            pitch_delta += 2          # gentle emphasis
-            volume_delta += 4
+            pitch_delta += 3          # emphasis
+            volume_delta += 5         # a touch louder
+        elif s.endswith("..."):
+            # Thought trailing off — slower, softer, lower pitch
+            rate_delta -= 3
+            pitch_delta -= 2
+            volume_delta -= 4
 
+        # ── Length modifiers ──
         length = len(s)
         if length < 20:
-            rate_delta += 3           # short, brisk acknowledgement
+            rate_delta += 4           # short, brisk acknowledgement
+            pitch_delta += 1          # slightly higher (warmth)
         elif length > 130:
             rate_delta -= 2           # long sentence: calm, clear
-            volume_delta -= 3         # ...and a touch quieter (intimate)
+            volume_delta -= 3         # a touch quieter (intimate)
+        elif length > 80:
+            rate_delta -= 1           # mid-length: slightly slower for clarity
 
-        # ±2 organic jitter so no two sentences are voiced identically —
-        # applying the same per-type deltas every time is exactly what makes
-        # TTS sound mechanical. Tiny, but real.
-        rate_delta += random.randint(-2, 2)
-        pitch_delta += random.randint(-1, 1)
-        volume_delta += random.randint(-1, 1)
+        # ── Content-aware tweaks ──
+        # Fillers at the start of a sentence ("Hmm...", "సరే...") are slower
+        if s.lower().startswith(("hmm", "సరే", "okay", "well", "sure")):
+            rate_delta -= 2           # natural thinking pace
+            pitch_delta -= 1          # slightly lower (thinking)
+
+        # ── Organic jitter (±3 rate, ±2 pitch, ±2 volume) ──
+        # Wider jitter than before — real people never say two sentences
+        # with identical prosody. The variation is what makes it feel alive.
+        rate_delta += random.randint(-3, 3)
+        pitch_delta += random.randint(-2, 2)
+        volume_delta += random.randint(-2, 2)
 
         rate = base_rate + rate_delta
         pitch = base_pitch + pitch_delta
