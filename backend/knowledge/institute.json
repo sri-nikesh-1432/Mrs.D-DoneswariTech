@@ -1,5 +1,8 @@
 {
   "institute_name": "Narayana Junior College",
+  "campus_name": "Narayana IIT Olympiad School, Jubilee Hills",
+  "board": "CBSE",
+  "school_type": "Day Boarding School (Co-Ed)",
   "greeting": "Hi! I'm Mrs.D, AI Admission Counsellor of Narayana Junior College. How may I help you today?",
   "greetings": {
     "English": "Hi! I'm Mrs.D, AI Admission Counsellor of Narayana Junior College. How may I help you today?",
@@ -11,44 +14,92 @@
   },
   "knowledge": [
     {
-      "category": "Admissions",
-      "content": "Admissions are open for 2026 academic year. Students can apply for MPC, BiPC, and MEC streams."
+      "category": "About",
+      "content": "Narayana IIT Olympiad School, Jubilee Hills is part of the prestigious Narayana Group's school network in Hyderabad. It blends academic rigour with holistic development, using CBSE as the primary board while drawing from ICSE, IGCSE and IB frameworks in its curriculum design. It is a Day Boarding School — meaning students can arrive early and stay late, with supervised study time available."
     },
     {
-      "category": "Courses",
-      "content": "We offer MPC (Mathematics, Physics, Chemistry), BiPC (Biology, Physics, Chemistry), and MEC (Mathematics, Economics, Civics) streams with 120 seats each."
-    },
-    {
-      "category": "Fees",
-      "content": "Tuition fee is ₹85,000 per year. Hostel fee is ₹80,000 per year. Transport fee is ₹25,000 per year."
-    },
-    {
-      "category": "Scholarships",
-      "content": "We offer merit scholarships for students scoring above 90% in 10th grade. Special scholarship available for girl students."
-    },
-    {
-      "category": "Hostel",
-      "content": "Hostel facility available with separate buildings for boys and girls. Hostel closes at 8PM. Mess provides nutritious food."
-    },
-    {
-      "category": "Transport",
-      "content": "Transport facility available across the city with GPS-enabled buses. Bus routes cover all major areas."
-    },
-    {
-      "category": "Faculty",
-      "content": "Highly qualified faculty with IIT and NIT background. Special coaching for EAMCET and JEE."
-    },
-    {
-      "category": "Infrastructure",
-      "content": "State-of-the-art laboratories, digital classrooms, library with 10,000+ books, and sports facilities."
-    },
-    {
-      "category": "Contact",
-      "content": "Located at Main Road, Hyderabad. Contact number: 040-12345678. Email: admissions@narayana.edu"
+      "category": "Location",
+      "content": "Campus Address: 8-2-293/82/D/17, Road No. 5, Jubilee Hills, Hyderabad — 500033. Near Venkatagiri Metro Station. Opposite Women's Welfare Housing Society. Easy access from Banjara Hills, Madhapur, Kondapur, Himayatnagar, and Ameerpet."
     },
     {
       "category": "Timings",
-      "content": "College timings: 8:30 AM to 4:30 PM. Office hours: 9 AM to 5 PM on weekdays."
+      "content": "School hours: Monday to Saturday, 8:00 AM to 6:00 PM. Office hours: 9 AM to 5 PM on weekdays."
+    },
+    {
+      "category": "Programmes",
+      "content": "Four academic programmes: eKidz (Nursery to UKG, ages 3-5, play-based learning), eChamps (Class I-V, ages 6-10, strong foundation with Olympiad orientation), eTechno (Class VI-VIII, ages 11-13, IIT-JEE concepts introduced), Senior Secondary (Class IX-X, ages 14-16, board mastery plus JEE/NEET/EAMCET foundation). Classes XI-XII available on enquiry with the Principal."
+    },
+    {
+      "category": "Courses",
+      "content": "We offer MPC (Mathematics, Physics, Chemistry), BiPC (Biology, Physics, Chemistry), MEC (Mathematics, Economics, Commerce), and CEC (Civics, Economics, Commerce) streams. The school focuses on IIT-JEE, NEET, and EAMCET foundation preparation from early classes."
+    },
+    {
+      "category": "Fee Structure",
+      "content": "One-time admission charges for new students: ₹26,000 to ₹41,000 (includes Application Fee ₹1,000, Admission Fee ₹20,000-₹30,000, Caution Deposit ₹5,000-₹10,000 which is refundable). Annual tuition: Nursery/UKG ₹55,000-₹75,000, Class I-II ₹65,000-₹85,000, Class III-V ₹80,000-₹1,05,000, Class VI-VIII ₹1,00,000-₹1,30,000, Class IX-X ₹1,10,000-₹1,45,000, Class XI-XII ₹1,20,000-₹1,60,000."
+    },
+    {
+      "category": "Additional Fees",
+      "content": "Additional annual charges on top of tuition: Books and Study Material ₹8,000-₹14,000, Notebooks and Stationery ₹1,500-₹3,000, Uniform (full set) ₹4,500-₹7,000, nLearn App Subscription ₹3,000-₹5,000, Annual Day/Sports Day ₹2,500-₹4,000, Lab and Activity Fee ₹2,000-₹4,000, Competitive Exam Registration ₹1,000-₹2,500, CBSE Board Fee ₹1,500-₹2,500. Total additional charges approximately ₹24,000-₹42,000 per year."
+    },
+    {
+      "category": "Total Cost",
+      "content": "Annual total cost including tuition and extras (excluding transport): Nursery-UKG ₹70,000-₹95,000, Class I-II ₹83,000-₹1,09,000, Class III-V ₹1,02,000-₹1,35,000, Class VI-VIII ₹1,28,000-₹1,68,000, Class IX-X ₹1,40,000-₹1,87,000. Plus one-time admission fee of ₹26,000-₹41,000 for new students."
+    },
+    {
+      "category": "Fee Payment",
+      "content": "Fee payment schedule: 1st instalment 60% due April-May (covers tuition, books, nLearn, uniform), 2nd instalment 20% due July, 3rd instalment 20% due November."
+    },
+    {
+      "category": "Scholarships",
+      "content": "Merit scholarships available for students scoring above 90% in 10th grade. Narayana offers special scholarships for top performers in their internal entrance tests. Scholarship amounts vary by programme and performance."
+    },
+    {
+      "category": "Hostel",
+      "content": "Narayana provides hostel facilities at select campuses. For Jubilee Hills campus, hostel availability should be confirmed with the Principal (Phone: 8179880241). Hostel provides nutritious food, supervised study hours, and comfortable accommodation."
+    },
+    {
+      "category": "Transport",
+      "content": "GPS-enabled school bus transport facility available across Hyderabad. Routes cover major areas including Banjara Hills, Madhapur, Kondapur, Himayatnagar, Ameerpet, and surrounding neighbourhoods. Transport fee is separate from tuition."
+    },
+    {
+      "category": "Faculty",
+      "content": "Highly qualified faculty with IIT and NIT background. Special coaching for IIT-JEE, NEET, and EAMCET competitive exams. Faculty undergo regular training and use Narayana's research-based teaching methodology."
+    },
+    {
+      "category": "Infrastructure",
+      "content": "State-of-the-art smart classrooms with interactive boards, Robotics lab, Physics Chemistry Biology and Computer labs, library, digital classroom setup with content synced to nLearn platform for at-home revision."
+    },
+    {
+      "category": "Digital Campus",
+      "content": "Full digital infrastructure: Smart Classrooms, nLearn AI-powered self-learning app for students, nConnect parent app for tracking progress, Robotics lab, and Digital Classroom as per Narayana's group-wide tech framework."
+    },
+    {
+      "category": "Academic Features",
+      "content": "Key academic features: Micro-Schedule System (hour-by-hour daily lesson plans), Personalised Error Analysis (customised error reports after every test), Olympiad Programme (structured pathway for Maths, Science, Reasoning Olympiads from Class III), DISHA Mental Wellness programme, Adoption Calling Programme (class teacher monitors each student and engages with parents fortnightly), Robotics curriculum integrated into regular schedule."
+    },
+    {
+      "category": "Olympiad",
+      "content": "Structured Olympiad preparation pathway for NSO (National Science Olympiad), IMO (International Mathematics Olympiad), NSTSE, SOF and other competitive exams. Separate preparation material, mock Olympiads, and result tracking from Class III onwards."
+    },
+    {
+      "category": "Results",
+      "content": "Narayana Group has a strong track record in competitive exams. Students consistently achieve top ranks in IIT-JEE, NEET, and EAMCET. The school's integrated approach from early classes builds a strong foundation for these competitive exams."
+    },
+    {
+      "category": "Admission Process",
+      "content": "Admissions open for 2026 academic year. New students need to pay Application Fee ₹1,000, Admission Fee ₹20,000-₹30,000, and Caution Deposit ₹5,000-₹10,000. Total one-time charges ₹26,000-₹41,000. Contact the admissions office or visit the campus for the admission form. Confirm Class XI-XII availability directly with the Principal."
+    },
+    {
+      "category": "Contact",
+      "content": "Campus Address: 8-2-293/82/D/17, Road No. 5, Jubilee Hills, Hyderabad — 500033. Near Venkatagiri Metro Station. Principal Phone: 8179880241. School is rated 4.0 stars on JustDial."
+    },
+    {
+      "category": "Documents Required",
+      "content": "Documents needed for admission: Previous school Transfer Certificate, Birth certificate, Aadhar card of student and parent, Passport size photographs, Previous class marksheets/report cards, Address proof. Additional documents may be required for specific programmes."
+    },
+    {
+      "category": "FAQ",
+      "content": "Common questions: Q: Is hostel available? A: Hostel facilities should be confirmed with the Principal as availability varies. Q: What boards do you follow? A: Primary board is CBSE, with curriculum drawing from ICSE, IGCSE and IB frameworks. Q: Do you prepare for competitive exams? A: Yes, from early classes we prepare students for IIT-JEE, NEET, EAMCET and various Olympiads. Q: What are the school timings? A: Monday to Saturday, 8:00 AM to 6:00 PM."
     }
   ]
 }
