@@ -128,11 +128,13 @@ from app.api import knowledge_router
 from app.api.receptionist_routes import router as receptionist_router
 from app.api.conversation_routes import router as conversation_router
 from app.api.single_call_routes import router as single_call_router
+from app.voice.voice_ws import router as voice_ws_router
 
 app.include_router(knowledge_router)
 app.include_router(receptionist_router)
 app.include_router(conversation_router)
 app.include_router(single_call_router)
+app.include_router(voice_ws_router)
 
 
 @app.get("/", tags=["Root"])
