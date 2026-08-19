@@ -276,9 +276,9 @@ class EdgeTTSService:
     #   - Long sentences : a touch slower     (clear, unhurried information)
     # All deltas are deliberately small — big swings are what make TTS sound
     # robotic or theatrical.
-    _BASE_RATE = os.getenv("TTS_RATE", "+8%")
-    _BASE_PITCH = os.getenv("TTS_PITCH", "+0Hz")
-    _BASE_VOLUME = os.getenv("TTS_VOLUME", "+0%")
+    _BASE_RATE = os.getenv("TTS_RATE", "+10%")  # slightly faster for natural phone pace
+    _BASE_PITCH = os.getenv("TTS_PITCH", "+1Hz")  # slight warmth boost
+    _BASE_VOLUME = os.getenv("TTS_VOLUME", "+2%")  # confident, clear voice
 
     @staticmethod
     def _parse_pct(value: str, default: int = 10) -> int:
@@ -351,12 +351,22 @@ class EdgeTTSService:
             rate_delta -= 2           # natural thinking pace
             pitch_delta -= 1          # slightly lower (thinking)
 
-        # ── Organic jitter (±3 rate, ±2 pitch, ±2 volume) ──
-        # Wider jitter than before — real people never say two sentences
-        # with identical prosody. The variation is what makes it feel alive.
-        rate_delta += random.randint(-3, 3)
-        pitch_delta += random.randint(-2, 2)
-        volume_delta += random.randint(-2, 2)
+        # ── Content-aware enthusiasm tweaks ──
+        # When Mrs. D is excited about something (scholarships, great results,
+        # strong programmes), she speaks a bit faster and louder — like a real
+        # person sharing good news.
+        if any(word in s.lower() for word in ["scholarship", "excellent", "top rank", "iit", "neet", "best"]):
+            rate_delta += 2           # excited pace
+            pitch_delta += 2          # higher (enthusiasm)
+            volume_delta += 2         # a touch louder
+
+        # ── Organic jitter (±4 rate, ±3 pitch, ±3 volume) ──
+        # Wide jitter — real people never say two sentences with identical
+        # prosody. The variation is what makes it feel alive. Each sentence
+        # sounds slightly different even with the same text.
+        rate_delta += random.randint(-4, 4)
+        pitch_delta += random.randint(-3, 3)
+        volume_delta += random.randint(-3, 3)
 
         rate = base_rate + rate_delta
         pitch = base_pitch + pitch_delta
