@@ -16,6 +16,7 @@ import asyncio
 import base64
 import io
 import json
+import random
 import re as _re
 import struct
 import time
@@ -76,6 +77,33 @@ LANGUAGE_INSTRUCTION = (
     "- Keep it SHORT like a phone call: 2-5 conversational sentences.\n"
     "- Speak like a warm professional counsellor: confident, concise, human.\n"
 )
+
+
+# ---------------------------------------------------------------------------
+# Natural pause calculation (human breathing cadence)
+# ---------------------------------------------------------------------------
+
+def _natural_pause_ms(sentence: str) -> int:
+    """Calculate a natural breathing pause after a sentence.
+    
+    Humans pause different lengths based on sentence type:
+    - Questions: longer pause (thinking beat)
+    - Exclamations: shorter pause (emphasis)
+    - Long sentences: longer pause (deeper breath)
+    - Short acknowledgements: brief pause
+    """
+    s = sentence.strip()
+    if s.endswith("?"):
+        return 450 + int(random.random() * 200)  # 450-650ms
+    if s.endswith("!"):
+        return 350 + int(random.random() * 150)  # 350-500ms
+    if s.endswith("..."):
+        return 500 + int(random.random() * 200)  # 500-700ms (trailing thought)
+    if len(s) > 120:
+        return 400 + int(random.random() * 200)  # 400-600ms (long thought)
+    if len(s) < 25:
+        return 250 + int(random.random() * 150)  # 250-400ms (quick ack)
+    return 300 + int(random.random() * 200)  # 300-500ms (default)
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +395,7 @@ async def _process_utterance(
         synth_lang = detected_lang
         sentence_count = 0
         first_sentence_ms = 0
+        last_sentence_text = ""
 
         try:
             while True:
@@ -378,6 +407,13 @@ async def _process_utterance(
                     break
 
                 _idx, payload = kind[1], kind[2]
+                # Send a natural pause event between sentences for breathing
+                if sentence_count > 0 and last_sentence_text:
+                    pause_ms = _natural_pause_ms(last_sentence_text)
+                    await websocket.send_json({
+                        "type": "pause",
+                        "duration_ms": pause_ms,
+                    })
                 tts_start = time.time()
                 async for chunk in tts_service.stream_sentences(
                     payload, language=synth_lang
@@ -393,6 +429,7 @@ async def _process_utterance(
                         "audio_data": chunk["audio_data"],
                     })
                     sentence_count += 1
+                    last_sentence_text = chunk["text"]
                 tts_ms = (time.time() - tts_start) * 1000
         finally:
             if not llm_task.done():
