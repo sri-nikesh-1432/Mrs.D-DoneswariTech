@@ -445,11 +445,11 @@ async def _process_utterance(
                 "What would you like to know more about - courses, fees or admission?"
             )
 
-        # Update memory
+        # Update memory (keep 30 messages = 15 turns for better context)
         memory.append(user_text)
         memory.append(ai_response)
-        if len(memory) > 20:
-            del memory[: len(memory) - 20]
+        if len(memory) > 30:
+            del memory[: len(memory) - 30]
 
         total_ms = (time.time() - turn_start) * 1000
         logger.info(

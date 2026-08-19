@@ -80,10 +80,10 @@ def build_prompt(
 
     # Add retrieved context as a system message
     if retrieved_context:
-        # Cap context so requests stay small (free-tier daily token quota +
-        # lower first-audio latency). 4500 chars ≈ 1100 tokens — plenty for
-        # the 5 most relevant chunks.
-        capped_context = retrieved_context[:4500]
+    # Cap context so requests stay small (free-tier daily token quota +
+    # lower first-audio latency). 6000 chars ≈ 1500 tokens — enough for
+    # detailed answers while staying within limits.
+    capped_context = retrieved_context[:6000]
         context_msg = (
             "## Institute Knowledge\n\n"
             f"{capped_context}\n\n"
@@ -113,15 +113,15 @@ def build_prompt(
 
     # Add conversation history (legacy 'model' role is mapped to 'assistant')
     if conversation_history:
-        for turn in conversation_history[-6:]:  # Last 6 turns for context
+        for turn in conversation_history[-8:]:  # Last 8 turns for better context
             role = "user" if turn.get("role") == "user" else "assistant"
             content = str(turn.get("content", ""))
             # Keep each past turn short: full replies are not needed for
             # context and every past token eats the daily quota.
-            if len(content) > 300:
-                content = content[:297].rstrip() + "..."
+            if len(content) > 400:
+                content = content[:397].rstrip() + "..."
             messages.append({"role": role, "content": content})
-        logger.info(f"✓ Conversation history added ({min(len(conversation_history), 6)} turns)")
+        logger.info(f"✓ Conversation history added ({min(len(conversation_history), 8)} turns)")
 
     # Add the current query
     messages.append({"role": "user", "content": f"## Current Student Message\n\n{query}"})
