@@ -117,11 +117,14 @@ def _build_history(memory: list) -> list:
 # the primary use-case (detecting when the caller stops speaking).
 
 SAMPLE_RATE = 16000
-FRAME_MS = 30  # 30 ms per frame
-FRAME_SAMPLES = int(SAMPLE_RATE * FRAME_MS / 1000)  # 480 samples
-ENERGY_THRESHOLD = 0.015  # RMS below this = silence
-SILENCE_FRAMES_TO_END = 28  # ~840 ms of silence -> utterance complete
+FRAME_MS = 20  # 20 ms per frame — finer granularity for faster response
+FRAME_SAMPLES = int(SAMPLE_RATE * FRAME_MS / 1000)  # 320 samples
+ENERGY_THRESHOLD = 0.012  # RMS below this = silence (slightly lower to catch softer speech)
+SILENCE_FRAMES_TO_END = 35  # ~700 ms of silence — fast end-of-turn (Retell AI target)
 MAX_UTTERANCE_SECONDS = 30  # hard cap
+# Pre-speech buffer: keep 200ms of audio BEFORE speech onset to avoid clipping
+PRE_SPEECH_MS = 200
+PRE_SPEECH_FRAMES = int(PRE_SPEECH_MS / FRAME_MS)
 
 
 # ---------------------------------------------------------------------------
@@ -480,6 +483,7 @@ async def _handle_voice_ws(websocket: WebSocket):
 
         # -- Phase 3: Main loop -- receive audio, detect speech, process --------
         pcm_buffer = bytearray()
+        pre_speech_frames: list = []  # rolling buffer of recent silence frames
         silence_frame_count = 0
         is_speaking = False
         frame_count = 0
@@ -541,6 +545,10 @@ async def _handle_voice_ws(websocket: WebSocket):
                                 silence_frame_count = 0
                                 pcm_buffer = bytearray()
                                 turn_start_time = time.time()
+                                # Include pre-speech buffer to avoid clipping the start
+                                for pf in pre_speech_frames:
+                                    pcm_buffer.extend(pf)
+                                pre_speech_frames = []
                                 await websocket.send_json({"type": "speech_start"})
 
                             pcm_buffer.extend(frame.tobytes())
@@ -563,6 +571,11 @@ async def _handle_voice_ws(websocket: WebSocket):
                             # Silence during speech -- include the gap
                             pcm_buffer.extend(frame.tobytes())
                             silence_frame_count += 1
+                        else:
+                            # Not speaking yet -- keep a rolling pre-speech buffer
+                            pre_speech_frames.append(frame.tobytes())
+                            if len(pre_speech_frames) > PRE_SPEECH_FRAMES:
+                                pre_speech_frames.pop(0)
 
                             if silence_frame_count >= SILENCE_FRAMES_TO_END:
                                 # Speech ended!
