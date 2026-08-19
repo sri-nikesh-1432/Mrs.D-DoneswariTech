@@ -307,14 +307,17 @@ async def _process_utterance(
     institute_id: int,
     language: str,
     memory: list,
+    ai_state: dict,
 ):
-    """Process a detected utterance: STT -> LLM -> TTS, streaming back over WS."""
+    """Process a detected utterance: STT -> LLM -> TTS, streaming back over WS.
+    
+    ai_state: mutable dict with keys 'speaking' (bool) and 'finished_at' (float)
+    """
     try:
         turn_start = time.time()
 
         # Track AI speaking state for echo cancellation
-        nonlocal ai_speaking, ai_finished_at
-        ai_speaking = True
+        ai_state["speaking"] = True
         
         # Notify client: we're processing
         await websocket.send_json({"type": "processing"})
@@ -467,13 +470,13 @@ async def _process_utterance(
             },
         })
         # Mark AI as finished for echo cancellation cooldown
-        ai_speaking = False
-        ai_finished_at = time.time()
+        ai_state["speaking"] = False
+        ai_state["finished_at"] = time.time()
 
     except Exception as e:
         logger.error("WS process_utterance failed: %s", e, exc_info=True)
-        ai_speaking = False
-        ai_finished_at = time.time()
+        ai_state["speaking"] = False
+        ai_state["finished_at"] = time.time()
         try:
             await websocket.send_json({"type": "error", "detail": str(e)})
         except Exception:
@@ -535,8 +538,7 @@ async def _handle_voice_ws(websocket: WebSocket):
         frame_count = 0
         turn_start_time = 0.0
         # Echo cancellation: track when AI last spoke to avoid self-interruption
-        ai_speaking = False  # true while TTS audio is being sent to client
-        ai_finished_at = 0.0  # timestamp when AI last finished speaking
+        ai_state = {"speaking": False, "finished_at": 0.0}  # mutable container
         BARGE_IN_COOLDOWN_MS = 400  # ignore mic for 400ms after AI stops
         current_energy_threshold = ENERGY_THRESHOLD
 
@@ -591,7 +593,7 @@ async def _handle_voice_ws(websocket: WebSocket):
                         frame_count += 1
                         
                         # Echo cancellation: raise threshold right after AI spoke
-                        if ai_speaking or (time.time() - ai_finished_at) < (BARGE_IN_COOLDOWN_MS / 1000.0):
+                        if ai_state["speaking"] or (time.time() - ai_state["finished_at"]) < (BARGE_IN_COOLDOWN_MS / 1000.0):
                             current_energy_threshold = ENERGY_THRESHOLD * 3  # much harder to trigger
                         else:
                             current_energy_threshold = ENERGY_THRESHOLD
@@ -619,7 +621,7 @@ async def _handle_voice_ws(websocket: WebSocket):
                                 await _process_utterance(
                                     websocket, pcm_buffer, conversation_id,
                                     mode, knowledge_file, institute_id,
-                                    language, conversation_memory,
+                                    language, conversation_memory, ai_state,
                                 )
                                 pcm_buffer = bytearray()
                                 silence_frame_count = 0
@@ -634,19 +636,19 @@ async def _handle_voice_ws(websocket: WebSocket):
                             if len(pre_speech_frames) > PRE_SPEECH_FRAMES:
                                 pre_speech_frames.pop(0)
 
-                            if silence_frame_count >= SILENCE_FRAMES_TO_END:
-                                # Speech ended!
-                                is_speaking = False
-                                frame_count = 0
-                                # Require >300 ms of audio to process
-                                min_bytes = int(SAMPLE_RATE * 0.3) * 2  # 16-bit = 2 bytes
-                                if len(pcm_buffer) > min_bytes:
-                                    await websocket.send_json({"type": "speech_end"})
-                                    await _process_utterance(
-                                        websocket, pcm_buffer, conversation_id,
-                                        mode, knowledge_file, institute_id,
-                                        language, conversation_memory,
-                                    )
+                        if is_speaking and silence_frame_count >= SILENCE_FRAMES_TO_END:
+                            # Speech ended!
+                            is_speaking = False
+                            frame_count = 0
+                            # Require >300 ms of audio to process
+                            min_bytes = int(SAMPLE_RATE * 0.3) * 2  # 16-bit = 2 bytes
+                            if len(pcm_buffer) > min_bytes:
+                                await websocket.send_json({"type": "speech_end"})
+                                await _process_utterance(
+                                    websocket, pcm_buffer, conversation_id,
+                                    mode, knowledge_file, institute_id,
+                                    language, conversation_memory, ai_state,
+                                )
                                 pcm_buffer = bytearray()
                                 silence_frame_count = 0
 
