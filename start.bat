@@ -38,7 +38,7 @@ if not exist "%BACKEND%\static\audio"  mkdir "%BACKEND%\static\audio"
 
 :: ── Start Backend ─────────────────────────────────────────────────────────────
 echo  Starting backend on http://localhost:8000 ...
-start "Doneswari Backend" cmd /k "cd /d "%BACKEND%" && python -m uvicorn app:app --reload --host localhost --port 8000"
+start "Doneswari Backend" cmd /k "cd /d "%BACKEND%" && python -m uvicorn app.main:app --reload --host localhost --port 8000"
 
 :: ── Wait for backend to initialise ───────────────────────────────────────────
 echo  Waiting for backend to start...
