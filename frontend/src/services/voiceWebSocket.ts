@@ -4,6 +4,10 @@
  * Connects to the backend's /ws/voice endpoint and provides a simple
  * interface for streaming microphone PCM audio and receiving sentence-level
  * TTS audio in return.
+ *
+ * This is the WebSocket alternative to the HTTP SSE pipeline in useVoiceAgent.
+ * It keeps a single persistent connection open for the entire conversation,
+ * eliminating per-turn HTTP overhead — matching Retell AI's architecture.
  */
 
 export type VoiceWSState =
@@ -22,6 +26,12 @@ export interface VoiceWSConfig {
   language?: string;
 }
 
+export interface VoiceWSMessage {
+  role: "user" | "ai";
+  content: string;
+  timestamp: string;
+}
+
 export interface VoiceWSDebugInfo {
   stt_time_ms?: number;
   rag_time_ms?: number;
@@ -36,6 +46,8 @@ export interface VoiceWSDebugInfo {
 
 interface VoiceWSCallbacks {
   onStateChange?: (state: VoiceWSState) => void;
+  onMessage?: (message: VoiceWSMessage) => void;
+  onMessageUpdate?: (index: number, content: string) => void;
   onSentence?: (text: string, audioData: string | null, index: number) => void;
   onTranscript?: (text: string, language: string) => void;
   onTurnDone?: (aiResponse: string, debugInfo: VoiceWSDebugInfo) => void;
@@ -55,6 +67,9 @@ export class VoiceWebSocket {
   private audioQueue: Array<{ text: string; audioData: string }> = [];
   private queuePlaying = false;
   private conversationId: string = "";
+  private messages: VoiceWSMessage[] = [];
+  private currentAiIndex: number = -1;
+  private currentAiText: string = "";
 
   getState(): VoiceWSState {
     return this.state;
@@ -64,11 +79,18 @@ export class VoiceWebSocket {
     return this.conversationId;
   }
 
+  getMessages(): VoiceWSMessage[] {
+    return this.messages;
+  }
+
   async connect(config: VoiceWSConfig, callbacks: VoiceWSCallbacks): Promise<void> {
     this.config = config;
     this.callbacks = callbacks;
     this.audioQueue = [];
     this.queuePlaying = false;
+    this.messages = [];
+    this.currentAiIndex = -1;
+    this.currentAiText = "";
     this.setState("connecting");
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -135,19 +157,49 @@ export class VoiceWebSocket {
         if (msg.audio_data) {
           this.enqueueSentence(msg.text || "", msg.audio_data);
         }
+        // Progressive AI message update
+        this.currentAiText += msg.text || "";
+        if (this.currentAiIndex >= 0) {
+          this.callbacks.onMessageUpdate?.(this.currentAiIndex, this.currentAiText);
+        }
         break;
 
       case "turn_done":
         this.setState("listening");
         this.callbacks.onTurnDone?.(msg.ai_response || "", msg.debug_info || {});
+        // Finalize AI message
+        if (this.currentAiIndex >= 0 && msg.ai_response) {
+          this.currentAiText = msg.ai_response;
+          this.callbacks.onMessageUpdate?.(this.currentAiIndex, this.currentAiText);
+        }
+        this.currentAiIndex = -1;
+        this.currentAiText = "";
         break;
 
       case "processing":
         this.setState("processing");
+        // Add AI message placeholder
+        this.currentAiText = "";
+        const aiMsg: VoiceWSMessage = {
+          role: "ai",
+          content: "",
+          timestamp: new Date().toISOString(),
+        };
+        this.messages.push(aiMsg);
+        this.currentAiIndex = this.messages.length - 1;
+        this.callbacks.onMessage?.(aiMsg);
         break;
 
       case "transcript":
         this.callbacks.onTranscript?.(msg.text || "", msg.language || "en");
+        // Add user message
+        const userMsg: VoiceWSMessage = {
+          role: "user",
+          content: msg.text || "",
+          timestamp: new Date().toISOString(),
+        };
+        this.messages.push(userMsg);
+        this.callbacks.onMessage?.(userMsg);
         break;
 
       case "speech_start":
@@ -288,8 +340,6 @@ export class VoiceWebSocket {
     this.queuePlaying = false;
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: "end" }));
-  
       this.ws.send(JSON.stringify({ type: "end" }));
       await new Promise((r) => setTimeout(r, 200));
     }
