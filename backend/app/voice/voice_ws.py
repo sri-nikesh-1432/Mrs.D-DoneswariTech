@@ -284,6 +284,10 @@ async def _process_utterance(
     try:
         turn_start = time.time()
 
+        # Track AI speaking state for echo cancellation
+        nonlocal ai_speaking, ai_finished_at
+        ai_speaking = True
+        
         # Notify client: we're processing
         await websocket.send_json({"type": "processing"})
 
@@ -425,9 +429,14 @@ async def _process_utterance(
                 "knowledge_source": "json" if mode == "test" else "faiss",
             },
         })
+        # Mark AI as finished for echo cancellation cooldown
+        ai_speaking = False
+        ai_finished_at = time.time()
 
     except Exception as e:
         logger.error("WS process_utterance failed: %s", e, exc_info=True)
+        ai_speaking = False
+        ai_finished_at = time.time()
         try:
             await websocket.send_json({"type": "error", "detail": str(e)})
         except Exception:
@@ -488,6 +497,11 @@ async def _handle_voice_ws(websocket: WebSocket):
         is_speaking = False
         frame_count = 0
         turn_start_time = 0.0
+        # Echo cancellation: track when AI last spoke to avoid self-interruption
+        ai_speaking = False  # true while TTS audio is being sent to client
+        ai_finished_at = 0.0  # timestamp when AI last finished speaking
+        BARGE_IN_COOLDOWN_MS = 400  # ignore mic for 400ms after AI stops
+        current_energy_threshold = ENERGY_THRESHOLD
 
         while True:
             msg = await websocket.receive()
@@ -538,8 +552,14 @@ async def _handle_voice_ws(websocket: WebSocket):
 
                         rms = float(np.sqrt(np.mean(frame**2)))
                         frame_count += 1
+                        
+                        # Echo cancellation: raise threshold right after AI spoke
+                        if ai_speaking or (time.time() - ai_finished_at) < (BARGE_IN_COOLDOWN_MS / 1000.0):
+                            current_energy_threshold = ENERGY_THRESHOLD * 3  # much harder to trigger
+                        else:
+                            current_energy_threshold = ENERGY_THRESHOLD
 
-                        if rms > ENERGY_THRESHOLD:
+                        if rms > current_energy_threshold:
                             if not is_speaking:
                                 is_speaking = True
                                 silence_frame_count = 0
