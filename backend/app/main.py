@@ -146,3 +146,24 @@ async def root():
         "version": "2.0.0",
         "docs": "/docs",
     }
+
+
+@app.get("/health", tags=["Health"])
+async def health_check():
+    from datetime import datetime, timezone
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "groq_configured": settings.is_groq_configured,
+        "models": {
+            "llm": settings.GROQ_MODEL,
+            "stt": settings.GROQ_STT_MODEL,
+            "tts": settings.TTS_VOICE,
+        },
+        "server": {
+            "host": settings.HOST,
+            "port": settings.PORT,
+            "version": "2.0.0",
+        },
+        "agent": "Mrs. D",
+    }

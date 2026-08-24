@@ -25,17 +25,18 @@ def _model_chain() -> list:
     for m in models:
         if m and m not in seen:
             seen.append(m)
-    return seen or ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+    return seen or ["allam-2-7b", "openai/gpt-oss-20b"]
 
 
 def _is_rate_limit(e: Exception) -> bool:
-    """True for Groq 429 (per-model token cap) — the ONLY error worth retrying
-    on a different model. Connection errors are retried on the same request;
-    auth/validation errors must surface immediately."""
-    if getattr(e, "status_code", None) == 429:
+    """True for Groq 429 (per-model token cap) or 404 (model not found) —
+    errors worth retrying on a different model. Connection errors are retried
+    on the same request; auth/validation errors must surface immediately."""
+    status = getattr(e, "status_code", None)
+    if status in (429, 404):
         return True
     name = type(e).__name__.lower()
-    return "ratelimit" in name or "429" in str(e)[:60]
+    return "ratelimit" in name or "429" in str(e)[:60] or "404" in str(e)[:60] or "model_not_found" in str(e)[:200]
 
 
 async def _create_with_fallback(
@@ -87,7 +88,7 @@ async def stream_chat(
     """
     messages = build_prompt(query, provided_context or "", None, conversation_history)
     try:
-        stream = await _create_with_fallback(messages, stream=True)
+        stream = await _create_with_fallback(messages, max_tokens=256, stream=True)
         async for chunk in stream:
             if not chunk.choices:
                 continue
