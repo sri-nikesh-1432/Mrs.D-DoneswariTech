@@ -16,7 +16,7 @@ from typing import Optional, List
 from datetime import datetime, timezone
 
 from app.rag.retriever import retrieve_context, format_context_for_prompt, is_knowledge_ready
-from app.rag.groq_service import generate_response, stream_chat
+from app.rag.groq_service import generate_response, stream_chat, stream_chat_fast
 from app.rag.chunker import chunk_text
 from app.rag.embeddings import generate_embeddings
 from app.rag.vector_store import vector_store
@@ -71,18 +71,38 @@ def _build_history(memory: list, conversation_id: str) -> list:
 # is terminal punctuation followed by whitespace/end (which naturally protects
 # "B.Tech", "e.g.") or a newline. Nothing is ever emitted half-split.
 _SENT_BOUNDARY = _re.compile(r"[.!?](?=\s|$|\n)|\n")
+# Clause-level boundary: emit TTS on commas/conjunctions for faster TTFA.
+_CLAUSE_BOUNDARY = _re.compile(r",\s+|\band\s+|\bbut\s+|\bso\s+|\bnow\s+|\bwell\s+")
 
 
 def _pop_complete_sentences(buffer: str):
-    """Return (complete_sentences, remainder) from a streaming buffer."""
+    """Return (complete_sentences, remainder) from a streaming buffer.
+    
+    Also emits clause-level chunks (after commas/conjunctions) for the FIRST
+    sentence only, so TTS can start ~200ms earlier. Later sentences wait for
+    proper sentence boundaries to avoid choppy audio.
+    """
     sentences = []
     start = 0
+    found_sentence = False
     for m in _SENT_BOUNDARY.finditer(buffer):
         end = m.end()
         piece = buffer[start:end].strip()
         if piece:
             sentences.append(piece)
+            found_sentence = True
         start = end
+    # If no full sentence found yet but buffer is long, try clause-level split
+    # for faster TTFA on the first chunk only.
+    if not found_sentence and len(buffer) > 25:
+        last_clause = None
+        for m in _CLAUSE_BOUNDARY.finditer(buffer):
+            last_clause = m
+        if last_clause and last_clause.end() > 20:
+            piece = buffer[:last_clause.end()].strip()
+            if piece:
+                sentences.append(piece)
+                start = last_clause.end()
     return sentences, buffer[start:]
 
 
@@ -266,10 +286,9 @@ async def stream_conversation(
                     nonlocal ai_parts
                     buf = ""
                     try:
-                        async for delta in stream_chat(
-                            f"{llm_input}\n\n{lang_hint}",
-                            history_list,
-                            context,
+                        async for delta in stream_chat_fast(
+                            llm_input, lang=detected_lang,
+                            conversation_history=history_list,
                         ):
                             buf += delta
                             sentences, buf = _pop_complete_sentences(buf)

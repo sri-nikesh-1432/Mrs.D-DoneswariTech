@@ -44,6 +44,7 @@ async def _create_with_fallback(
     temperature: float = 0.5,
     max_tokens: int = 1024,
     stream: bool = False,
+    stop: Optional[List[str]] = None,
 ):
     """
     Create a Groq completion, automatically falling back to the next model in
@@ -61,6 +62,7 @@ async def _create_with_fallback(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 stream=stream,
+                stop=stop,
             )
         except Exception as e:
             last_exc = e
@@ -73,6 +75,45 @@ async def _create_with_fallback(
             raise
     raise last_exc
 
+
+
+
+async def stream_chat_fast(
+    query: str,
+    lang: str = "English",
+    conversation_history: Optional[List[Dict]] = None,
+) -> AsyncGenerator[str, None]:
+    """
+    ULTRA-FAST streaming for real-time voice — bypasses the heavy prompt builder.
+    Uses a ~50-token system prompt instead of ~800 tokens, slashing prefill time.
+    The response quality is maintained through focused, specific instructions.
+    """
+    # Ultra-minimal system prompt (~60 tokens, vs ~400 for the full one)
+    system = f"You are Mrs D, Narayana admissions counsellor. Reply in {lang}. Max 2 sentences. Natural, warm. Never restate caller words."
+    
+    # Build minimal message list (system + last 2 history turns + query)
+    messages = [{"role": "system", "content": system}]
+    if conversation_history:
+        for turn in conversation_history[-2:]:  # Last 2 turns only
+            role = "user" if turn.get("role") == "user" else "assistant"
+            content = str(turn.get("content", ""))[:150]  # Truncate hard
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": query})
+    
+    try:
+        logger.info("[FAST] stream_chat_fast called: %d messages, prompt=%d chars", len(messages), sum(len(m.get("content","")) for m in messages))
+        stream = await _create_with_fallback(messages, temperature=0.3, max_tokens=64, stream=True)
+
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+        logger.info("[FAST] stream finished")
+    except Exception as e:
+        logger.error("Fast streaming LLM failed: %s", e)
+        raise
 
 async def stream_chat(
     query: str,

@@ -414,14 +414,8 @@ class EdgeTTSService:
     ) -> Optional[bytes]:
         """
         Synthesize ONE complete sentence as audio bytes.
-
-        Primary (expressive, default): TRUE SSML over the shared persistent
-        websocket — <voice><prosody rate/pitch/volume>text</prosody></voice> —
-        which the Edge endpoint genuinely supports, with zero reconnect
-        overhead per sentence.
-
-        Fallback: plain `edge_tts.Communicate` (escaped-text template, always
-        works) if the SSML request fails for any reason.
+        SSML via persistent WebSocket (fastest after warmup).
+        Plain Communicate fallback.
         """
         if self._EXPRESSIVE:
             try:
@@ -441,13 +435,9 @@ class EdgeTTSService:
                 audio = await get_raw_synth().synthesize(ssml)
                 if audio:
                     return audio
-                logger.debug("Expressive SSML produced no audio; falling back to plain")
             except Exception as e:
-                logger.debug(
-                    "Expressive SSML failed (%s); falling back to plain", e
-                )
+                logger.debug("SSML failed (%s); falling back to plain", e)
 
-        # Plain fallback: per-sentence prosody via Communicate kwargs.
         try:
             import edge_tts
             communicate = edge_tts.Communicate(
@@ -459,7 +449,7 @@ class EdgeTTSService:
             ]
             return b"".join(chunks) or None
         except Exception as e:
-            logger.error("Plain TTS synthesis failed: %s", e)
+            logger.error("Plain TTS failed: %s", e)
             return None
 
     def _pick_voice(

@@ -64,6 +64,22 @@ async def _restore_vector_store() -> None:
         logger.error("Failed to restore vector store at startup: %s", e)
 
 
+
+async def _warmup_tts() -> None:
+    """Pre-warm the Edge-TTS WebSocket connection for low-latency first response."""
+    try:
+        from app.tts.edge_tts_service import get_tts_service
+        tts = get_tts_service()
+        await tts.initialize()
+        # Synthesize a short greeting to establish the persistent WebSocket
+        audio = await tts.synthesize("Hello!", voice="en-IN-NeerjaNeural")
+        if audio:
+            logger.info("TTS WebSocket warmed up (%d bytes)", len(audio))
+        else:
+            logger.warning("TTS warmup produced no audio")
+    except Exception as e:
+        logger.warning("TTS warmup failed (non-fatal): %s", e)
+
 def _ensure_directories() -> None:
     """Create all required runtime directories."""
     dirs = [
@@ -87,6 +103,7 @@ async def lifespan(app: FastAPI):
 
     _scheduler.start()
     logger.info("Scheduler started")
+    await _warmup_tts()
     logger.info("Backend ready at http://%s:%d", settings.HOST, settings.PORT)
     logger.info("API docs at http://%s:%d/docs", settings.HOST, settings.PORT)
 
