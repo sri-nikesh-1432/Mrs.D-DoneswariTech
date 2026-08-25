@@ -104,6 +104,13 @@ async def lifespan(app: FastAPI):
     _scheduler.start()
     logger.info("Scheduler started")
     await _warmup_tts()
+    # Pre-synthesize all cached responses for instant audio on first hit
+    try:
+        from app.rag.response_cache import warm_tts_cache
+        from app.tts.edge_tts_service import get_tts_service
+        await warm_tts_cache(get_tts_service())
+    except Exception as e:
+        logger.warning("TTS cache warmup failed (non-fatal): %s", e)
     logger.info("Backend ready at http://%s:%d", settings.HOST, settings.PORT)
     logger.info("API docs at http://%s:%d/docs", settings.HOST, settings.PORT)
 

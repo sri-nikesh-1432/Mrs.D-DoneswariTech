@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 from app.rag.retriever import retrieve_context, format_context_for_prompt, is_knowledge_ready
 from app.rag.groq_service import generate_response, stream_chat, stream_chat_fast
+from app.rag.response_cache import find_cached_response, get_cached_audio
 from app.rag.chunker import chunk_text
 from app.rag.embeddings import generate_embeddings
 from app.rag.vector_store import vector_store
@@ -273,121 +274,157 @@ async def stream_conversation(
                 history_list = _build_history(memory, conv_id)
                 lang_hint = LANGUAGE_INSTRUCTION.format(language=detected_lang)
 
-                # ── REAL-TIME: stream LLM tokens → emit each COMPLETE
-                #    sentence's audio the moment it finishes. The LLM runs as
-                #    a background task so its tokens keep arriving while TTS
-                #    synthesizes the sentences already emitted.
-                sentence_q: asyncio.Queue = asyncio.Queue()
-                _l0 = time.time()
-                ai_parts: List[str] = []
-                stream_error: Optional[str] = None
-
-                async def _llm_streamer():
-                    nonlocal ai_parts
-                    buf = ""
-                    try:
-                        async for delta in stream_chat_fast(
-                            llm_input, lang=detected_lang,
-                            conversation_history=history_list,
-                        ):
-                            buf += delta
-                            sentences, buf = _pop_complete_sentences(buf)
-                            for s in sentences:
-                                # Carry the emit-time index (correct even when
-                                # the queue has a backlog) — never computed
-                                # from a live list at consume time.
-                                idx = len(ai_parts)
-                                ai_parts.append(s)
-                                await sentence_q.put(("sentence", idx, s))
-                        trailing = buf.strip()
-                        if trailing:
-                            idx = len(ai_parts)
-                            ai_parts.append(trailing)
-                            await sentence_q.put(("sentence", idx, trailing))
-                    except Exception as e:
-                        logger.error("Streaming LLM failed: %s", e)
-                        await sentence_q.put(("error", str(e)))
-                    finally:
-                        await sentence_q.put(("end", None))
-
-                llm_task = asyncio.create_task(_llm_streamer())
                 synth_lang = detected_lang
-                count = 0
-                _t0 = time.time()
-                try:
-                    while True:
-                        kind = await sentence_q.get()
-                        if kind[0] == "end":
-                            break
-                        if kind[0] == "error":
-                            stream_error = kind[1]
-                            break
-                        # Complete sentence ready → synthesize & emit NOW
-                        _idx, payload = kind[1], kind[2]
-                        _s0 = time.time()
+
+                # ── RESPONSE CACHE: skip the LLM entirely for common questions
+                cached = find_cached_response(llm_input, language=detected_lang)
+                if cached:
+                    ai_response = cached
+                    ai_parts = [cached]
+                    llm_ms = 0
+                    count = 0
+                    pre_audio = get_cached_audio(cached, synth_lang)
+                    if pre_audio:
+                        first_sentence_ms = (time.time() - turn_start) * 1000
+                        yield sse_event(
+                            "sentence",
+                            {"index": 0, "text": cached, "audio_data": pre_audio},
+                        )
+                        count = 1
+                        tts_ms = 0
+                        logger.info("CACHE+AUDIO HIT: %s (%.0fms)", llm_input[:60], first_sentence_ms)
+                    else:
+                        _t0 = time.time()
                         async for chunk in tts_service.stream_sentences(
-                            payload, language=synth_lang
+                            cached, language=synth_lang
                         ):
                             if chunk.get("audio_data") is None:
                                 continue
-                            # True time-to-first-audio: the first sentence event
-                            # (text + audio) is actually being delivered.
                             if first_sentence_ms == 0:
-                                first_sentence_ms = (
-                                    time.time() - turn_start
-                                ) * 1000
+                                first_sentence_ms = (time.time() - turn_start) * 1000
                             yield sse_event(
                                 "sentence",
-                                {
-                                    "index": _idx,
-                                    "text": chunk["text"],
-                                    "audio_data": chunk["audio_data"],
-                                },
+                                {"index": chunk["index"], "text": chunk["text"], "audio_data": chunk["audio_data"]},
                             )
                             count += 1
-                        tts_ms += (time.time() - _s0) * 1000
-                finally:
-                    # Client disconnect / barge-in cancels this generator — the
-                    # background LLM task must NOT keep streaming (wasted tokens
-                    # on the free tier). Cancel it on the way out.
-                    if not llm_task.done():
-                        llm_task.cancel()
-                llm_ms = (time.time() - _l0) * 1000
-                if first_sentence_ms == 0:
-                    # Error before any sentence — report the failed turn's
-                    # latency so the debug panel stays truthful.
-                    first_sentence_ms = llm_ms
+                        tts_ms = (time.time() - _t0) * 1000
+                        logger.info("CACHE HIT (synth): %s", llm_input[:60])
+                else:
+                    # ── REAL-TIME: stream LLM tokens → emit each COMPLETE
+                    #    sentence's audio the moment it finishes. The LLM runs as
+                    #    a background task so its tokens keep arriving while TTS
+                    #    synthesizes the sentences already emitted.
+                    sentence_q: asyncio.Queue = asyncio.Queue()
+                    _l0 = time.time()
+                    ai_parts: List[str] = []
+                    stream_error: Optional[str] = None
 
-                ai_response = "".join(ai_parts).strip()
-                if stream_error:
-                    logger.error("Streaming conversation LLM error: %s", stream_error)
-                    # Deliver the real error to the console/logs (frontend shows
-                    # a friendly message) — but still speak a graceful fallback
-                    # if nothing was said, so the call never goes silent.
-                    if not ai_response:
-                        ai_response = (
-                            "అవును, మా నారాయణ కాలేజీ వివరాలు మీకు చెప్తాను. "
-                            "మీకు కోర్సులు, ఫీజు లేదా అడ్మిషన్ ప్రాసెస్ గురించి ఏది కావాలి?"
-                            if detected_lang == "Telugu"
-                            else (
-                                "I can help with that. We offer MPC, BiPC, MEC and CEC streams. "
-                                "What would you like to know more about — courses, fees or admission?"
-                            )
-                        )
-                        async for chunk in tts_service.stream_sentences(
-                            ai_response, language=synth_lang
-                        ):
-                            if chunk.get("audio_data"):
+                    async def _llm_streamer():
+                        nonlocal ai_parts
+                        buf = ""
+                        try:
+                            async for delta in stream_chat_fast(
+                                llm_input, lang=detected_lang,
+                                conversation_history=history_list,
+                            ):
+                                buf += delta
+                                sentences, buf = _pop_complete_sentences(buf)
+                                for s in sentences:
+                                    # Carry the emit-time index (correct even when
+                                    # the queue has a backlog) — never computed
+                                    # from a live list at consume time.
+                                    idx = len(ai_parts)
+                                    ai_parts.append(s)
+                                    await sentence_q.put(("sentence", idx, s))
+                            trailing = buf.strip()
+                            if trailing:
+                                idx = len(ai_parts)
+                                ai_parts.append(trailing)
+                                await sentence_q.put(("sentence", idx, trailing))
+                        except Exception as e:
+                            logger.error("Streaming LLM failed: %s", e)
+                            await sentence_q.put(("error", str(e)))
+                        finally:
+                            await sentence_q.put(("end", None))
+
+                    llm_task = asyncio.create_task(_llm_streamer())
+                    synth_lang = detected_lang
+                    count = 0
+                    _t0 = time.time()
+                    try:
+                        while True:
+                            kind = await sentence_q.get()
+                            if kind[0] == "end":
+                                break
+                            if kind[0] == "error":
+                                stream_error = kind[1]
+                                break
+                            # Complete sentence ready → synthesize & emit NOW
+                            _idx, payload = kind[1], kind[2]
+                            _s0 = time.time()
+                            async for chunk in tts_service.stream_sentences(
+                                payload, language=synth_lang
+                            ):
+                                if chunk.get("audio_data") is None:
+                                    continue
+                                # True time-to-first-audio: the first sentence event
+                                # (text + audio) is actually being delivered.
+                                if first_sentence_ms == 0:
+                                    first_sentence_ms = (
+                                        time.time() - turn_start
+                                    ) * 1000
                                 yield sse_event(
                                     "sentence",
                                     {
-                                        "index": 0,
+                                        "index": _idx,
                                         "text": chunk["text"],
                                         "audio_data": chunk["audio_data"],
                                     },
                                 )
                                 count += 1
-                    yield sse_event("error", {"detail": stream_error})
+                            tts_ms += (time.time() - _s0) * 1000
+                    finally:
+                        # Client disconnect / barge-in cancels this generator — the
+                        # background LLM task must NOT keep streaming (wasted tokens
+                        # on the free tier). Cancel it on the way out.
+                        if not llm_task.done():
+                            llm_task.cancel()
+                    llm_ms = (time.time() - _l0) * 1000
+                    if first_sentence_ms == 0:
+                        # Error before any sentence — report the failed turn's
+                        # latency so the debug panel stays truthful.
+                        first_sentence_ms = llm_ms
+
+                    ai_response = "".join(ai_parts).strip()
+                    if stream_error:
+                        logger.error("Streaming conversation LLM error: %s", stream_error)
+                        # Deliver the real error to the console/logs (frontend shows
+                        # a friendly message) — but still speak a graceful fallback
+                        # if nothing was said, so the call never goes silent.
+                        if not ai_response:
+                            ai_response = (
+                                "అవును, మా నారాయణ కాలేజీ వివరాలు మీకు చెప్తాను. "
+                                "మీకు కోర్సులు, ఫీజు లేదా అడ్మిషన్ ప్రాసెస్ గురించి ఏది కావాలి?"
+                                if detected_lang == "Telugu"
+                                else (
+                                    "I can help with that. We offer MPC, BiPC, MEC and CEC streams. "
+                                    "What would you like to know more about — courses, fees or admission?"
+                                )
+                            )
+                            async for chunk in tts_service.stream_sentences(
+                                ai_response, language=synth_lang
+                            ):
+                                if chunk.get("audio_data"):
+                                    yield sse_event(
+                                        "sentence",
+                                        {
+                                            "index": 0,
+                                            "text": chunk["text"],
+                                            "audio_data": chunk["audio_data"],
+                                        },
+                                    )
+                                    count += 1
+                        yield sse_event("error", {"detail": stream_error})
 
                 memory.append(user_input)
                 memory.append(ai_response)
@@ -669,6 +706,44 @@ async def process_test_conversation(
         # Convert high-frequency Roman Telugu to Telugu script for unambiguous
         # LLM understanding. Internal only — never exposed to the caller.
         llm_input = transliterate_roman_telugu(user_input)
+        
+        # Response Cache: skip LLM for common questions
+        cached_response = find_cached_response(llm_input, language=detected_lang)
+        if cached_response:
+            ai_response = cached_response
+            llm_time = 0
+            memory.append(user_input)
+            memory.append(ai_response)
+            if len(memory) > 20:
+                memory = memory[-20:]
+                conversation_memory[conversation_id] = memory
+            audio_data = None
+            sentence_audios = []
+            tts_time = 0
+            if include_audio:
+                tts_start = time.time()
+                sentence_audios = await tts_service.synthesize_sentences(
+                    ai_response, language=detected_lang
+                )
+                all_audio = b"".join(
+                    base64.b64decode(s["audio_data"]) for s in sentence_audios if s.get("audio_data")
+                )
+                audio_data = base64.b64encode(all_audio).decode("utf-8") if all_audio else None
+                tts_time = (time.time() - tts_start) * 1000
+            total_time = (time.time() - start_time) * 1000
+            return {
+                "ai_response": ai_response,
+                "audio_data": audio_data,
+                "sentence_audios": sentence_audios,
+                "debug_info": {
+                    "total_time_ms": round(total_time),
+                    "retrieval_time_ms": 0,
+                    "llm_time_ms": 0,
+                    "tts_time_ms": round(tts_time),
+                    "chunks_retrieved": 0,
+                    "knowledge_source": "cache"
+                }
+            }
 
         retrieval_start = time.time()
         context = json_retriever.retrieve_context(llm_input, top_k=5)
