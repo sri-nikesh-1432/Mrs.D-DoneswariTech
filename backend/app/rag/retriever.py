@@ -28,9 +28,10 @@ async def retrieve_context(
     query: str,
     top_k: int = None,
     min_score: float = 0.15,
+    institute_id: Optional[int] = None,
 ) -> List[Dict]:
     """
-    Retrieve the most relevant knowledge chunks for a query.
+    Retrieve the most relevant knowledge chunks for a query with knowledge base isolation (spec §17).
     
     Args:
         query: The question or query text
@@ -39,6 +40,8 @@ async def retrieve_context(
             Calibrated for all-MiniLM-L6-v2 (cosine sims for relevant matches
             typically fall between 0.15 and 0.55 — a 0.3 cutoff silently drops
             relevant chunks, e.g. "What time does the hostel close?" ≈ 0.29).
+        institute_id: Optional institute ID for knowledge base isolation.
+            If provided, only retrieves chunks from this institution's knowledge base.
         
     Returns:
         List of relevant chunks with text, source, and score
@@ -51,8 +54,8 @@ async def retrieve_context(
     if top_k is None:
         top_k = settings.TOP_K_RESULTS
 
-    # Check cache
-    cache_key = _get_cache_key(query, top_k, min_score)
+    # Check cache (include institute_id in cache key for isolation)
+    cache_key = _get_cache_key(query, top_k, min_score) + f":{institute_id or 'global'}"
     if cache_key in _query_cache:
         logger.debug(f"Cache hit for query: {query[:50]}...")
         return _query_cache[cache_key]
@@ -66,6 +69,11 @@ async def retrieve_context(
 
         # Filter by minimum score
         filtered = [r for r in results if r["score"] >= min_score]
+        
+        # Knowledge base isolation: filter by institute_id if provided (spec §17)
+        if institute_id is not None:
+            filtered = [r for r in filtered if r.get("institute_id") == institute_id]
+            logger.info(f"Knowledge base isolation: filtered to institute_id={institute_id}, {len(filtered)} chunks remain")
 
         # Cache results
         if len(_query_cache) >= _cache_max_size:

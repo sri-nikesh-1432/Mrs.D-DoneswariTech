@@ -42,25 +42,332 @@ tts_service = EdgeTTSService()
 
 
 # ---------------------------------------------------------------------------
-# Language detection (mirrors conversation_routes._detect_language)
+# Phantom Input Prevention (spec §6, §10, §20, §21, §48)
 # ---------------------------------------------------------------------------
 
-def _detect_language(user_input: str, hint: Optional[str] = None) -> str:
-    if _re.search(r"[\u0C00-\u0C7F]", user_input):
-        return "Telugu"
-    if looks_roman_telugu(user_input):
-        return "Telugu"
-    if hint and hint.lower() in ("te", "telugu"):
-        return "Telugu"
-    if hint and hint.lower() in ("hi", "hindi"):
-        return "Hindi"
-    if hint and hint.lower() in ("ta", "tamil"):
-        return "Tamil"
-    if hint and hint.lower() in ("kn", "kannada"):
-        return "Kannada"
-    if hint and hint.lower() in ("ml", "malayalam"):
-        return "Malayalam"
-    return "English"
+# Backchannel tokens - sounds that mean "I'm listening" NOT "I want the floor"
+BACKCHANNEL_TOKENS = {
+    "mm", "mhm", "mhmm", "hmm", "hm", "uh", "um", "umm", "aah", "ah",
+    "oh", "ok", "okay", "okayyy", "right", "yes", "yeah", "yep", "yup",
+    "haa", "ha", "aha", "haan", "huh", "haanji", "accha", "achha",
+    "okie", "k", "kk", "cool", "fine", "got it", "alright", "sure",
+    "avunu", "avuna", "avn", "alage", "alaga", "sare", "sar", "sari",
+    "sarle", "parledu", "parledhu", "parled", "baane", "bavundi",
+    "సరే", "అవును", "అలాగే", "సర్లే", "పర్లేదు", "ఓహ్", "అవునా", "హ్మ్",
+    "theek", "theek hai", "theekhai", "hmm hmm", "haanji",
+}
+
+# Genuine interruption words - these mean "stop, I want the floor"
+INTERRUPTION_TOKENS = {
+    "wait", "waitwait", "stop", "hold", "minute", "min", "ledu", "ledhu",
+    "no", "na", "actually", "listen", "sorry", "aa", "ఆగండి", "లేదు",
+    "ఒక్క నిమిషం", "నిమిషం", "చెప్పండి", "అడగనా", "మధ్యలో", "mundu",
+    "mundhu", "malli", "okk", "okkanimisham", "adaganu", "adagana",
+}
+
+# Noise tokens - non-speech sounds
+NOISE_TOKENS = {
+    "a", "aa", "aaa", "e", "ee", "eee", "u", "uu", "o", "oo", "er",
+    "eh", "huh", "huhh", "tch", "tsk", "psst", "click", "clk", "beep",
+    "music", "song", "applause", "silence", "background", "noise",
+    "[music]", "[noise]", "[silence]", "[applause]", "[laughter]",
+    "(music)", "(noise)", "(silence)", "(applause)", "(laughter)",
+}
+
+
+def _is_backchannel(text: str) -> bool:
+    """True if the utterance is just backchannel filler."""
+    text = text.strip().lower()
+    tokens = _re.sub(r"[.,!?…\-]", " ", text).split()
+    if not tokens:
+        return False
+    # Any interruption word = NOT a backchannel
+    if any(t in INTERRUPTION_TOKENS for t in tokens):
+        return False
+    return all(t in BACKCHANNEL_TOKENS for t in tokens)
+
+
+def _is_noise(text: str) -> bool:
+    """True if the text is empty, punctuation, or noise."""
+    text = text.strip()
+    if not text:
+        return True
+    letters = _re.sub(r"[^\p{L}\p{N}]", "", text, flags=_re.UNICODE)
+    if len(letters) < 2:
+        return True
+    tokens = text.lower().split()
+    if len(tokens) == 1:
+        t = _re.sub(r"[.,!?…]", "", tokens[0])
+        if _re.match(r"^(.)\1{2,}$", t):
+            return True
+        if t in NOISE_TOKENS:
+            return True
+    return False
+
+
+def _is_echo(text: str, last_ai_text: str) -> bool:
+    """True if text is an echo of the AI's last spoken words."""
+    text = text.strip().lower()
+    ai = last_ai_text.strip().lower()
+    if not text or not ai or len(text) < 10:
+        return False
+    text_words = text.split()
+    ai_words = set(ai.split())
+    if len(text_words) < 4:
+        return False
+    # Heavy overlap (≥ 75% of words match)
+    hits = sum(1 for w in text_words if w in ai_words)
+    if hits / len(text_words) >= 0.75:
+        return True
+    # Long verbatim tail
+    if len(text_words) >= 5 and text in ai:
+        return True
+    return False
+
+
+class DuplicateTracker:
+    """Track processed utterances to prevent duplicate processing."""
+    
+    def __init__(self, window_seconds: int = 8):
+        self.recent = []  # List of (utterance_id, normalized_text, timestamp)
+        self.window = window_seconds
+        self.counter = 0
+    
+    def _normalize(self, text: str) -> str:
+        return text.strip().lower().replace(r"\s+", " ")
+    
+    def should_process(self, text: str) -> tuple[bool, str]:
+        """
+        Returns (should_process, utterance_id).
+        False if this is a duplicate within the time window.
+        """
+        now = time.time()
+        normalized = self._normalize(text)
+        
+        # Check for recent duplicates
+        self.recent = [
+            (uid, norm, ts) for uid, norm, ts in self.recent
+            if now - ts < self.window
+        ]
+        
+        for uid, norm, _ in self.recent:
+            if norm == normalized:
+                logger.info("Duplicate utterance ignored: %s", text[:50])
+                return False, ""
+        
+        # New utterance
+        self.counter += 1
+        utterance_id = f"utt_{self.counter}"
+        self.recent.append((utterance_id, normalized, now))
+        return True, utterance_id
+
+
+# Global duplicate tracker
+_duplicate_tracker = DuplicateTracker()
+
+
+# ---------------------------------------------------------------------------
+# Latency Instrumentation (spec §27, §34)
+# ---------------------------------------------------------------------------
+
+class LatencyTracker:
+    """Track latency metrics for the voice pipeline."""
+    
+    def __init__(self):
+        self.reset()
+    
+    def reset(self):
+        """Reset all timers for a new turn."""
+        self.turn_start = 0.0
+        self.stt_start = 0.0
+        self.stt_end = 0.0
+        self.rag_start = 0.0
+        self.rag_end = 0.0
+        self.llm_start = 0.0
+        self.llm_first_token = 0.0
+        self.llm_end = 0.0
+        self.tts_start = 0.0
+        self.tts_first_audio = 0.0
+        self.tts_end = 0.0
+        self.speech_end = 0.0
+    
+    def start_turn(self):
+        """Mark the start of a turn (user speech end)."""
+        self.turn_start = time.time()
+    
+    def mark_speech_end(self):
+        """Mark when user speech ended (for TTFA calculation)."""
+        self.speech_end = time.time()
+    
+    def start_stt(self):
+        """Mark STT start."""
+        self.stt_start = time.time()
+    
+    def end_stt(self):
+        """Mark STT end."""
+        self.stt_end = time.time()
+    
+    def start_rag(self):
+        """Mark RAG start."""
+        self.rag_start = time.time()
+    
+    def end_rag(self):
+        """Mark RAG end."""
+        self.rag_end = time.time()
+    
+    def start_llm(self):
+        """Mark LLM start."""
+        self.llm_start = time.time()
+    
+    def mark_llm_first_token(self):
+        """Mark when LLM emitted first token (TTFT)."""
+        if self.llm_first_token == 0.0:
+            self.llm_first_token = time.time()
+    
+    def end_llm(self):
+        """Mark LLM end."""
+        self.llm_end = time.time()
+    
+    def start_tts(self):
+        """Mark TTS start."""
+        self.tts_start = time.time()
+    
+    def mark_tts_first_audio(self):
+        """Mark when first audio was generated (for TTFA)."""
+        if self.tts_first_audio == 0.0:
+            self.tts_first_audio = time.time()
+    
+    def end_tts(self):
+        """Mark TTS end."""
+        self.tts_end = time.time()
+    
+    def get_metrics(self) -> dict:
+        """Get all latency metrics in milliseconds."""
+        metrics = {}
+        
+        if self.stt_start > 0 and self.stt_end > 0:
+            metrics["stt_ms"] = round((self.stt_end - self.stt_start) * 1000)
+        
+        if self.rag_start > 0 and self.rag_end > 0:
+            metrics["rag_ms"] = round((self.rag_end - self.rag_start) * 1000)
+        
+        if self.llm_start > 0:
+            if self.llm_first_token > 0:
+                metrics["llm_ttft_ms"] = round((self.llm_first_token - self.llm_start) * 1000)
+            if self.llm_end > 0:
+                metrics["llm_total_ms"] = round((self.llm_end - self.llm_start) * 1000)
+        
+        if self.tts_start > 0:
+            if self.tts_first_audio > 0:
+                metrics["tts_first_audio_ms"] = round((self.tts_first_audio - self.tts_start) * 1000)
+            if self.tts_end > 0:
+                metrics["tts_total_ms"] = round((self.tts_end - self.tts_start) * 1000)
+        
+        # TTFA: Time to First Audio from speech end
+        if self.speech_end > 0 and self.tts_first_audio > 0:
+            metrics["ttfa_ms"] = round((self.tts_first_audio - self.speech_end) * 1000)
+        
+        # Total turn time
+        if self.turn_start > 0 and self.tts_end > 0:
+            metrics["total_turn_ms"] = round((self.tts_end - self.turn_start) * 1000)
+        
+        return metrics
+
+
+# Global latency tracker
+_latency_tracker = LatencyTracker()
+
+
+# ---------------------------------------------------------------------------
+# Language detection with stability and confidence tracking (spec §13, §14)
+# ---------------------------------------------------------------------------
+
+class LanguageDetector:
+    """Detect and stabilize language across conversation turns."""
+    
+    def __init__(self, history_size: int = 5):
+        self.history: list = []  # Recent language detections
+        self.history_size = history_size
+        self.current_language = "English"
+        self.language_confidence = 0.0
+    
+    def detect(self, user_input: str, stt_language: Optional[str] = None) -> str:
+        """Detect language with confidence and stability."""
+        detected = self._detect_single(user_input, stt_language)
+        
+        # Add to history
+        self.history.append(detected)
+        if len(self.history) > self.history_size:
+            self.history.pop(0)
+        
+        # Calculate confidence based on history
+        if len(self.history) >= 2:
+            # Count occurrences of each language
+            counts = {}
+            for lang in self.history:
+                counts[lang] = counts.get(lang, 0) + 1
+            
+            # Get most common language
+            most_common = max(counts, key=counts.get)
+            confidence = counts[most_common] / len(self.history)
+            
+            # Only switch if confidence is high (spec §14)
+            if confidence >= 0.6:
+                self.current_language = most_common
+                self.language_confidence = confidence
+            # Otherwise maintain current language
+        else:
+            self.current_language = detected
+            self.language_confidence = 0.5
+        
+        return self.current_language
+    
+    def _detect_single(self, user_input: str, stt_language: Optional[str] = None) -> str:
+        """Detect language from a single utterance."""
+        # Priority 1: STT language hint if available
+        if stt_language:
+            stt_lang = stt_language.lower()
+            if stt_lang in ("te", "telugu"):
+                return "Telugu"
+            if stt_lang in ("hi", "hindi"):
+                return "Hindi"
+            if stt_lang in ("ta", "tamil"):
+                return "Tamil"
+            if stt_lang in ("kn", "kannada"):
+                return "Kannada"
+            if stt_lang in ("ml", "malayalam"):
+                return "Malayalam"
+        
+        # Priority 2: Telugu script detection
+        if _re.search(r"[\u0C00-\u0C7F]", user_input):
+            return "Telugu"
+        
+        # Priority 3: Roman Telugu/Tenglish detection (spec §13)
+        if looks_roman_telugu(user_input):
+            return "Telugu"
+        
+        # Priority 4: Hindi script detection
+        if _re.search(r"[\u0900-\u097F]", user_input):
+            return "Hindi"
+        
+        # Priority 5: Tamil script detection
+        if _re.search(r"[\u0B80-\u0BFF]", user_input):
+            return "Tamil"
+        
+        # Priority 6: Kannada script detection
+        if _re.search(r"[\u0C80-\u0CFF]", user_input):
+            return "Kannada"
+        
+        # Priority 7: Malayalam script detection
+        if _re.search(r"[\u0D00-\u0D7F]", user_input):
+            return "Malayalam"
+        
+        # Default: English
+        return "English"
+
+
+# Global language detector
+_language_detector = LanguageDetector()
 
 
 LANGUAGE_INSTRUCTION = (
@@ -76,6 +383,10 @@ LANGUAGE_INSTRUCTION = (
     "- DO NOT HALLUCINATE. Use ONLY the provided knowledge.\n"
     "- Keep it SHORT like a phone call: 2-5 conversational sentences.\n"
     "- Speak like a warm professional counsellor: confident, concise, human.\n"
+    "- NEVER start every response with 'Avunu, tappakunda' or similar repetitive phrases.\n"
+    "- Use natural fillers contextually: 'Hmm...', 'Sare...', 'Okay...', 'One second...' - vary them.\n"
+    "- If information is unavailable, say: 'That particular detail isn't available in the information I have right now.'\n"
+    "- Maintain conversation context - understand follow-ups without repeated clarification.\n"
 )
 
 
@@ -127,13 +438,33 @@ def _pop_complete_sentences(buffer: str):
 
 
 def _build_history(memory: list) -> list:
-    """Convert flat memory into alternating user/model history for the LLM."""
-    history_list = []
-    for i, msg in enumerate(memory[-6:]):
-        role = "model" if i % 2 == 0 else "user"
-        content = str(msg)[:300]
-        history_list.append({"role": role, "content": content})
-    return history_list
+    """Build conversation history for LLM context with context awareness (spec §27, §28).
+    
+    Maintains short-term context to understand follow-ups without repeated clarification.
+    Example: User asks "MPC fee?" then "Hostel?" - system should understand same institution context.
+    """
+    history = []
+    for i in range(0, len(memory), 2):
+        if i + 1 < len(memory):
+            history.append({"role": "user", "content": memory[i]})
+            history.append({"role": "assistant", "content": memory[i + 1]})
+    
+    # Keep last 8 turns for context (16 messages) - balance between context and speed
+    recent_history = history[-8:] if len(history) > 8 else history
+    
+    # Add context hint at the beginning if we have history
+    if recent_history:
+        # Extract key entities from recent conversation (institution, course, etc.)
+        # This helps the LLM maintain context for follow-ups
+        context_hint = "CONVERSATION CONTEXT: You are in an ongoing conversation. "
+        context_hint += "Understand follow-up questions without asking for clarification again. "
+        context_hint += "If user asks about 'fee', 'hostel', 'transport', etc., "
+        context_hint += "assume they mean for the same institution/course previously discussed."
+        
+        # Insert as a system message
+        recent_history.insert(0, {"role": "system", "content": context_hint})
+    
+    return recent_history
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +645,11 @@ async def _process_utterance(
     ai_state: mutable dict with keys 'speaking' (bool) and 'finished_at' (float)
     """
     try:
+        # Reset and start latency tracking for this turn
+        _latency_tracker.reset()
+        _latency_tracker.start_turn()
+        _latency_tracker.mark_speech_end()
+        
         turn_start = time.time()
 
         # Track AI speaking state for echo cancellation
@@ -323,13 +659,14 @@ async def _process_utterance(
         await websocket.send_json({"type": "processing"})
 
         # -- STT ------------------------------------------------------------------
+        _latency_tracker.start_stt()
         pcm_float = (
             np.frombuffer(bytes(pcm_buffer), dtype=np.int16).astype(np.float32) / 32768.0
         )
 
-        stt_start = time.time()
         stt_result = await _transcribe_pcm(pcm_float)
-        stt_ms = (time.time() - stt_start) * 1000
+        _latency_tracker.end_stt()
+        stt_ms = (time.time() - turn_start) * 1000
 
         user_text = (stt_result.get("text") or "").strip()
         detected_lang_code = stt_result.get("language", "en")
@@ -343,25 +680,71 @@ async def _process_utterance(
             })
             return
 
+        # Phantom input prevention (spec §6, §10, §20, §21, §48)
+        last_ai_text = memory[-1] if memory else ""
+        
+        # Check for noise
+        if _is_noise(user_text):
+            logger.info("Phantom input filtered (noise): %s", user_text[:50])
+            await websocket.send_json({
+                "type": "turn_done",
+                "ai_response": "",
+                "debug_info": {"stt_ms": round(stt_ms), "filtered": "noise"},
+            })
+            return
+        
+        # Check for backchannel (only if no interruption words)
+        if _is_backchannel(user_text):
+            logger.info("Phantom input filtered (backchannel): %s", user_text[:50])
+            await websocket.send_json({
+                "type": "turn_done",
+                "ai_response": "",
+                "debug_info": {"stt_ms": round(stt_ms), "filtered": "backchannel"},
+            })
+            return
+        
+        # Check for echo of AI's last speech
+        if _is_echo(user_text, last_ai_text):
+            logger.info("Phantom input filtered (echo): %s", user_text[:50])
+            await websocket.send_json({
+                "type": "turn_done",
+                "ai_response": "",
+                "debug_info": {"stt_ms": round(stt_ms), "filtered": "echo"},
+            })
+            return
+        
+        # Check for duplicate utterance
+        should_process, utterance_id = _duplicate_tracker.should_process(user_text)
+        if not should_process:
+            await websocket.send_json({
+                "type": "turn_done",
+                "ai_response": "",
+                "debug_info": {"stt_ms": round(stt_ms), "filtered": "duplicate"},
+            })
+            return
+
         # Send transcription to client for display
         await websocket.send_json({
             "type": "transcript",
             "text": user_text,
             "language": detected_lang_code,
+            "utterance_id": utterance_id,
         })
 
-        detected_lang = _detect_language(user_text, hint=language)
+        # Enhanced language detection with stability (spec §13, §14)
+        detected_lang = _language_detector.detect(user_text, stt_language=detected_lang_code)
         llm_input = transliterate_roman_telugu(user_text)
 
         # -- RAG ------------------------------------------------------------------
-        rag_start = time.time()
+        _latency_tracker.start_rag()
         if mode == "test":
             retriever = get_json_retriever(knowledge_file)
             context = retriever.retrieve_context(llm_input, top_k=5)
         else:
             retrieved_chunks = await retrieve_context(llm_input, top_k=5)
             context = format_context_for_prompt(retrieved_chunks)
-        rag_ms = (time.time() - rag_start) * 1000
+        _latency_tracker.end_rag()
+        rag_ms = (time.time() - turn_start) * 1000
 
         # -- LLM streaming + sentence-level TTS -----------------------------------
         history_list = _build_history(memory)
@@ -373,10 +756,13 @@ async def _process_utterance(
         async def _llm_streamer():
             nonlocal ai_parts
             buf = ""
+            _latency_tracker.start_llm()
             try:
                 async for delta in stream_chat(
                     f"{llm_input}\n\n{lang_hint}", history_list, context
                 ):
+                    if not ai_parts:  # First token
+                        _latency_tracker.mark_llm_first_token()
                     buf += delta
                     sentences, buf = _pop_complete_sentences(buf)
                     for s in sentences:
@@ -392,6 +778,7 @@ async def _process_utterance(
                 logger.error("WS LLM streaming failed: %s", e)
                 await sentence_q.put(("error", str(e)))
             finally:
+                _latency_tracker.end_llm()
                 await sentence_q.put(("end", None))
 
         llm_task = asyncio.create_task(_llm_streamer())
@@ -399,6 +786,7 @@ async def _process_utterance(
         sentence_count = 0
         first_sentence_ms = 0
         last_sentence_text = ""
+        _latency_tracker.start_tts()
 
         try:
             while True:
@@ -425,18 +813,20 @@ async def _process_utterance(
                         continue
                     if first_sentence_ms == 0:
                         first_sentence_ms = (time.time() - turn_start) * 1000
+                        _latency_tracker.mark_tts_first_audio()
                     await websocket.send_json({
                         "type": "sentence",
                         "index": _idx,
                         "text": chunk["text"],
                         "audio_data": chunk["audio_data"],
                     })
-                    sentence_count += 1
+                    sentence_idx += 1
                     last_sentence_text = chunk["text"]
                 tts_ms = (time.time() - tts_start) * 1000
         finally:
             if not llm_task.done():
                 llm_task.cancel()
+            _latency_tracker.end_tts()
 
         ai_response = "".join(ai_parts).strip()
         if llm_error and not ai_response:
@@ -452,19 +842,32 @@ async def _process_utterance(
             del memory[: len(memory) - 30]
 
         total_ms = (time.time() - turn_start) * 1000
+        
+        # Get comprehensive latency metrics
+        latency_metrics = _latency_tracker.get_metrics()
+        
         logger.info(
             "WS turn done | conv=%s | stt=%.0fms | rag=%.0fms | total=%.0fms | sentences=%d",
-            conversation_id, stt_ms, rag_ms, total_ms, sentence_count,
+            conversation_id, 
+            latency_metrics.get("stt_ms", 0), 
+            latency_metrics.get("rag_ms", 0), 
+            total_ms, 
+            sentence_count,
         )
 
         await websocket.send_json({
             "type": "turn_done",
             "ai_response": ai_response,
             "debug_info": {
-                "stt_time_ms": round(stt_ms),
-                "rag_time_ms": round(rag_ms),
+                "stt_time_ms": latency_metrics.get("stt_ms", 0),
+                "rag_time_ms": latency_metrics.get("rag_ms", 0),
+                "llm_ttft_ms": latency_metrics.get("llm_ttft_ms", 0),
+                "llm_total_ms": latency_metrics.get("llm_total_ms", 0),
+                "tts_first_audio_ms": latency_metrics.get("tts_first_audio_ms", 0),
+                "tts_total_ms": latency_metrics.get("tts_total_ms", 0),
+                "ttfa_ms": latency_metrics.get("ttfa_ms", 0),
+                "total_turn_ms": latency_metrics.get("total_turn_ms", 0),
                 "first_sentence_ms": round(first_sentence_ms) if first_sentence_ms else 0,
-                "total_time_ms": round(total_ms),
                 "sentence_count": sentence_count,
                 "knowledge_source": "json" if mode == "test" else "faiss",
             },
@@ -472,6 +875,7 @@ async def _process_utterance(
         # Mark AI as finished for echo cancellation cooldown
         ai_state["speaking"] = False
         ai_state["finished_at"] = time.time()
+        ai_state["last_response"] = ai_response
 
     except Exception as e:
         logger.error("WS process_utterance failed: %s", e, exc_info=True)
@@ -538,9 +942,11 @@ async def _handle_voice_ws(websocket: WebSocket):
         frame_count = 0
         turn_start_time = 0.0
         # Echo cancellation: track when AI last spoke to avoid self-interruption
-        ai_state = {"speaking": False, "finished_at": 0.0}  # mutable container
-        BARGE_IN_COOLDOWN_MS = 400  # ignore mic for 400ms after AI stops
+        ai_state = {"speaking": False, "finished_at": 0.0, "last_response": ""}  # mutable container
+        BARGE_IN_COOLDOWN_MS = 500  # ignore mic for 500ms after AI stops (increased for better echo suppression)
         current_energy_threshold = ENERGY_THRESHOLD
+        # Adaptive threshold based on recent audio levels
+        recent_rms_values = []
 
         while True:
             msg = await websocket.receive()
@@ -592,11 +998,22 @@ async def _handle_voice_ws(websocket: WebSocket):
                         rms = float(np.sqrt(np.mean(frame**2)))
                         frame_count += 1
                         
+                        # Adaptive threshold: track recent RMS levels
+                        recent_rms_values.append(rms)
+                        if len(recent_rms_values) > 50:  # Keep last 50 frames (~1 second)
+                            recent_rms_values.pop(0)
+                        
                         # Echo cancellation: raise threshold right after AI spoke
                         if ai_state["speaking"] or (time.time() - ai_state["finished_at"]) < (BARGE_IN_COOLDOWN_MS / 1000.0):
-                            current_energy_threshold = ENERGY_THRESHOLD * 3  # much harder to trigger
+                            # Much harder to trigger during/after AI speech
+                            current_energy_threshold = ENERGY_THRESHOLD * 4
                         else:
-                            current_energy_threshold = ENERGY_THRESHOLD
+                            # Adaptive baseline: use 75th percentile of recent RMS
+                            if recent_rms_values:
+                                baseline = np.percentile(recent_rms_values, 75)
+                                current_energy_threshold = max(ENERGY_THRESHOLD, baseline * 1.5)
+                            else:
+                                current_energy_threshold = ENERGY_THRESHOLD
 
                         if rms > current_energy_threshold:
                             if not is_speaking:

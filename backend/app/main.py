@@ -151,13 +151,13 @@ app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
 from app.api import knowledge_router
 from app.api.receptionist_routes import router as receptionist_router
 from app.api.conversation_routes import router as conversation_router
-from app.api.single_call_routes import router as single_call_router
+from app.api.analytics_routes import router as analytics_router
 from app.voice.voice_ws import router as voice_ws_router
 
 app.include_router(knowledge_router)
 app.include_router(receptionist_router)
 app.include_router(conversation_router)
-app.include_router(single_call_router)
+app.include_router(analytics_router)
 app.include_router(voice_ws_router)
 
 
@@ -174,10 +174,30 @@ async def root():
 
 @app.get("/health", tags=["Health"])
 async def health_check():
+    """Health check endpoint returning actual status (spec §50)."""
     from datetime import datetime, timezone
+    from app.rag.vector_store import vector_store
+    from app.tts.edge_tts_service import get_tts_service
+    
+    # Check RAG status
+    rag_ready = vector_store.is_ready
+    
+    # Check voice/TTS status
+    try:
+        tts = get_tts_service()
+        voice_ready = tts is not None
+    except Exception:
+        voice_ready = False
+    
+    # Check realtime WebSocket (basic check - actual connection tested on connect)
+    realtime_ready = True  # WebSocket endpoint is always available
+    
     return {
-        "status": "healthy",
+        "status": "healthy" if (rag_ready and voice_ready and realtime_ready) else "degraded",
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "rag": "ready" if rag_ready else "not_ready",
+        "voice": "ready" if voice_ready else "not_ready",
+        "realtime": "ready" if realtime_ready else "not_ready",
         "groq_configured": settings.is_groq_configured,
         "models": {
             "llm": settings.GROQ_MODEL,

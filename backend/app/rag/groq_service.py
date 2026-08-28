@@ -82,14 +82,19 @@ async def stream_chat_fast(
     query: str,
     lang: str = "English",
     conversation_history: Optional[List[Dict]] = None,
+    context: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """
     ULTRA-FAST streaming for real-time voice — bypasses the heavy prompt builder.
     Uses a ~50-token system prompt instead of ~800 tokens, slashing prefill time.
     The response quality is maintained through focused, specific instructions.
     """
-    # Ultra-minimal system prompt (~60 tokens, vs ~400 for the full one)
-    system = f"You are Mrs D, Narayana admissions counsellor. Reply in {lang}. Max 2 sentences. Natural, warm. Never restate caller words."
+    # Ultra-minimal system prompt with no-hallucination enforcement (spec §16, §17)
+    system = f"You are Mrs D, admissions counsellor. Reply in {lang}. Max 2-3 sentences. Natural, warm. NEVER restate caller words. DO NOT HALLUCINATE - if information is not in the provided context, say: 'That detail isn't available in the information I have.' Use ONLY the provided knowledge context."
+    
+    # Add context if available for grounding
+    if context and context.strip():
+        system += f"\n\nKNOWLEDGE CONTEXT (use ONLY this):\n{context[:1000]}"  # Truncate context for speed
     
     # Build minimal message list (system + last 2 history turns + query)
     messages = [{"role": "system", "content": system}]

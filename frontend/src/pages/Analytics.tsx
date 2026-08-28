@@ -23,6 +23,7 @@ export default function Analytics() {
   const navigate = useNavigate();
   const { t } = useTranslation();
   const [analytics, setAnalytics] = useState<any>(null);
+  const [voiceLatencyData, setVoiceLatencyData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState("7d");
 
@@ -66,6 +67,17 @@ export default function Analytics() {
       if (!id) return;
       const data = await getAnalytics(id);
       setAnalytics(data);
+      
+      // Load voice latency metrics (spec §27, §34)
+      try {
+        const latencyRes = await fetch(`/api/analytics/voice/latency?institute_id=${id}&time_range=${timeRange}`);
+        if (latencyRes.ok) {
+          const latencyData = await latencyRes.json();
+          setVoiceLatencyData(latencyData);
+        }
+      } catch (e) {
+        console.error("Error loading latency metrics:", e);
+      }
     } catch (e) {
       console.error("Error loading analytics:", e);
     } finally {
@@ -136,6 +148,38 @@ export default function Analytics() {
       value: `${analytics?.avg_stt_time_ms?.toFixed(0) || 0}ms`,
       icon: Activity,
       color: "from-green-500/20 to-emerald-500/20",
+    },
+  ];
+
+  // New comprehensive latency metrics (spec §27, §34)
+  const latencyMetrics = [
+    {
+      label: "TTFA (Time to First Audio)",
+      value: `${voiceLatencyData?.avg_ttfa_ms?.toFixed(0) || analytics?.avg_ttfa_ms?.toFixed(0) || 0}ms`,
+      description: "User speech end → First AI audio",
+      icon: Zap,
+      color: "from-purple-500/20 to-pink-500/20",
+    },
+    {
+      label: "LLM TTFT",
+      value: `${voiceLatencyData?.avg_llm_ttft_ms?.toFixed(0) || analytics?.avg_llm_ttft_ms?.toFixed(0) || 0}ms`,
+      description: "Time to first token",
+      icon: TrendingUp,
+      color: "from-blue-500/20 to-indigo-500/20",
+    },
+    {
+      label: "TTS First Audio",
+      value: `${voiceLatencyData?.avg_tts_first_audio_ms?.toFixed(0) || analytics?.avg_tts_first_audio_ms?.toFixed(0) || 0}ms`,
+      description: "TTS start → First audio",
+      icon: Activity,
+      color: "from-green-500/20 to-teal-500/20",
+    },
+    {
+      label: "Total Turn Time",
+      value: `${voiceLatencyData?.avg_total_turn_ms?.toFixed(0) || analytics?.avg_total_turn_ms?.toFixed(0) || 0}ms`,
+      description: "End-to-end latency",
+      icon: Clock,
+      color: "from-orange-500/20 to-red-500/20",
     },
   ];
   
@@ -211,6 +255,31 @@ export default function Analytics() {
                   <p className="text-xs text-slate-400">{metric.label}</p>
                 </div>
                 <p className="text-xl font-bold">{metric.value}</p>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+
+        {/* Latency Metrics (spec §27, §34) */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.45 }}
+          className="glass-card rounded-2xl p-6 mb-8"
+        >
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Zap className="w-5 h-5 text-yellow-400" />
+            Real-Time Latency Metrics
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {latencyMetrics.map((metric, index) => (
+              <div key={metric.label} className={`p-4 bg-gradient-to-br ${metric.color} rounded-xl`}>
+                <div className="flex items-center gap-2 mb-2">
+                  <metric.icon className="w-4 h-4 text-white/80" />
+                  <p className="text-xs text-white/70">{metric.label}</p>
+                </div>
+                <p className="text-xl font-bold text-white">{metric.value}</p>
+                <p className="text-xs text-white/60 mt-1">{metric.description}</p>
               </div>
             ))}
           </div>

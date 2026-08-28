@@ -472,25 +472,16 @@ export function useVoiceAgent({
   }, []);
 
   // ── Phantom-suppression state (spec §2, §20, §21, §48) ──────────────────
-  // lastAITextRef: the AI's most recent spoken text — used to reject Whisper
-  // echoes of Mrs. D's own voice as user turns (AI must never hear itself).
   const lastAITextRef = useRef("");
-  // Ring of recent processed transcripts (normalized) with timestamps — the
-  // same utterance arriving twice (stale STT stream, double VAD fire) is
-  // dropped, never processed twice.
   const recentTranscriptsRef = useRef<Array<{ norm: string; at: number }>>([]);
-  // Recent per-utterance language detections → stable conversation language.
   const langHistoryRef = useRef<string[]>([]);
-  // True while the AI's audio is PAUSED awaiting barge-in classification
-  // (the queue is held, not destroyed — a backchannel lets Mrs. D continue).
   const bargeInPausedRef = useRef(false);
-  // Monotonic response id (spec §59, §60): only the LATEST active response
-  // may enqueue/play audio. A stale stream's sentences are discarded even if
-  // its abort races with a new turn.
   const activeResponseIdRef = useRef(0);
-  // Frontend TTFA (spec §27): when the user's speech ended → first AI audio.
   const ttfaStartRef = useRef(0);
   const ttfaRef = useRef<number | null>(null);
+  // Improved barge-in detection: track user speech during AI playback
+  const userSpeechDuringAIRef = useRef(false);
+  const bargeInThresholdRef = useRef(0.15); // RMS threshold for barge-in
 
   // ── Sentence audio queue (ONE queue per conversation) ─────────────────────
   // Responses arrive as sentence-level audio chunks. They are played strictly
@@ -1034,19 +1025,36 @@ export function useVoiceAgent({
         return;
       }
 
+      // ── BARGE-IN CLASSIFICATION (spec §6, §50) ────────────────────────────
+      // If we're in INTERRUPTED state, classify the captured speech to decide
+      // whether to resume AI (backchannel/noise/echo) or process as new turn.
+      if (fsmNow === "interrupted") {
+        if (!classifyBargeInRef.current(text)) {
+          // Classified as backchannel/noise/echo - AI already resumed or will resume
+          return;
+        }
+        // Genuine interruption - continue to processing below
+      }
+
       // ── VALIDATION GATES (spec §20, §21): only a NEW, VALID user utterance
       //    reaches the LLM. The VAD path already filtered (duration, noise,
       //    backchannel, echo) — this is the final guard shared by all inputs.
       if (isNoiseUtterance(text)) {
         console.log("[VoiceAgent] Noise utterance ignored:", text);
+        bumpStats({ falseDetections: falseDetectionRef.current + 1 });
+        falseDetectionRef.current++;
         return;
       }
       if (isBackchannelUtterance(text)) {
         console.log("[VoiceAgent] Backchannel ignored:", text);
+        bumpStats({ falseDetections: falseDetectionRef.current + 1 });
+        falseDetectionRef.current++;
         return;
       }
       if (isEchoOfLastAI(text, lastAITextRef.current)) {
         console.log("[VoiceAgent] Echo of AI's own voice ignored:", text);
+        bumpStats({ falseDetections: falseDetectionRef.current + 1 });
+        falseDetectionRef.current++;
         return;
       }
       // Duplicate within the recent window (stale STT stream / double fire).
@@ -1056,11 +1064,15 @@ export function useVoiceAgent({
       );
       if (recentTranscriptsRef.current.some((t) => t.norm === normalized)) {
         console.log("[VoiceAgent] Recent duplicate ignored:", text);
+        bumpStats({ falseDetections: falseDetectionRef.current + 1 });
+        falseDetectionRef.current++;
         return;
       }
       // Duplicate filter: never re-send the same transcript twice in a row.
       if (normalized === lastProcessedRef.current) {
         console.log("[VoiceAgent] Duplicate transcript ignored:", text);
+        bumpStats({ falseDetections: falseDetectionRef.current + 1 });
+        falseDetectionRef.current++;
         return;
       }
       lastProcessedRef.current = normalized;
@@ -1223,6 +1235,10 @@ export function useVoiceAgent({
   const submitSpeechRef = useRef(submitSpeech);
   submitSpeechRef.current = submitSpeech;
 
+  // Forward ref for barge-in classification
+  const classifyBargeInRef = useRef(classifyBargeIn);
+  classifyBargeInRef.current = classifyBargeIn;
+
   // Forward ref so finalizeTurn (defined after resumeAudioQueue) can resume
   // the AI after a backchannel / too-short barge-in attempt.
   const resumeAudioQueueRef = useRef<() => void>(() => {});
@@ -1267,18 +1283,20 @@ export function useVoiceAgent({
   const handleVadSpeechStart = useCallback(() => {
     const fsm = fsmRef.current;
     if (endedRef.current) return;
-    // Post-TTS grace: ignore anything within ~350ms of the AI finishing —
+    // Post-TTS grace: ignore anything within ~500ms of the AI finishing —
     // the AI's own trailing audio in the mic must never start a capture.
-    if (Date.now() - aiFinishedAtRef.current < 350) return;
+    if (Date.now() - aiFinishedAtRef.current < 500) return;
     if (fsm === "ai_speaking" || fsm === "processing") {
-      // Barge-in cooldown: ignore audio during the first ~400ms of a sentence
+      // Barge-in cooldown: ignore audio during the first ~500ms of a sentence
       // so the AI's own voice (or echo) can never trigger an interruption.
       if (
         fsm === "ai_speaking" &&
-        Date.now() - aiSpeakStartedAtRef.current < 300
+        Date.now() - aiSpeakStartedAtRef.current < 500
       ) {
         return;
       }
+      // Track that user spoke during AI playback for better classification
+      userSpeechDuringAIRef.current = true;
       // The caller resumed during a pause — keep merging, don't finalize.
       clearFinalizeTimer();
       // INTERRUPTED: pause Mrs. D immediately (fast stop), hold her queue,
@@ -1337,13 +1355,46 @@ export function useVoiceAgent({
   //   anything else                           → genuine interruption: discard
   //     her held queue + cancel the stream, then process the new turn.
   // Returns true when the utterance should proceed to the pipeline.
-  const classifyBargeIn = useCallback((): boolean => {
+  const classifyBargeIn = useCallback((text: string): boolean => {
     if (!bargeInPausedRef.current) return true; // not a barge-in context
+    
+    // Reset the flag for next time
+    userSpeechDuringAIRef.current = false;
+    
+    // Check if this is a backchannel (resume AI)
+    if (isBackchannelUtterance(text)) {
+      console.log("[VoiceAgent] Barge-in classified as backchannel, resuming AI");
+      resumeAudioQueue();
+      bargeInPausedRef.current = false;
+      return false; // don't process as new turn
+    }
+    
+    // Check if this is noise (resume AI)
+    if (isNoiseUtterance(text)) {
+      console.log("[VoiceAgent] Barge-in classified as noise, resuming AI");
+      resumeAudioQueue();
+      bargeInPausedRef.current = false;
+      return false;
+    }
+    
+    // Check if this is an echo (resume AI)
+    if (isEchoOfLastAI(text, lastAITextRef.current)) {
+      console.log("[VoiceAgent] Barge-in classified as echo, resuming AI");
+      resumeAudioQueue();
+      bargeInPausedRef.current = false;
+      return false;
+    }
+    
+    // Genuine interruption: stop AI, process new turn
+    console.log("[VoiceAgent] Genuine barge-in detected, stopping AI");
     stopStreaming();
     stopAudioQueue();
+    bargeInPausedRef.current = false;
+    bumpStats({ bargeIns: bargeInCountRef.current + 1 });
+    bargeInCountRef.current++;
     setFsm("listening"); // submitSpeech will move to PROCESSING
     return false;
-  }, [setFsm, stopAudioQueue, stopStreaming]);
+  }, [setFsm, stopAudioQueue, stopStreaming, resumeAudioQueue, bumpStats]);
 
   // ── ONE STT call site (partial + final), with a shared in-flight lock ────
   // The 16 kHz PCM window is encoded as WAV and posted to the existing
