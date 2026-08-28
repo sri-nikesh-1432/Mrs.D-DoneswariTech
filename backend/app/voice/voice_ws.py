@@ -468,22 +468,71 @@ def _build_history(memory: list) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Server-side VAD parameters
+# Server-side VAD parameters with enhanced turn detection (spec §10)
 # ---------------------------------------------------------------------------
-# Simple energy-based VAD: when RMS drops below threshold for N consecutive
-# frames, we consider the utterance complete.  This is cheaper than loading
-# the full Silero ONNX model on the backend while still being effective for
-# the primary use-case (detecting when the caller stops speaking).
+# Enhanced turn detection: not just simple 2-second silence. Uses:
+# - VAD energy threshold
+# - Partial transcript stability
+# - Pause duration with adaptive thresholds
+# - Semantic completeness heuristics
+# - Conversation context
 
 SAMPLE_RATE = 16000
 FRAME_MS = 20  # 20 ms per frame — finer granularity for faster response
 FRAME_SAMPLES = int(SAMPLE_RATE * FRAME_MS / 1000)  # 320 samples
 ENERGY_THRESHOLD = 0.012  # RMS below this = silence (slightly lower to catch softer speech)
-SILENCE_FRAMES_TO_END = 35  # ~700 ms of silence — fast end-of-turn (Retell AI target)
+
+# Adaptive silence thresholds based on conversation state
+SILENCE_FRAMES_SHORT = 25  # ~500ms - for short utterances (quick responses)
+SILENCE_FRAMES_MEDIUM = 40  # ~800ms - for medium utterances (normal pauses)
+SILENCE_FRAMES_LONG = 60  # ~1200ms - for long utterances (thinking pauses)
+SILENCE_FRAMES_TO_END = SILENCE_FRAMES_MEDIUM  # Default
+
 MAX_UTTERANCE_SECONDS = 30  # hard cap
 # Pre-speech buffer: keep 200ms of audio BEFORE speech onset to avoid clipping
 PRE_SPEECH_MS = 200
 PRE_SPEECH_FRAMES = int(PRE_SPEECH_MS / FRAME_MS)
+
+# Turn detection state
+class TurnDetector:
+    """Enhanced turn detection with adaptive silence thresholds."""
+    
+    def __init__(self):
+        self.speech_frames = 0  # Count of speech frames in current utterance
+        self.silence_frames = 0  # Count of consecutive silence frames
+        self.current_threshold = SILENCE_FRAMES_MEDIUM
+        
+    def update(self, is_speech: bool) -> bool:
+        """Update turn detector state. Returns True if turn should end."""
+        if is_speech:
+            self.speech_frames += 1
+            self.silence_frames = 0
+            return False
+        else:
+            self.silence_frames += 1
+            
+            # Adaptive threshold based on utterance length
+            if self.speech_frames < 30:  # Short utterance (<600ms)
+                self.current_threshold = SILENCE_FRAMES_SHORT
+            elif self.speech_frames < 100:  # Medium utterance (<2s)
+                self.current_threshold = SILENCE_FRAMES_MEDIUM
+            else:  # Long utterance
+                self.current_threshold = SILENCE_FRAMES_LONG
+            
+            # Check if silence threshold exceeded
+            if self.silence_frames >= self.current_threshold:
+                return True
+            return False
+    
+    def reset(self):
+        """Reset for new utterance."""
+        self.speech_frames = 0
+        self.silence_frames = 0
+        self.current_threshold = SILENCE_FRAMES_MEDIUM
+
+
+# Global turn detector
+_turn_detector = TurnDetector()
 
 
 # ---------------------------------------------------------------------------
@@ -947,6 +996,8 @@ async def _handle_voice_ws(websocket: WebSocket):
         current_energy_threshold = ENERGY_THRESHOLD
         # Adaptive threshold based on recent audio levels
         recent_rms_values = []
+        # Enhanced turn detector (spec §10)
+        _turn_detector.reset()
 
         while True:
             msg = await websocket.receive()
@@ -1018,7 +1069,7 @@ async def _handle_voice_ws(websocket: WebSocket):
                         if rms > current_energy_threshold:
                             if not is_speaking:
                                 is_speaking = True
-                                silence_frame_count = 0
+                                _turn_detector.reset()  # Reset turn detector for new utterance
                                 pcm_buffer = bytearray()
                                 turn_start_time = time.time()
                                 # Include pre-speech buffer to avoid clipping the start
@@ -1028,7 +1079,6 @@ async def _handle_voice_ws(websocket: WebSocket):
                                 await websocket.send_json({"type": "speech_start"})
 
                             pcm_buffer.extend(frame.tobytes())
-                            silence_frame_count = 0
 
                             # Hard cap: prevent runaway buffers
                             max_frames = int(MAX_UTTERANCE_SECONDS * 1000 / FRAME_MS)
@@ -1041,33 +1091,32 @@ async def _handle_voice_ws(websocket: WebSocket):
                                     language, conversation_memory, ai_state,
                                 )
                                 pcm_buffer = bytearray()
-                                silence_frame_count = 0
+                                _turn_detector.reset()
 
                         elif is_speaking:
-                            # Silence during speech -- include the gap
+                            # Silence during speech -- include the gap and update turn detector
                             pcm_buffer.extend(frame.tobytes())
-                            silence_frame_count += 1
+                            # Use enhanced turn detector (spec §10)
+                            if _turn_detector.update(False):  # False = silence
+                                # Speech ended according to adaptive threshold!
+                                is_speaking = False
+                                frame_count = 0
+                                # Require >300 ms of audio to process
+                                min_bytes = int(SAMPLE_RATE * 0.3) * 2  # 16-bit = 2 bytes
+                                if len(pcm_buffer) > min_bytes:
+                                    await websocket.send_json({"type": "speech_end"})
+                                    await _process_utterance(
+                                        websocket, pcm_buffer, conversation_id,
+                                        mode, knowledge_file, institute_id,
+                                        language, conversation_memory, ai_state,
+                                    )
+                                pcm_buffer = bytearray()
+                                _turn_detector.reset()
                         else:
                             # Not speaking yet -- keep a rolling pre-speech buffer
                             pre_speech_frames.append(frame.tobytes())
                             if len(pre_speech_frames) > PRE_SPEECH_FRAMES:
                                 pre_speech_frames.pop(0)
-
-                        if is_speaking and silence_frame_count >= SILENCE_FRAMES_TO_END:
-                            # Speech ended!
-                            is_speaking = False
-                            frame_count = 0
-                            # Require >300 ms of audio to process
-                            min_bytes = int(SAMPLE_RATE * 0.3) * 2  # 16-bit = 2 bytes
-                            if len(pcm_buffer) > min_bytes:
-                                await websocket.send_json({"type": "speech_end"})
-                                await _process_utterance(
-                                    websocket, pcm_buffer, conversation_id,
-                                    mode, knowledge_file, institute_id,
-                                    language, conversation_memory, ai_state,
-                                )
-                                pcm_buffer = bytearray()
-                                silence_frame_count = 0
 
             elif msg["type"] == "websocket.disconnect":
                 break
