@@ -15,7 +15,6 @@ import {
   Globe,
   PhoneOff,
   XCircle,
-  CheckCircle2,
   Terminal,
 } from "lucide-react";
 import { useVoiceAgent } from "../hooks/useVoiceAgent";
@@ -128,30 +127,27 @@ export default function ActiveCall() {
 
   if (callStage === "error") {
     return (
-      <div className="h-screen w-screen bg-gradient-to-br from-red-950 via-slate-950 to-slate-950 flex items-center justify-center">
-        <div className="max-w-md w-full mx-auto p-8">
+      <div className="h-screen w-screen bg-[#08080c] flex items-center justify-center">
+        <div className="max-w-sm w-full mx-auto p-8">
           <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
+            initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="bg-gradient-to-br from-red-500/10 to-orange-500/10 backdrop-blur-2xl rounded-3xl border border-red-500/20 p-12 shadow-2xl text-center"
+            transition={{ duration: 0.3 }}
+            className="glass-card-static p-10 text-center"
           >
-            <XCircle className="w-20 h-20 text-red-400 mx-auto mb-6" />
-            <h1 className="text-3xl font-bold mb-4 text-white">{t("error")}</h1>
-            <p className="text-slate-400 mb-8">
-              {error ||
-                "Failed to connect to the voice agent. Is the backend running?"}
+            <XCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
+            <h1 className="text-xl font-bold mb-3 text-white">{t("error")}</h1>
+            <p className="text-sm text-white/40 mb-6">
+              {error || "Failed to connect to the voice agent. Is the backend running?"}
             </p>
-            <div className="space-y-3">
-              <button
-                onClick={() => startCall()}
-                className="w-full py-4 bg-gradient-to-r from-purple-500 to-blue-500 rounded-xl font-medium hover:opacity-90 transition-all flex items-center justify-center gap-2"
-              >
-                <RefreshCw className="w-5 h-5" />
-                {t("retry")}
+            <div className="space-y-2">
+              <button onClick={() => startCall()} className="btn-glow w-full">
+                <RefreshCw className="w-4 h-4 relative z-10" />
+                <span className="relative z-10">{t("retry")}</span>
               </button>
               <button
                 onClick={() => navigate("/testing-console")}
-                className="w-full py-4 bg-white/5 border border-white/10 rounded-xl font-medium hover:bg-white/10 transition-all"
+                className="w-full h-10 rounded-xl text-sm font-medium text-white/40 hover:text-white/60 hover:bg-white/[0.04] transition-all border border-white/[0.04]"
               >
                 {t("backToConsole")}
               </button>
@@ -163,58 +159,58 @@ export default function ActiveCall() {
   }
 
   return (
-    <div className="h-screen w-screen bg-gradient-to-br from-slate-950 via-purple-950/30 to-slate-950 flex flex-col overflow-hidden">
+    <div className="h-screen w-screen bg-[#08080c] flex flex-col overflow-hidden">
       {/* Top Bar */}
-      <div className="h-16 border-b border-white/10 bg-black/20 backdrop-blur-2xl flex items-center justify-between px-6">
-        <div className="flex items-center gap-4">
+      <div className="h-12 shrink-0 border-b border-white/[0.04] bg-[#08080c]/80 backdrop-blur-xl flex items-center justify-between px-5">
+        <div className="flex items-center gap-3">
           <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
             onClick={() => navigate("/testing-console")}
-            className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors"
+            className="flex items-center gap-1.5 text-white/30 hover:text-white/60 transition-colors"
           >
-            <ArrowLeft className="w-5 h-5" />
-            <span className="text-sm font-medium">{t("back")}</span>
+            <ArrowLeft className="w-4 h-4" />
+            <span className="text-xs font-medium">{t("back")}</span>
           </motion.button>
 
-          <div className="h-6 w-px bg-white/10" />
+          <div className="h-4 w-px bg-white/[0.06]" />
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <div
-              className={`w-3 h-3 rounded-full ${
+              className={`w-2 h-2 rounded-full ${
                 callStage === "connecting"
-                  ? "bg-yellow-400 animate-pulse"
+                  ? "bg-amber-400 animate-pulse"
                   : callStage === "listening"
-                  ? "bg-green-400"
+                  ? "bg-emerald-400"
                   : callStage === "thinking"
                   ? "bg-blue-400 animate-pulse"
                   : callStage === "speaking"
-                  ? "bg-purple-400"
-                  : "bg-slate-400"
+                  ? "bg-indigo-400"
+                  : "bg-white/20"
               }`}
             />
-            <span className="text-sm text-slate-300">
+            <span className="text-xs text-white/50">
               {t(STAGE_LABEL_KEYS[callStage] || "idle")}
             </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 px-4 py-2 bg-white/5 rounded-xl border border-white/10">
-            <Globe className="w-4 h-4 text-slate-400" />
-            <span className="text-sm text-slate-300">{detectedLanguage}</span>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white/[0.03] rounded-lg border border-white/[0.04]">
+            <Globe className="w-3 h-3 text-white/25" />
+            <span className="text-[11px] text-white/40">{detectedLanguage}</span>
           </div>
 
           <LanguageSwitcher compact />
 
           <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
             onClick={handleEnd}
-            className="flex items-center gap-2 px-6 py-2 bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl hover:bg-red-500/30 transition-all"
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg hover:bg-red-500/15 transition-all text-xs font-medium"
           >
-            <PhoneOff className="w-5 h-5" />
-            <span className="text-sm font-medium">{t("endCall")}</span>
+            <PhoneOff className="w-3.5 h-3.5" />
+            <span>{t("endCall")}</span>
           </motion.button>
         </div>
       </div>
@@ -223,63 +219,83 @@ export default function ActiveCall() {
       <div className="flex-1 flex overflow-hidden">
         {/* Voice Agent (Center) */}
         <div className="flex-1 flex flex-col items-center justify-center p-8 relative min-w-0">
+          {/* Orb — ElevenLabs-style */}
           <motion.div
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="relative mb-12"
+            transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+            className="relative mb-10"
           >
+            {/* Glow behind orb */}
             <div
-              className={`absolute inset-0 rounded-full blur-3xl ${
+              className={`absolute inset-0 rounded-full blur-3xl transition-all duration-700 ${
                 isUserSpeaking
-                  ? "bg-green-500/30 animate-pulse"
+                  ? "bg-emerald-500/15"
                   : callStage === "listening"
-                  ? "bg-purple-500/20 animate-pulse"
+                  ? "bg-indigo-500/10"
                   : callStage === "thinking"
-                  ? "bg-blue-500/20 animate-pulse"
+                  ? "bg-blue-500/10"
                   : callStage === "speaking"
-                  ? "bg-green-500/20 animate-pulse"
+                  ? "bg-indigo-500/15"
                   : "bg-transparent"
               }`}
             />
 
+            {/* Orb core */}
             <div
-              className={`relative w-56 h-56 rounded-full bg-gradient-to-br from-purple-500/20 to-blue-500/20 flex items-center justify-center border-2 ${
+              className={`orb-core ${
                 isUserSpeaking
-                  ? "border-green-500/60 shadow-green-500/40"
-                  : "border-purple-500/30"
-              } shadow-2xl ${callStage === "listening" ? "animate-pulse" : ""}`}
+                  ? "listening"
+                  : callStage === "listening"
+                  ? "listening"
+                  : callStage === "thinking"
+                  ? "thinking"
+                  : callStage === "speaking"
+                  ? "speaking"
+                  : ""
+              }`}
             >
               {callStage === "connecting" && (
-                <Loader2 className="w-28 h-28 text-yellow-400 animate-spin" />
+                <Loader2 className="w-16 h-16 text-amber-400 animate-spin" />
               )}
               {callStage === "listening" &&
                 (isUserSpeaking ? (
-                  <Mic className="w-28 h-28 text-green-400 animate-pulse" />
+                  <Mic className="w-16 h-16 text-emerald-400 animate-pulse" />
                 ) : (
-                  <Mic className="w-28 h-28 text-purple-300" />
+                  <Mic className="w-16 h-16 text-white/30" />
                 ))}
               {callStage === "thinking" && (
-                <Brain className="w-28 h-28 text-blue-400 animate-pulse" />
+                <Brain className="w-16 h-16 text-blue-400 animate-pulse" />
               )}
               {callStage === "speaking" && (
-                <Volume2 className="w-28 h-28 text-green-400" />
+                <Volume2 className="w-16 h-16 text-indigo-400" />
               )}
             </div>
 
+            {/* Ripple rings */}
+            {(callStage === "listening" || callStage === "speaking") && (
+              <>
+                <div className="orb-ripple" />
+                <div className="orb-ripple" />
+                <div className="orb-ripple" />
+              </>
+            )}
+
+            {/* Stage label below orb */}
             <motion.div
-              initial={{ y: 10, opacity: 0 }}
+              initial={{ y: 8, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              className="absolute -bottom-4 left-1/2 -translate-x-1/2 px-6 py-2 rounded-full text-sm font-medium backdrop-blur-xl border border-white/20 bg-black/40 whitespace-nowrap"
+              className="absolute -bottom-2 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full text-[11px] font-medium backdrop-blur-xl border border-white/[0.06] bg-[#0a0a0f]/60 whitespace-nowrap"
             >
               <span
                 className={
                   callStage === "listening"
-                    ? "text-green-400"
+                    ? "text-emerald-400"
                     : callStage === "thinking"
                     ? "text-blue-400"
                     : callStage === "speaking"
-                    ? "text-purple-400"
-                    : "text-yellow-400"
+                    ? "text-indigo-400"
+                    : "text-amber-400"
                 }
               >
                 {t(STAGE_LABEL_KEYS[callStage] || "idle")}
@@ -287,9 +303,8 @@ export default function ActiveCall() {
             </motion.div>
           </motion.div>
 
-          {/* Real-time voice wave — reacts to ACTUAL sound (user's mic while
-              listening, Mrs. D's audio while speaking). No fake animation. */}
-          <div className="w-full max-w-xl mb-12">
+          {/* Waveform */}
+          <div className="w-full max-w-lg mb-8">
             <VoiceWaveform
               levelsRef={callStage === "speaking" ? aiLevelsRef : micLevelsRef}
               active={callStage === "listening" || callStage === "speaking"}
@@ -300,64 +315,65 @@ export default function ActiveCall() {
                   ? "user"
                   : "idle"
               }
-              className="w-full h-16"
+              className="w-full h-12"
             />
             {callStage === "listening" && isUserSpeaking && (
-              <div className="text-center text-xs font-medium text-green-400 mt-2">
+              <div className="text-center text-[10px] font-medium text-emerald-400/60 mt-1.5">
                 You're speaking… (any voice works — Telugu, Hindi, Tamil, English)
               </div>
             )}
           </div>
 
-          {/* Messages — auto-scrolls to newest, full conversation retained */}
+          {/* Messages */}
           <div
             ref={scrollRef}
-            className="w-full max-w-4xl space-y-4 overflow-y-auto max-h-64 px-4 scroll-smooth"
+            className="w-full max-w-2xl space-y-3 overflow-y-auto max-h-56 px-4 scroll-smooth"
           >
             <AnimatePresence>
               {messages.map((msg, idx) => (
                 <motion.div
                   key={`${msg.timestamp}-${idx}`}
-                  initial={{ opacity: 0, y: 20 }}
+                  initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  className={`flex gap-4 ${
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.25 }}
+                  className={`flex gap-3 ${
                     msg.role === "user" ? "justify-end" : "justify-start"
                   }`}
                 >
                   <div
-                    className={`flex gap-4 max-w-[80%] ${
+                    className={`flex gap-3 max-w-[80%] ${
                       msg.role === "user" ? "flex-row-reverse" : "flex-row"
                     }`}
                   >
                     <div
-                      className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${
+                      className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                         msg.role === "user"
-                          ? "bg-purple-500/20 text-purple-400 border border-purple-500/30"
-                          : "bg-blue-500/20 text-blue-400 border border-blue-500/30"
+                          ? "bg-indigo-500/10 text-indigo-400/60 border border-indigo-500/10"
+                          : "bg-violet-500/10 text-violet-400/60 border border-violet-500/10"
                       }`}
                     >
                       {msg.role === "user" ? (
-                        <User className="w-6 h-6" />
+                        <User className="w-4 h-4" />
                       ) : (
-                        <Bot className="w-6 h-6" />
+                        <Bot className="w-4 h-4" />
                       )}
                     </div>
                     <div
-                      className={`p-5 rounded-2xl min-w-0 break-words ${
+                      className={`px-4 py-3 rounded-2xl min-w-0 break-words ${
                         msg.role === "user"
-                          ? "bg-purple-500/20 border border-purple-500/30"
-                          : "bg-blue-500/20 border border-blue-500/30"
+                          ? "bg-indigo-500/8 border border-indigo-500/10"
+                          : "bg-white/[0.03] border border-white/[0.04]"
                       }`}
                     >
                       {msg.role === "ai" ? (
                         <Markdown text={msg.content} />
                       ) : (
-                        <p className="text-base leading-relaxed whitespace-pre-wrap">
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap">
                           {msg.content}
                         </p>
                       )}
-                      <div className="mt-2 text-[11px] text-slate-500 text-right">
+                      <div className="mt-1.5 text-[10px] text-white/15 text-right">
                         {formatTime(msg.timestamp)}
                       </div>
                     </div>
@@ -369,43 +385,43 @@ export default function ActiveCall() {
         </div>
 
         {/* Developer Console (Right) */}
-        <div className="w-[480px] border-l border-white/10 flex flex-col bg-black/30 backdrop-blur-2xl hidden lg:flex">
+        <div className="w-[420px] border-l border-white/[0.04] flex flex-col bg-[#0a0a0f]/60 backdrop-blur-2xl hidden lg:flex">
           {/* Input Section */}
-          <div className="p-6 border-b border-white/10">
-            <div className="flex items-center gap-2 mb-4">
-              <h3 className="font-semibold text-lg text-white">
+          <div className="p-5 border-b border-white/[0.04]">
+            <div className="flex items-center gap-2 mb-3">
+              <h3 className="text-sm font-semibold text-white/80">
                 {t("developerConsole")}
               </h3>
               <div className="flex-1" />
               <button
                 onClick={() => setShowDebug((s) => !s)}
-                className="text-slate-400 hover:text-white transition-colors"
+                className="text-white/20 hover:text-white/40 transition-colors"
               >
-                <RefreshCw className="w-4 h-4" />
+                <RefreshCw className="w-3.5 h-3.5" />
               </button>
             </div>
 
             {error && (
-              <div className="flex items-center gap-2 bg-amber-500/15 border border-amber-500/30 text-amber-200 text-xs px-3 py-2 rounded-lg mb-3">
-                <Terminal className="w-3.5 h-3.5 shrink-0" />
+              <div className="flex items-center gap-2 bg-amber-500/5 border border-amber-500/10 text-amber-300/80 text-[11px] px-3 py-2 rounded-lg mb-3">
+                <Terminal className="w-3 h-3 shrink-0" />
                 <span>{error}</span>
               </div>
             )}
 
-            <div className="flex gap-3">
+            <div className="flex gap-2">
               <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.97 }}
                 onClick={toggleListening}
                 disabled={callStage !== "listening"}
-                className={`p-4 rounded-xl transition-all ${
+                className={`p-3 rounded-xl transition-all ${
                   isListening
-                    ? "bg-red-500/20 text-red-400 border border-red-500/30"
-                    : "bg-white/5 text-slate-400 border border-white/10 hover:bg-white/10"
-                } disabled:opacity-50`}
+                    ? "bg-red-500/10 text-red-400 border border-red-500/20"
+                    : "bg-white/[0.03] text-white/30 border border-white/[0.04] hover:bg-white/[0.05]"
+                } disabled:opacity-30`}
                 title={isListening ? "Stop listening" : "Start listening"}
               >
-                <Mic className="w-6 h-6" />
+                <Mic className="w-5 h-5" />
               </motion.button>
 
               <input
@@ -415,108 +431,104 @@ export default function ActiveCall() {
                 onKeyDown={(e) => e.key === "Enter" && sendMessage()}
                 placeholder={t("typeMessage")}
                 disabled={callStage !== "listening"}
-                className="flex-1 px-5 py-4 bg-white/5 border border-white/10 rounded-xl text-base focus:outline-none focus:border-purple-500/50 disabled:opacity-50 placeholder:text-slate-500 min-w-0"
+                className="flex-1 px-4 py-3 bg-white/[0.03] border border-white/[0.04] rounded-xl text-sm focus:outline-none focus:border-indigo-500/30 disabled:opacity-30 placeholder:text-white/15 min-w-0"
               />
 
               <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.97 }}
                 onClick={() => sendMessage()}
                 disabled={!inputText.trim() || callStage !== "listening"}
-                className="px-6 py-4 bg-gradient-to-r from-purple-500 to-blue-500 rounded-xl font-medium hover:opacity-90 transition-all disabled:opacity-50"
+                className="px-4 py-3 bg-indigo-500 rounded-xl text-white hover:bg-indigo-600 transition-all disabled:opacity-30"
               >
-                <Send className="w-5 h-5" />
+                <Send className="w-4 h-4" />
               </motion.button>
             </div>
           </div>
 
           {/* Debug Panel */}
           {showDebug && debugInfo && (
-            <div className="p-6 border-b border-white/10 space-y-4">
+            <div className="p-5 border-b border-white/[0.04] space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-slate-300">
+                <span className="text-xs font-medium text-white/50">
                   {t("pipelineDebug")}
                 </span>
-                <div className="flex items-center gap-2 text-xs text-green-400">
-                  <CheckCircle2 className="w-3 h-3" />
+                <div className="flex items-center gap-1.5 text-[10px] text-emerald-400/60">
+                  <div className="w-1 h-1 rounded-full bg-emerald-400" />
                   <span>{t("status")}</span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div className="bg-white/5 rounded-xl p-4 border border-white/10">
-                  <div className="text-slate-400 mb-2 text-xs uppercase tracking-wider">
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="bg-white/[0.02] rounded-xl p-3 border border-white/[0.03]">
+                  <div className="text-white/20 mb-1 text-[10px] uppercase tracking-wider">
                     {t("retrieval")}
                   </div>
-                  <div className="font-mono text-green-400 text-xl font-bold">
+                  <div className="font-mono text-emerald-400 text-lg font-semibold">
                     {Math.round(debugInfo.retrieval_time_ms)}ms
                   </div>
                 </div>
-                <div className="bg-white/5 rounded-xl p-4 border border-white/10">
-                  <div className="text-slate-400 mb-2 text-xs uppercase tracking-wider">
+                <div className="bg-white/[0.02] rounded-xl p-3 border border-white/[0.03]">
+                  <div className="text-white/20 mb-1 text-[10px] uppercase tracking-wider">
                     {t("llm")}
                   </div>
-                  <div className="font-mono text-blue-400 text-xl font-bold">
+                  <div className="font-mono text-blue-400 text-lg font-semibold">
                     {Math.round(debugInfo.llm_time_ms)}ms
                   </div>
                 </div>
-                <div className="bg-white/5 rounded-xl p-4 border border-white/10">
-                  <div className="text-slate-400 mb-2 text-xs uppercase tracking-wider">
+                <div className="bg-white/[0.02] rounded-xl p-3 border border-white/[0.03]">
+                  <div className="text-white/20 mb-1 text-[10px] uppercase tracking-wider">
                     {t("tts")}
                   </div>
-                  <div className="font-mono text-purple-400 text-xl font-bold">
+                  <div className="font-mono text-indigo-400 text-lg font-semibold">
                     {Math.round(debugInfo.tts_time_ms)}ms
                   </div>
                 </div>
-                <div className="bg-white/5 rounded-xl p-4 border border-white/10">
-                  <div className="text-slate-400 mb-2 text-xs uppercase tracking-wider">
+                <div className="bg-white/[0.02] rounded-xl p-3 border border-white/[0.03]">
+                  <div className="text-white/20 mb-1 text-[10px] uppercase tracking-wider">
                     {t("total")}
                   </div>
-                  <div className="font-mono text-white text-xl font-bold">
+                  <div className="font-mono text-white/80 text-lg font-semibold">
                     {Math.round(debugInfo.total_time_ms)}ms
                   </div>
                 </div>
               </div>
 
-              {/* Time-to-first-audio — the metric that decides "feels human"
-                  vs "feels robotic" (target: ~100-200ms after the LLM's first
-                  tokens). The backend reports it per turn. */}
-              <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
-                <span className="text-amber-300 text-xs uppercase tracking-wider">
+              {/* TTFA */}
+              <div className="flex items-center justify-between bg-amber-500/5 border border-amber-500/10 rounded-xl p-3">
+                <span className="text-amber-300/60 text-[10px] uppercase tracking-wider">
                   {t("firstAudio")}
                 </span>
-                <span className="font-mono text-amber-300 text-xl font-bold">
+                <span className="font-mono text-amber-300 text-lg font-semibold">
                   {Math.round(debugInfo.first_sentence_ms ?? 0)}ms
                 </span>
               </div>
-              {/* Frontend TTFA: speech-end → first audio heard (the metric the
-                  caller actually perceives; target < 900ms, spec §27). */}
               {debugInfo.ttfa_ms != null && (
-                <div className="flex items-center justify-between bg-orange-500/10 border border-orange-500/30 rounded-xl p-4">
-                  <span className="text-orange-300 text-xs uppercase tracking-wider">
+                <div className="flex items-center justify-between bg-orange-500/5 border border-orange-500/10 rounded-xl p-3">
+                  <span className="text-orange-300/60 text-[10px] uppercase tracking-wider">
                     Frontend TTFA
                   </span>
-                  <span className="font-mono text-orange-300 text-xl font-bold">
+                  <span className="font-mono text-orange-300 text-lg font-semibold">
                     {Math.round(debugInfo.ttfa_ms)}ms
                   </span>
                 </div>
               )}
 
-              <div className="flex items-center gap-2 text-sm bg-white/5 p-4 rounded-xl border border-white/10">
-                <Brain className="w-4 h-4 text-purple-400" />
-                <span className="text-slate-300">
+              <div className="flex items-center gap-2 text-xs bg-white/[0.02] p-3 rounded-xl border border-white/[0.03]">
+                <Brain className="w-3.5 h-3.5 text-indigo-400/50" />
+                <span className="text-white/40">
                   {t("chunksRetrieved")}:{" "}
-                  <span className="text-white font-medium">
+                  <span className="text-white/70 font-medium">
                     {debugInfo.chunks_retrieved}
                   </span>
                 </span>
               </div>
 
-              <div className="flex items-center gap-2 text-sm bg-white/5 p-4 rounded-xl border border-white/10">
-                <Zap className="w-4 h-4 text-blue-400" />
-                <span className="text-slate-300">
+              <div className="flex items-center gap-2 text-xs bg-white/[0.02] p-3 rounded-xl border border-white/[0.03]">
+                <Zap className="w-3.5 h-3.5 text-blue-400/50" />
+                <span className="text-white/40">
                   {t("knowledgeSource")}:{" "}
-                  <span className="text-white font-medium">
+                  <span className="text-white/70 font-medium">
                     {debugInfo.knowledge_source}
                   </span>
                 </span>
@@ -525,53 +537,52 @@ export default function ActiveCall() {
           )}
 
           {/* Commands */}
-          <div className="p-6 border-b border-white/10">
-            <div className="text-sm font-medium text-slate-300 mb-3">
+          <div className="p-5 border-b border-white/[0.04]">
+            <div className="text-xs font-medium text-white/40 mb-2">
               {t("quickCommands")}
             </div>
-            <div className="space-y-2 text-sm">
-              <div className="bg-purple-500/10 border border-purple-500/30 p-4 rounded-xl">
-                <div className="text-purple-400 font-mono text-base mb-1">
-                  /insert &lt;content&gt;
-                </div>
-                <div className="text-slate-400 text-xs">
-                  {t("uploadKnowledge")}
-                </div>
+            <div className="bg-indigo-500/5 border border-indigo-500/10 p-3 rounded-xl">
+              <div className="text-indigo-400/80 font-mono text-xs mb-0.5">
+                /insert &lt;content&gt;
+              </div>
+              <div className="text-white/25 text-[10px]">
+                {t("uploadKnowledge")}
               </div>
             </div>
           </div>
 
           {/* Conversation Log */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-3">
-            <div className="text-sm font-medium text-slate-300 mb-4 sticky top-0 bg-black/30 backdrop-blur-2xl py-2 border-b border-white/10 pb-4">
+          <div className="flex-1 overflow-y-auto p-5 space-y-2">
+            <div className="text-xs font-medium text-white/40 mb-3 sticky top-0 bg-[#0a0a0f]/60 backdrop-blur-xl py-2 border-b border-white/[0.04] pb-3">
               {t("conversationLog")}
             </div>
             <AnimatePresence>
               {messages.map((msg, idx) => (
                 <motion.div
                   key={`log-${msg.timestamp}-${idx}`}
-                  initial={{ opacity: 0, x: 20 }}
+                  initial={{ opacity: 0, x: 12 }}
                   animate={{ opacity: 1, x: 0 }}
-                  className={`text-sm p-4 rounded-xl border ${
+                  transition={{ duration: 0.2 }}
+                  className={`text-xs p-3 rounded-xl border ${
                     msg.role === "user"
-                      ? "bg-purple-500/10 border-purple-500/30"
-                      : "bg-blue-500/10 border-blue-500/30"
+                      ? "bg-indigo-500/5 border-indigo-500/10"
+                      : "bg-white/[0.02] border-white/[0.04]"
                   }`}
                 >
-                  <div className="flex items-center gap-2 mb-2">
+                  <div className="flex items-center gap-2 mb-1.5">
                     <div
-                      className={`w-2 h-2 rounded-full ${
-                        msg.role === "user" ? "bg-purple-400" : "bg-blue-400"
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        msg.role === "user" ? "bg-indigo-400" : "bg-violet-400"
                       }`}
                     />
-                    <span className="font-medium text-slate-300">
+                    <span className="font-medium text-white/50">
                       {msg.role === "user" ? t("you") : t("ai")}
                     </span>
-                    <span className="ml-auto text-[11px] text-slate-500">
+                    <span className="ml-auto text-[10px] text-white/15">
                       {formatTime(msg.timestamp)}
                     </span>
                   </div>
-                  <div className="text-slate-400 leading-relaxed whitespace-pre-wrap break-words">
+                  <div className="text-white/35 leading-relaxed whitespace-pre-wrap break-words">
                     {msg.content}
                   </div>
                 </motion.div>

@@ -7,14 +7,14 @@ export default function TestingConsole() {
   const navigate = useNavigate();
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-gradient-to-br from-slate-950 via-purple-950/50 to-slate-950 flex flex-col">
-      <div className="h-14 shrink-0 border-b border-white/10 bg-black/20 backdrop-blur-2xl flex items-center px-6">
+    <div className="h-screen w-screen overflow-hidden bg-[#08080c] flex flex-col">
+      <div className="h-11 shrink-0 border-b border-white/[0.04] bg-[#08080c]/80 backdrop-blur-xl flex items-center px-4">
         <button
           onClick={() => navigate("/")}
-          className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors"
+          className="flex items-center gap-1.5 text-white/30 hover:text-white/60 transition-colors"
         >
-          <ArrowLeft className="w-5 h-5" />
-          <span className="text-sm font-medium">Back to Home</span>
+          <ArrowLeft className="w-4 h-4" />
+          <span className="text-[11px] font-medium">Back to Home</span>
         </button>
       </div>
       <div className="flex-1 min-h-0">

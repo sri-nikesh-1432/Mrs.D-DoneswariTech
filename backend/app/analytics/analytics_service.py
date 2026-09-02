@@ -1,185 +1,141 @@
 """
-Analytics Service - Provides campaign analytics and statistics.
-Generates insights from campaign data directly from Student model fields.
+Analytics Service - Provides analytics and statistics for Mrs. D platform.
+Uses the actual database models: Institute, CallHistory, CallAnalytics.
 """
 
 from typing import Dict, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from collections import Counter
+from sqlalchemy import select, func
+from datetime import datetime, timezone, timedelta
 
-from app.database.models import Campaign, Student, CallStatus
+from app.database.models import Institute, CallHistory, CallAnalytics, CallStatus, Sentiment
 from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
 
 
 class AnalyticsService:
-    """Service for campaign analytics and reporting."""
+    """Service for platform analytics and reporting."""
 
-    async def get_campaign_analytics(
+    async def get_institute_analytics(
         self,
         session: AsyncSession,
-        campaign_id: int
+        institute_id: int
     ) -> Optional[Dict]:
         """
-        Get comprehensive analytics for a campaign.
+        Get comprehensive analytics for an institute.
 
         Args:
             session: Database session
-            campaign_id: Campaign ID
+            institute_id: Institute ID
 
         Returns:
-            Dictionary with campaign analytics
+            Dictionary with institute analytics
         """
         try:
-            # Get campaign
-            campaign_result = await session.execute(
-                select(Campaign).where(Campaign.id == campaign_id)
+            # Get institute
+            institute_result = await session.execute(
+                select(Institute).where(Institute.id == institute_id)
             )
-            campaign = campaign_result.scalar_one_or_none()
+            institute = institute_result.scalar_one_or_none()
 
-            if not campaign:
+            if not institute:
                 return None
 
-            # Get all students
-            students_result = await session.execute(
-                select(Student).where(Student.campaign_id == campaign_id)
+            # Get all calls for this institute
+            calls_result = await session.execute(
+                select(CallHistory).where(CallHistory.institute_id == institute_id)
             )
-            students = students_result.scalars().all()
+            calls = calls_result.scalars().all()
 
-            total = len(students)
-            completed = len([s for s in students if s.call_status == CallStatus.COMPLETED])
-            failed = len([s for s in students if s.call_status == CallStatus.FAILED])
-            pending = len([s for s in students if s.call_status == CallStatus.NOT_CALLED])
+            total = len(calls)
+            completed = len([c for c in calls if c.call_status == CallStatus.COMPLETED])
+            failed = len([c for c in calls if c.call_status == CallStatus.FAILED])
+            missed = len([c for c in calls if c.call_status == CallStatus.MISSED])
 
-            interested = len([s for s in students if s.interest_score and s.interest_score >= 70])
-            not_interested = len([s for s in students if s.interest_score and s.interest_score < 30])
-            neutral = total - interested - not_interested
+            # Duration stats
+            completed_calls = [c for c in calls if c.duration_seconds and c.duration_seconds > 0]
+            avg_duration = (
+                sum(c.duration_seconds for c in completed_calls) / len(completed_calls)
+                if completed_calls else 0
+            )
 
-            # Sentiment
-            sentiments = [s.sentiment.value for s in students if s.sentiment]
+            # Sentiment distribution
+            sentiments = [c.sentiment.value for c in calls if c.sentiment]
+            from collections import Counter
             sentiment_counts = Counter(sentiments)
 
-            # Courses
-            courses = [s.preferred_course for s in students if s.preferred_course]
-            course_counts = Counter(courses)
+            # Languages detected
+            languages = [c.detected_language for c in calls if c.detected_language]
+            language_counts = Counter(languages)
 
-            # Duration
-            completed_students = [s for s in students if s.call_duration and s.call_duration > 0]
-            avg_duration = (
-                sum(s.call_duration for s in completed_students) / len(completed_students)
-                if completed_students else 0
-            )
+            # Performance metrics
+            avg_retrieval = [c.avg_retrieval_time_ms for c in calls if c.avg_retrieval_time_ms]
+            avg_llm = [c.avg_llm_response_time_ms for c in calls if c.avg_llm_response_time_ms]
+            avg_stt = [c.avg_stt_time_ms for c in calls if c.avg_stt_time_ms]
+            avg_tts = [c.avg_tts_time_ms for c in calls if c.avg_tts_time_ms]
 
-            # Follow-up required
-            follow_up = len([s for s in students if s.recommended_follow_up])
-
-            # Questions & objections (stored as JSON arrays on Student)
-            all_questions = []
-            all_objections = []
-            for s in students:
-                if s.questions_asked:
-                    try:
-                        if isinstance(s.questions_asked, list):
-                            all_questions.extend(s.questions_asked)
-                    except Exception:
-                        pass
-                if s.objections:
-                    try:
-                        if isinstance(s.objections, list):
-                            all_objections.extend(s.objections)
-                    except Exception:
-                        pass
+            # Today's calls
+            today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+            today_calls = len([c for c in calls if c.created_at and c.created_at >= today_start])
 
             return {
-                "campaign_id": campaign.id,
-                "campaign_name": campaign.campaign_name,
-                "institute_name": campaign.institute_name,
-                "status": campaign.status.value,
-                "total_students": total,
+                "institute_id": institute.id,
+                "institute_name": institute.name,
+                "total_calls": total,
                 "completed_calls": completed,
                 "failed_calls": failed,
-                "pending_calls": pending,
+                "missed_calls": missed,
+                "today_calls": today_calls,
                 "completion_rate": round((completed / total * 100) if total > 0 else 0, 1),
-                "interested_students": interested,
-                "not_interested": not_interested,
-                "neutral_students": max(0, neutral),
-                "interest_rate": round((interested / total * 100) if total > 0 else 0, 1),
-                "sentiment_distribution": dict(sentiment_counts),
-                "course_distribution": dict(course_counts),
                 "average_call_duration": round(avg_duration, 1),
-                "total_call_duration": sum(s.call_duration or 0 for s in students),
-                "follow_up_required": follow_up,
-                "most_asked_questions": Counter(all_questions).most_common(10),
-                "common_objections": Counter(all_objections).most_common(10),
-                "started_at": campaign.started_at.isoformat() if campaign.started_at else None,
-                "completed_at": campaign.completed_at.isoformat() if campaign.completed_at else None,
+                "total_call_duration": sum(c.duration_seconds or 0 for c in calls),
+                "sentiment_distribution": dict(sentiment_counts),
+                "language_distribution": dict(language_counts),
+                "avg_retrieval_time_ms": round(sum(avg_retrieval) / len(avg_retrieval), 1) if avg_retrieval else 0,
+                "avg_llm_response_time_ms": round(sum(avg_llm) / len(avg_llm), 1) if avg_llm else 0,
+                "avg_stt_time_ms": round(sum(avg_stt) / len(avg_stt), 1) if avg_stt else 0,
+                "avg_tts_time_ms": round(sum(avg_tts) / len(avg_tts), 1) if avg_tts else 0,
+                "total_turns": sum(c.total_turns or 0 for c in calls),
             }
 
         except Exception as e:
-            logger.error(f"Failed to get campaign analytics: {e}")
+            logger.error(f"Failed to get institute analytics: {e}")
             return None
 
-    async def get_student_analytics(
-        self, session: AsyncSession, campaign_id: int
+    async def get_call_history(
+        self,
+        session: AsyncSession,
+        institute_id: int,
+        limit: int = 50
     ) -> List[Dict]:
-        """Get analytics for all students in a campaign."""
+        """Get call history for an institute."""
         try:
             result = await session.execute(
-                select(Student).where(Student.campaign_id == campaign_id)
+                select(CallHistory)
+                .where(CallHistory.institute_id == institute_id)
+                .order_by(CallHistory.created_at.desc())
+                .limit(limit)
             )
-            students = result.scalars().all()
+            calls = result.scalars().all()
 
             return [
                 {
-                    "student_id": s.id,
-                    "name": s.name,
-                    "phone": s.phone,
-                    "preferred_course": s.preferred_course,
-                    "call_status": s.call_status.value,
-                    "call_duration": s.call_duration,
-                    "sentiment": s.sentiment.value if s.sentiment else None,
-                    "interest_score": s.interest_score,
-                    "admission_probability": s.admission_probability,
-                    "called_at": s.called_at.isoformat() if s.called_at else None,
+                    "call_id": c.call_id,
+                    "caller_number": c.caller_number,
+                    "caller_name": c.caller_name,
+                    "status": c.call_status.value,
+                    "started_at": c.started_at.isoformat() if c.started_at else None,
+                    "ended_at": c.ended_at.isoformat() if c.ended_at else None,
+                    "duration_seconds": c.duration_seconds,
+                    "detected_language": c.detected_language,
+                    "sentiment": c.sentiment.value if c.sentiment else None,
+                    "summary": c.summary,
+                    "total_turns": c.total_turns,
                 }
-                for s in students
+                for c in calls
             ]
 
         except Exception as e:
-            logger.error(f"Failed to get student analytics: {e}")
+            logger.error(f"Failed to get call history: {e}")
             return []
-
-    async def get_time_series_analytics(
-        self, session: AsyncSession, campaign_id: int
-    ) -> Dict:
-        """Get time-series analytics for campaign progress."""
-        try:
-            result = await session.execute(
-                select(Student).where(Student.campaign_id == campaign_id)
-            )
-            students = result.scalars().all()
-
-            calls_by_time = {}
-            for s in students:
-                if s.called_at:
-                    key = s.called_at.strftime("%Y-%m-%d %H:00")
-                    calls_by_time[key] = calls_by_time.get(key, 0) + 1
-
-            return {"campaign_id": campaign_id, "calls_by_time": calls_by_time}
-
-        except Exception as e:
-            logger.error(f"Failed to get time-series analytics: {e}")
-            return {}
-
-    async def get_comparison_analytics(
-        self, session: AsyncSession, campaign_ids: List[int]
-    ) -> Dict:
-        """Compare analytics across multiple campaigns."""
-        comparison = {}
-        for cid in campaign_ids:
-            analytics = await self.get_campaign_analytics(session, cid)
-            if analytics:
-                comparison[cid] = analytics
-        return comparison
