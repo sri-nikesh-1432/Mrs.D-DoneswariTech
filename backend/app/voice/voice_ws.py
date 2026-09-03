@@ -480,7 +480,11 @@ def _build_history(memory: list) -> list:
 SAMPLE_RATE = 16000
 FRAME_MS = 20  # 20 ms per frame — finer granularity for faster response
 FRAME_SAMPLES = int(SAMPLE_RATE * FRAME_MS / 1000)  # 320 samples
-ENERGY_THRESHOLD = 0.012  # RMS below this = silence (slightly lower to catch softer speech)
+# RMS below this = silence. 0.008 is deliberately LOW so soft/quiet callers
+# (small voices, low mic gain, far from the phone) are still detected — the
+# adaptive baseline + echo-cancellation threshold lift protect against noise
+# triggering phantom turns.
+ENERGY_THRESHOLD = 0.008
 
 # Adaptive silence thresholds based on conversation state
 SILENCE_FRAMES_SHORT = 25  # ~500ms - for short utterances (quick responses)
@@ -869,7 +873,7 @@ async def _process_utterance(
                         "text": chunk["text"],
                         "audio_data": chunk["audio_data"],
                     })
-                    sentence_idx += 1
+                    sentence_count += 1
                     last_sentence_text = chunk["text"]
                 tts_ms = (time.time() - tts_start) * 1000
         finally:
@@ -1080,9 +1084,11 @@ async def _handle_voice_ws(websocket: WebSocket):
 
                             pcm_buffer.extend(frame.tobytes())
 
-                            # Hard cap: prevent runaway buffers
-                            max_frames = int(MAX_UTTERANCE_SECONDS * 1000 / FRAME_MS)
-                            if frame_count > max_frames:
+                            # Hard cap: prevent runaway buffers. Measured on the
+                            # ACTUAL buffered audio (bytes), so silence between
+                            # utterances can never inflate the counter.
+                            max_bytes = int(MAX_UTTERANCE_SECONDS * SAMPLE_RATE) * 2
+                            if len(pcm_buffer) > max_bytes:
                                 is_speaking = False
                                 frame_count = 0
                                 await _process_utterance(

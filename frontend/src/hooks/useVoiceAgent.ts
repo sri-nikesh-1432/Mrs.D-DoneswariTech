@@ -1235,10 +1235,6 @@ export function useVoiceAgent({
   const submitSpeechRef = useRef(submitSpeech);
   submitSpeechRef.current = submitSpeech;
 
-  // Forward ref for barge-in classification
-  const classifyBargeInRef = useRef(classifyBargeIn);
-  classifyBargeInRef.current = classifyBargeIn;
-
   // Forward ref so finalizeTurn (defined after resumeAudioQueue) can resume
   // the AI after a backchannel / too-short barge-in attempt.
   const resumeAudioQueueRef = useRef<() => void>(() => {});
@@ -1259,12 +1255,12 @@ export function useVoiceAgent({
   // thought gets real patience (humans pause mid-sentence, spec §8/§40).
   const adaptiveMergeSilence = useCallback((): number => {
     const spoken = turnSpeechMsRef.current;
-    let base = 650;  // Faster base: 600-700ms target TTFA
-    if (spoken > 4000) base = 1000;
-    else if (spoken > 1800) base = 800;
-    else if (spoken > 800) base = 700;
+    let base = 580;  // Fast base: 600-750ms target TTFA
+    if (spoken > 4000) base = 950;
+    else if (spoken > 1800) base = 780;
+    else if (spoken > 800) base = 680;
     const jitter = 0.9 + Math.random() * 0.2;
-    return Math.min(Math.max(base * jitter, 450), 1800);
+    return Math.min(Math.max(base * jitter, 400), 1600);
   }, []);
 
   const armFinalizeTimer = useCallback(() => {
@@ -1395,6 +1391,12 @@ export function useVoiceAgent({
     setFsm("listening"); // submitSpeech will move to PROCESSING
     return false;
   }, [setFsm, stopAudioQueue, stopStreaming, resumeAudioQueue, bumpStats]);
+
+  // Forward ref for barge-in classification. Declared AFTER classifyBargeIn
+  // (defined above) so submitSpeech — declared earlier in this body — can
+  // classify barge-ins without a temporal-dead-zone ReferenceError at mount.
+  const classifyBargeInRef = useRef<(text: string) => boolean>(() => true);
+  classifyBargeInRef.current = classifyBargeIn;
 
   // ── ONE STT call site (partial + final), with a shared in-flight lock ────
   // The 16 kHz PCM window is encoded as WAV and posted to the existing
@@ -1641,8 +1643,9 @@ export function useVoiceAgent({
       }
 
       // Genuine utterance: if this started as a barge-in, discard the held AI
-      // queue + cancel her stream NOW (spec §7: fast, complete stop).
-      classifyBargeIn();
+      // queue + cancel her stream NOW (spec §7: fast, complete stop). The text
+      // is passed so a paused AI that was NOT a genuine interruption resumes.
+      classifyBargeIn(text);
 
       // Stable language (spec §18): majority of recent detections — a lone
       // noisy partial must never flip the conversation language.
@@ -1682,14 +1685,15 @@ export function useVoiceAgent({
     if (vadSupported) {
       const vad = new VoiceActivityDetector(
         {
-          // ML end-of-speech patience: ~850ms of below-threshold audio ends a
-          // segment. Shorter = faster TTFA (target 600-700ms). The hook's
+          // ML end-of-speech patience: ~700ms of below-threshold audio ends a
+          // segment. Shorter = faster TTFA (target 600-750ms). The hook's
           // adaptive merge grace extends it for long thoughts.
-          redemptionMs: 850,
-          minSpeechMs: 300,
+          redemptionMs: 700,
+          minSpeechMs: 250,
           preSpeechPadMs: 400,
-          positiveThreshold: 0.3,
-          negativeThreshold: 0.25,
+          // Sensitive thresholds: even small/soft voices start a turn.
+          positiveThreshold: 0.22,
+          negativeThreshold: 0.18,
           buckets: 48,
         },
         {

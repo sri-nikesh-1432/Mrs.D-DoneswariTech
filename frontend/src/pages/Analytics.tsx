@@ -87,8 +87,8 @@ export default function Analytics() {
   
   if (loading) {
     return (
-      <div className="h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white p-8 flex items-center justify-center">
-        <div className="text-slate-400">{t("loading")}</div>
+      <div className="h-screen bg-gradient-to-br from-[#fbf6ec] via-[#f5edde] to-[#fbf6ec] text-[#43301f] p-8 flex items-center justify-center">
+        <div className="text-[#8a7157]">{t("loading")}</div>
       </div>
     );
   }
@@ -98,29 +98,29 @@ export default function Analytics() {
       label: t("totalCalls"),
       value: analytics?.total_calls || 0,
       icon: Phone,
-      color: "from-purple-500/20 to-blue-500/20",
-      iconColor: "text-purple-400",
+      color: "from-[#a85a32]/15 to-[#3a9fd6]/15",
+      iconColor: "text-[#a85a32]",
     },
     {
       label: t("todaysCalls"),
       value: analytics?.today_calls || 0,
       icon: Calendar,
-      color: "from-green-500/20 to-emerald-500/20",
-      iconColor: "text-green-400",
+      color: "from-[#3e9b6e]/15 to-[#3e9b6e]/10",
+      iconColor: "text-[#3e9b6e]",
     },
     {
       label: t("completed"),
       value: analytics?.completed_calls || 0,
       icon: CheckCircle,
-      color: "from-blue-500/20 to-cyan-500/20",
-      iconColor: "text-blue-400",
+      color: "from-[#3a9fd6]/15 to-[#5ab8e4]/10",
+      iconColor: "text-[#3a9fd6]",
     },
     {
       label: t("missed"),
       value: analytics?.missed_calls || 0,
       icon: XCircle,
-      color: "from-red-500/20 to-orange-500/20",
-      iconColor: "text-red-400",
+      color: "from-[#c1442e]/15 to-[#d9822b]/10",
+      iconColor: "text-[#b03a24]",
     },
   ];
   
@@ -129,25 +129,25 @@ export default function Analytics() {
       label: t("avgDuration"),
       value: `${analytics?.avg_duration_seconds?.toFixed(0) || 0}s`,
       icon: Clock,
-      color: "from-purple-500/20 to-blue-500/20",
+      color: "from-[#a85a32]/15 to-[#3a9fd6]/15",
     },
     {
       label: t("avgRetrieval"),
       value: `${analytics?.avg_retrieval_time_ms?.toFixed(0) || 0}ms`,
       icon: Zap,
-      color: "from-yellow-500/20 to-orange-500/20",
+      color: "from-[#d9822b]/15 to-[#c07b52]/10",
     },
     {
       label: t("avgLlm"),
       value: `${analytics?.avg_llm_response_time_ms?.toFixed(0) || 0}ms`,
       icon: MessageSquare,
-      color: "from-blue-500/20 to-cyan-500/20",
+      color: "from-[#3a9fd6]/15 to-[#5ab8e4]/10",
     },
     {
       label: "Avg STT Time",
       value: `${analytics?.avg_stt_time_ms?.toFixed(0) || 0}ms`,
       icon: Activity,
-      color: "from-green-500/20 to-emerald-500/20",
+      color: "from-[#3e9b6e]/15 to-[#3e9b6e]/10",
     },
   ];
 
@@ -158,39 +158,39 @@ export default function Analytics() {
       value: `${voiceLatencyData?.avg_ttfa_ms?.toFixed(0) || analytics?.avg_ttfa_ms?.toFixed(0) || 0}ms`,
       description: "User speech end → First AI audio",
       icon: Zap,
-      color: "from-purple-500/20 to-pink-500/20",
+      color: "from-[#a85a32]/20 to-[#c07b52]/10",
     },
     {
       label: "LLM TTFT",
       value: `${voiceLatencyData?.avg_llm_ttft_ms?.toFixed(0) || analytics?.avg_llm_ttft_ms?.toFixed(0) || 0}ms`,
       description: "Time to first token",
       icon: TrendingUp,
-      color: "from-blue-500/20 to-indigo-500/20",
+      color: "from-[#3a9fd6]/20 to-[#2b82b5]/10",
     },
     {
       label: "TTS First Audio",
       value: `${voiceLatencyData?.avg_tts_first_audio_ms?.toFixed(0) || analytics?.avg_tts_first_audio_ms?.toFixed(0) || 0}ms`,
       description: "TTS start → First audio",
       icon: Activity,
-      color: "from-green-500/20 to-teal-500/20",
+      color: "from-[#3e9b6e]/20 to-[#3e9b6e]/10",
     },
     {
       label: "Total Turn Time",
       value: `${voiceLatencyData?.avg_total_turn_ms?.toFixed(0) || analytics?.avg_total_turn_ms?.toFixed(0) || 0}ms`,
       description: "End-to-end latency",
       icon: Clock,
-      color: "from-orange-500/20 to-red-500/20",
+      color: "from-[#d9822b]/20 to-[#b06a1f]/10",
     },
   ];
   
   return (
-    <div className="h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white p-8 flex flex-col overflow-hidden">
+    <div className="h-screen bg-gradient-to-br from-[#fbf6ec] via-[#f5edde] to-[#fbf6ec] text-[#43301f] p-8 flex flex-col overflow-hidden">
       <div className="max-w-7xl mx-auto w-full flex-1 min-h-0 overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <button
             onClick={() => navigate("/")}
-            className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors text-sm"
+            className="flex items-center gap-2 text-[#8a7157] hover:text-[#43301f] transition-colors text-sm"
           >
             <ArrowLeft className="w-5 h-5" />
             <span>{t("backHome")}</span>
@@ -200,12 +200,12 @@ export default function Analytics() {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold mb-2">{t("analyticsTitle")}</h1>
-            <p className="text-slate-400">{t("analyticsSub")}</p>
+            <p className="text-[#8a7157]">{t("analyticsSub")}</p>
           </div>
           <select
             value={timeRange}
             onChange={(e) => setTimeRange(e.target.value)}
-            className="px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-sm focus:outline-none focus:border-purple-500/50"
+            className="px-4 py-2 bg-[#8f4426]/[0.05] border border-[#8f4426]/[0.12] rounded-xl text-sm focus:outline-none focus:border-[#a85a32]/50 text-[#43301f]"
           >
             <option value="7d">Last 7 days</option>
             <option value="30d">Last 30 days</option>
@@ -228,7 +228,7 @@ export default function Analytics() {
                   <stat.icon className={`w-6 h-6 ${stat.iconColor}`} />
                 </div>
                 <div>
-                  <p className="text-sm text-slate-400 mb-1">{stat.label}</p>
+                  <p className="text-sm text-[#8a7157] mb-1">{stat.label}</p>
                   <p className="text-2xl font-bold">{stat.value}</p>
                 </div>
               </div>
@@ -244,15 +244,15 @@ export default function Analytics() {
           className="glass-card rounded-2xl p-6 mb-8"
         >
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <BarChart3 className="w-5 h-5 text-blue-400" />
+            <BarChart3 className="w-5 h-5 text-[#3a9fd6]" />
             Performance Metrics
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {performanceMetrics.map((metric, index) => (
-              <div key={metric.label} className="p-4 bg-white/5 rounded-xl">
+              <div key={metric.label} className="p-4 bg-[#8f4426]/[0.04] rounded-xl">
                 <div className="flex items-center gap-2 mb-2">
-                  <metric.icon className="w-4 h-4 text-slate-400" />
-                  <p className="text-xs text-slate-400">{metric.label}</p>
+                  <metric.icon className="w-4 h-4 text-[#8a7157]" />
+                  <p className="text-xs text-[#8a7157]">{metric.label}</p>
                 </div>
                 <p className="text-xl font-bold">{metric.value}</p>
               </div>
@@ -268,18 +268,18 @@ export default function Analytics() {
           className="glass-card rounded-2xl p-6 mb-8"
         >
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Zap className="w-5 h-5 text-yellow-400" />
+            <Zap className="w-5 h-5 text-[#d9822b]" />
             Real-Time Latency Metrics
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {latencyMetrics.map((metric, index) => (
-              <div key={metric.label} className={`p-4 bg-gradient-to-br ${metric.color} rounded-xl`}>
+              <div key={metric.label} className={`p-4 bg-gradient-to-br ${metric.color} rounded-xl border border-[#8f4426]/[0.08]`}>
                 <div className="flex items-center gap-2 mb-2">
-                  <metric.icon className="w-4 h-4 text-white/80" />
-                  <p className="text-xs text-white/70">{metric.label}</p>
+                  <metric.icon className="w-4 h-4 text-[#43301f]/70" />
+                  <p className="text-xs text-[#5c4632]">{metric.label}</p>
                 </div>
-                <p className="text-xl font-bold text-white">{metric.value}</p>
-                <p className="text-xs text-white/60 mt-1">{metric.description}</p>
+                <p className="text-xl font-bold text-[#43301f]">{metric.value}</p>
+                <p className="text-xs text-[#8a7157] mt-1">{metric.description}</p>
               </div>
             ))}
           </div>
@@ -294,31 +294,31 @@ export default function Analytics() {
             className="glass-card rounded-2xl p-6"
           >
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <BookOpen className="w-5 h-5 text-purple-400" />
+              <BookOpen className="w-5 h-5 text-[#a85a32]" />
               {t("knowledgeUsage")}
             </h2>
             <div className="space-y-4">
-              <div className="p-4 bg-white/5 rounded-xl">
-                <p className="text-xs text-slate-400 mb-1">{t("knowledgeCoverage")}</p>
+              <div className="p-4 bg-[#8f4426]/[0.04] rounded-xl">
+                <p className="text-xs text-[#8a7157] mb-1">{t("knowledgeCoverage")}</p>
                 <div className="flex items-center gap-3">
-                  <div className="flex-1 h-2 bg-white/10 rounded-full overflow-hidden">
+                  <div className="flex-1 h-2 bg-[#8f4426]/[0.1] rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-gradient-to-r from-purple-500 to-blue-500"
+                      className="h-full bg-gradient-to-r from-[#a85a32] to-[#3a9fd6]"
                       style={{ width: `${analytics?.knowledge_coverage || 0}%` }}
                     />
                   </div>
-                  <span className="text-sm font-medium">{analytics?.knowledge_coverage?.toFixed(1) || 0}%</span>
+                  <span className="text-sm font-medium text-[#43301f]">{analytics?.knowledge_coverage?.toFixed(1) || 0}%</span>
                 </div>
               </div>
               
               {analytics?.top_retrieved_chunks && analytics.top_retrieved_chunks.length > 0 && (
-                <div className="p-4 bg-white/5 rounded-xl">
-                  <p className="text-xs text-slate-400 mb-2">{t("topRetrieved")}</p>
+                <div className="p-4 bg-[#8f4426]/[0.04] rounded-xl">
+                  <p className="text-xs text-[#8a7157] mb-2">{t("topRetrieved")}</p>
                   <div className="space-y-2">
                     {analytics.top_retrieved_chunks.slice(0, 5).map((chunk: any, i: number) => (
                       <div key={i} className="flex items-center justify-between text-sm">
-                        <span className="text-slate-300 truncate">Chunk {chunk.chunk_id || i + 1}</span>
-                        <span className="text-purple-400 font-medium">{chunk.count}x</span>
+                        <span className="text-[#5c4632] truncate">Chunk {chunk.chunk_id || i + 1}</span>
+                        <span className="text-[#a85a32] font-medium">{chunk.count}x</span>
                       </div>
                     ))}
                   </div>
@@ -334,19 +334,19 @@ export default function Analytics() {
             className="glass-card rounded-2xl p-6"
           >
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <MessageSquare className="w-5 h-5 text-green-400" />
+              <MessageSquare className="w-5 h-5 text-[#3e9b6e]" />
               {t("mostAsked")}
             </h2>
             <div className="space-y-3">
               {analytics?.most_asked_questions && analytics.most_asked_questions.length > 0 ? (
                 analytics.most_asked_questions.slice(0, 5).map((q: any, i: number) => (
-                  <div key={i} className="p-3 bg-white/5 rounded-xl">
-                    <p className="text-sm text-slate-300 mb-1">{q.question}</p>
-                    <p className="text-xs text-purple-400 font-medium">{q.count} times</p>
+                  <div key={i} className="p-3 bg-[#8f4426]/[0.04] rounded-xl">
+                    <p className="text-sm text-[#5c4632] mb-1">{q.question}</p>
+                    <p className="text-xs text-[#a85a32] font-medium">{q.count} times</p>
                   </div>
                 ))
               ) : (
-                <p className="text-sm text-slate-400">{t("noQuestions")}</p>
+                <p className="text-sm text-[#8a7157]">{t("noQuestions")}</p>
               )}
             </div>
           </motion.div>
@@ -360,7 +360,7 @@ export default function Analytics() {
           className="glass-card rounded-2xl p-6"
         >
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Clock className="w-5 h-5 text-blue-400" />
+            <Clock className="w-5 h-5 text-[#3a9fd6]" />
             {t("peakHours")}
           </h2>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
@@ -372,13 +372,13 @@ export default function Analytics() {
               
               return (
                 <div key={i} className="flex flex-col items-center gap-2">
-                  <div className="w-full h-32 bg-white/5 rounded-lg relative overflow-hidden">
+                  <div className="w-full h-32 bg-[#8f4426]/[0.04] rounded-lg relative overflow-hidden">
                     <div
-                      className="absolute bottom-0 w-full bg-gradient-to-t from-purple-500 to-blue-500 transition-all"
+                      className="absolute bottom-0 w-full bg-gradient-to-t from-[#a85a32] to-[#3a9fd6] transition-all"
                       style={{ height: `${height}%` }}
                     />
                   </div>
-                  <p className="text-xs text-slate-400">{i}:00</p>
+                  <p className="text-xs text-[#8a7157]">{i}:00</p>
                 </div>
               );
             })}

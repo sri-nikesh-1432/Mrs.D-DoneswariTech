@@ -56,8 +56,8 @@ export default function Markdown({ text }: { text: string }) {
     if (trimmed.startsWith("```")) {
       const content = trimmed.replace(/^```[a-zA-Z0-9_-]*\n?/, "").replace(/```$/, "");
       parts.push(
-        <pre key={blockIdx} className="bg-black/40 border border-white/10 rounded-xl p-4 overflow-x-auto text-sm my-2">
-          <code className="font-mono text-emerald-300">{content}</code>
+        <pre key={blockIdx} className="bg-[#43301f]/[0.06] border border-[#8f4426]/[0.1] rounded-xl p-4 overflow-x-auto text-sm my-2">
+          <code className="font-mono text-[#3e9b6e]">{content}</code>
         </pre>
       );
       return;
@@ -117,7 +117,7 @@ export default function Markdown({ text }: { text: string }) {
       parts.push(
         <p
           key={blockIdx}
-          className="text-sm leading-relaxed my-1"
+          className="text-sm leading-relaxed my-1 text-[#43301f]"
           dangerouslySetInnerHTML={{ __html: inlineMarkdown(lines[0]) }}
         />
       );
@@ -127,7 +127,7 @@ export default function Markdown({ text }: { text: string }) {
           {lines.map((l, i) => (
             <p
               key={i}
-              className="text-sm leading-relaxed"
+              className="text-sm leading-relaxed text-[#43301f]"
               dangerouslySetInnerHTML={{ __html: inlineMarkdown(l) }}
             />
           ))}
@@ -137,7 +137,7 @@ export default function Markdown({ text }: { text: string }) {
   });
 
   return (
-    <div className="markdown-body text-sm leading-relaxed [&_code]:bg-black/40 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded-md [&_code]:font-mono [&_code]:text-xs [&_table]:w-full [&_th]:text-left [&_th]:p-2 [&_th]:border [&_th]:border-white/10 [&_th]:bg-white/5 [&_th]:text-xs [&_td]:p-2 [&_td]:border [&_td]:border-white/10 [&_td]:text-xs [&_tr]:border [&_tr]:border-white/10">
+    <div className="markdown-body text-sm leading-relaxed [&_code]:bg-[#43301f]/[0.06] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded-md [&_code]:font-mono [&_code]:text-xs [&_table]:w-full [&_th]:text-left [&_th]:p-2 [&_th]:border [&_th]:border-[#8f4426]/[0.15] [&_th]:bg-[#8f4426]/[0.06] [&_th]:text-xs [&_td]:p-2 [&_td]:border [&_td]:border-[#8f4426]/[0.15] [&_td]:text-xs [&_tr]:border [&_tr]:border-[#8f4426]/[0.15]">
       {parts}
     </div>
   );

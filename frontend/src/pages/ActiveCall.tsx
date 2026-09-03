@@ -127,7 +127,7 @@ export default function ActiveCall() {
 
   if (callStage === "error") {
     return (
-      <div className="h-screen w-screen bg-[#08080c] flex items-center justify-center">
+      <div className="h-screen w-screen bg-gradient-to-br from-[#fbf6ec] via-[#f5edde] to-[#fbf6ec] flex items-center justify-center">
         <div className="max-w-sm w-full mx-auto p-8">
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
@@ -135,9 +135,9 @@ export default function ActiveCall() {
             transition={{ duration: 0.3 }}
             className="glass-card-static p-10 text-center"
           >
-            <XCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
-            <h1 className="text-xl font-bold mb-3 text-white">{t("error")}</h1>
-            <p className="text-sm text-white/40 mb-6">
+            <XCircle className="w-12 h-12 text-[#b03a24] mx-auto mb-4" />
+            <h1 className="text-xl font-bold mb-3 text-[#43301f]">{t("error")}</h1>
+            <p className="text-sm text-[#8a7157] mb-6">
               {error || "Failed to connect to the voice agent. Is the backend running?"}
             </p>
             <div className="space-y-2">
@@ -147,7 +147,7 @@ export default function ActiveCall() {
               </button>
               <button
                 onClick={() => navigate("/testing-console")}
-                className="w-full h-10 rounded-xl text-sm font-medium text-white/40 hover:text-white/60 hover:bg-white/[0.04] transition-all border border-white/[0.04]"
+                className="w-full h-10 rounded-xl text-sm font-medium text-[#8a7157] hover:text-[#43301f] hover:bg-[#8f4426]/[0.05] transition-all border border-[#8f4426]/[0.12]"
               >
                 {t("backToConsole")}
               </button>
@@ -159,46 +159,46 @@ export default function ActiveCall() {
   }
 
   return (
-    <div className="h-screen w-screen bg-[#08080c] flex flex-col overflow-hidden">
+    <div className="h-screen w-screen bg-gradient-to-br from-[#fbf6ec] via-[#f5edde] to-[#fbf6ec] flex flex-col overflow-hidden">
       {/* Top Bar */}
-      <div className="h-12 shrink-0 border-b border-white/[0.04] bg-[#08080c]/80 backdrop-blur-xl flex items-center justify-between px-5">
+      <div className="h-12 shrink-0 border-b border-[#8f4426]/[0.08] bg-[#fbf6ec]/80 backdrop-blur-xl flex items-center justify-between px-5">
         <div className="flex items-center gap-3">
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => navigate("/testing-console")}
-            className="flex items-center gap-1.5 text-white/30 hover:text-white/60 transition-colors"
+            className="flex items-center gap-1.5 text-[#8a7157] hover:text-[#43301f] transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
             <span className="text-xs font-medium">{t("back")}</span>
           </motion.button>
 
-          <div className="h-4 w-px bg-white/[0.06]" />
+          <div className="h-4 w-px bg-[#8f4426]/[0.12]" />
 
           <div className="flex items-center gap-2">
             <div
               className={`w-2 h-2 rounded-full ${
                 callStage === "connecting"
-                  ? "bg-amber-400 animate-pulse"
+                  ? "bg-[#d9822b] animate-pulse"
                   : callStage === "listening"
-                  ? "bg-emerald-400"
+                  ? "bg-[#3a9fd6]"
                   : callStage === "thinking"
-                  ? "bg-blue-400 animate-pulse"
+                  ? "bg-[#a85a32] animate-pulse"
                   : callStage === "speaking"
-                  ? "bg-indigo-400"
-                  : "bg-white/20"
+                  ? "bg-[#2b82b5]"
+                  : "bg-[#8a7157]/30"
               }`}
             />
-            <span className="text-xs text-white/50">
+            <span className="text-xs text-[#5c4632]">
               {t(STAGE_LABEL_KEYS[callStage] || "idle")}
             </span>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white/[0.03] rounded-lg border border-white/[0.04]">
-            <Globe className="w-3 h-3 text-white/25" />
-            <span className="text-[11px] text-white/40">{detectedLanguage}</span>
+          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-[#8f4426]/[0.04] rounded-lg border border-[#8f4426]/[0.08]">
+            <Globe className="w-3 h-3 text-[#8a7157]" />
+            <span className="text-[11px] text-[#5c4632]">{detectedLanguage}</span>
           </div>
 
           <LanguageSwitcher compact />
@@ -207,7 +207,7 @@ export default function ActiveCall() {
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={handleEnd}
-            className="flex items-center gap-1.5 px-4 py-1.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg hover:bg-red-500/15 transition-all text-xs font-medium"
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-[#c1442e]/10 text-[#b03a24] border border-[#c1442e]/25 rounded-lg hover:bg-[#c1442e]/15 transition-all text-xs font-medium"
           >
             <PhoneOff className="w-3.5 h-3.5" />
             <span>{t("endCall")}</span>
@@ -219,7 +219,7 @@ export default function ActiveCall() {
       <div className="flex-1 flex overflow-hidden">
         {/* Voice Agent (Center) */}
         <div className="flex-1 flex flex-col items-center justify-center p-8 relative min-w-0">
-          {/* Orb — ElevenLabs-style */}
+          {/* Orb — warm cognac/sky */}
           <motion.div
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
@@ -230,13 +230,13 @@ export default function ActiveCall() {
             <div
               className={`absolute inset-0 rounded-full blur-3xl transition-all duration-700 ${
                 isUserSpeaking
-                  ? "bg-emerald-500/15"
+                  ? "bg-[#a85a32]/20"
                   : callStage === "listening"
-                  ? "bg-indigo-500/10"
+                  ? "bg-[#3a9fd6]/15"
                   : callStage === "thinking"
-                  ? "bg-blue-500/10"
+                  ? "bg-[#a85a32]/15"
                   : callStage === "speaking"
-                  ? "bg-indigo-500/15"
+                  ? "bg-[#3a9fd6]/25"
                   : "bg-transparent"
               }`}
             />
@@ -256,19 +256,19 @@ export default function ActiveCall() {
               }`}
             >
               {callStage === "connecting" && (
-                <Loader2 className="w-16 h-16 text-amber-400 animate-spin" />
+                <Loader2 className="w-16 h-16 text-[#d9822b] animate-spin" />
               )}
               {callStage === "listening" &&
                 (isUserSpeaking ? (
-                  <Mic className="w-16 h-16 text-emerald-400 animate-pulse" />
+                  <Mic className="w-16 h-16 text-[#a85a32] animate-pulse" />
                 ) : (
-                  <Mic className="w-16 h-16 text-white/30" />
+                  <Mic className="w-16 h-16 text-[#8a7157]/60" />
                 ))}
               {callStage === "thinking" && (
-                <Brain className="w-16 h-16 text-blue-400 animate-pulse" />
+                <Brain className="w-16 h-16 text-[#a85a32] animate-pulse" />
               )}
               {callStage === "speaking" && (
-                <Volume2 className="w-16 h-16 text-indigo-400" />
+                <Volume2 className="w-16 h-16 text-[#3a9fd6]" />
               )}
             </div>
 
@@ -285,17 +285,17 @@ export default function ActiveCall() {
             <motion.div
               initial={{ y: 8, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              className="absolute -bottom-2 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full text-[11px] font-medium backdrop-blur-xl border border-white/[0.06] bg-[#0a0a0f]/60 whitespace-nowrap"
+              className="absolute -bottom-2 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full text-[11px] font-medium backdrop-blur-xl border border-[#8f4426]/[0.12] bg-[#faf4e8]/90 whitespace-nowrap"
             >
               <span
                 className={
                   callStage === "listening"
-                    ? "text-emerald-400"
+                    ? "text-[#3a9fd6]"
                     : callStage === "thinking"
-                    ? "text-blue-400"
+                    ? "text-[#a85a32]"
                     : callStage === "speaking"
-                    ? "text-indigo-400"
-                    : "text-amber-400"
+                    ? "text-[#2b82b5]"
+                    : "text-[#d9822b]"
                 }
               >
                 {t(STAGE_LABEL_KEYS[callStage] || "idle")}
@@ -318,7 +318,7 @@ export default function ActiveCall() {
               className="w-full h-12"
             />
             {callStage === "listening" && isUserSpeaking && (
-              <div className="text-center text-[10px] font-medium text-emerald-400/60 mt-1.5">
+              <div className="text-center text-[10px] font-medium text-[#a85a32]/70 mt-1.5">
                 You're speaking… (any voice works — Telugu, Hindi, Tamil, English)
               </div>
             )}
@@ -349,8 +349,8 @@ export default function ActiveCall() {
                     <div
                       className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                         msg.role === "user"
-                          ? "bg-indigo-500/10 text-indigo-400/60 border border-indigo-500/10"
-                          : "bg-violet-500/10 text-violet-400/60 border border-violet-500/10"
+                          ? "bg-[#a85a32]/10 text-[#a85a32]/70 border border-[#a85a32]/15"
+                          : "bg-[#3a9fd6]/10 text-[#3a9fd6]/70 border border-[#3a9fd6]/15"
                       }`}
                     >
                       {msg.role === "user" ? (
@@ -362,18 +362,18 @@ export default function ActiveCall() {
                     <div
                       className={`px-4 py-3 rounded-2xl min-w-0 break-words ${
                         msg.role === "user"
-                          ? "bg-indigo-500/8 border border-indigo-500/10"
-                          : "bg-white/[0.03] border border-white/[0.04]"
+                          ? "bg-[#a85a32]/8 border border-[#a85a32]/15"
+                          : "bg-[#faf4e8]/85 border border-[#8f4426]/[0.1]"
                       }`}
                     >
                       {msg.role === "ai" ? (
                         <Markdown text={msg.content} />
                       ) : (
-                        <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap text-[#43301f]">
                           {msg.content}
                         </p>
                       )}
-                      <div className="mt-1.5 text-[10px] text-white/15 text-right">
+                      <div className="mt-1.5 text-[10px] text-[#9c8369] text-right">
                         {formatTime(msg.timestamp)}
                       </div>
                     </div>
@@ -385,24 +385,24 @@ export default function ActiveCall() {
         </div>
 
         {/* Developer Console (Right) */}
-        <div className="w-[420px] border-l border-white/[0.04] flex flex-col bg-[#0a0a0f]/60 backdrop-blur-2xl hidden lg:flex">
+        <div className="w-[420px] border-l border-[#8f4426]/[0.08] flex flex-col bg-[#f5edde]/50 backdrop-blur-2xl hidden lg:flex">
           {/* Input Section */}
-          <div className="p-5 border-b border-white/[0.04]">
+          <div className="p-5 border-b border-[#8f4426]/[0.08]">
             <div className="flex items-center gap-2 mb-3">
-              <h3 className="text-sm font-semibold text-white/80">
+              <h3 className="text-sm font-semibold text-[#5c4632]">
                 {t("developerConsole")}
               </h3>
               <div className="flex-1" />
               <button
                 onClick={() => setShowDebug((s) => !s)}
-                className="text-white/20 hover:text-white/40 transition-colors"
+                className="text-[#8a7157] hover:text-[#43301f] transition-colors"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
               </button>
             </div>
 
             {error && (
-              <div className="flex items-center gap-2 bg-amber-500/5 border border-amber-500/10 text-amber-300/80 text-[11px] px-3 py-2 rounded-lg mb-3">
+              <div className="flex items-center gap-2 bg-[#d9822b]/[0.06] border border-[#d9822b]/[0.15] text-[#b06a1f]/90 text-[11px] px-3 py-2 rounded-lg mb-3">
                 <Terminal className="w-3 h-3 shrink-0" />
                 <span>{error}</span>
               </div>
@@ -416,8 +416,8 @@ export default function ActiveCall() {
                 disabled={callStage !== "listening"}
                 className={`p-3 rounded-xl transition-all ${
                   isListening
-                    ? "bg-red-500/10 text-red-400 border border-red-500/20"
-                    : "bg-white/[0.03] text-white/30 border border-white/[0.04] hover:bg-white/[0.05]"
+                    ? "bg-[#c1442e]/10 text-[#b03a24] border border-[#c1442e]/25"
+                    : "bg-[#8f4426]/[0.05] text-[#8a7157] border border-[#8f4426]/[0.12] hover:bg-[#8f4426]/[0.08]"
                 } disabled:opacity-30`}
                 title={isListening ? "Stop listening" : "Start listening"}
               >
@@ -431,7 +431,7 @@ export default function ActiveCall() {
                 onKeyDown={(e) => e.key === "Enter" && sendMessage()}
                 placeholder={t("typeMessage")}
                 disabled={callStage !== "listening"}
-                className="flex-1 px-4 py-3 bg-white/[0.03] border border-white/[0.04] rounded-xl text-sm focus:outline-none focus:border-indigo-500/30 disabled:opacity-30 placeholder:text-white/15 min-w-0"
+                className="flex-1 px-4 py-3 bg-[#8f4426]/[0.05] border border-[#8f4426]/[0.12] rounded-xl text-sm text-[#43301f] focus:outline-none focus:border-[#a85a32]/40 disabled:opacity-30 placeholder:text-[#9c8369] min-w-0"
               />
 
               <motion.button
@@ -439,7 +439,7 @@ export default function ActiveCall() {
                 whileTap={{ scale: 0.97 }}
                 onClick={() => sendMessage()}
                 disabled={!inputText.trim() || callStage !== "listening"}
-                className="px-4 py-3 bg-indigo-500 rounded-xl text-white hover:bg-indigo-600 transition-all disabled:opacity-30"
+                className="px-4 py-3 bg-[#a85a32] rounded-xl text-[#fffaf2] hover:bg-[#8f4426] transition-all disabled:opacity-30"
               >
                 <Send className="w-4 h-4" />
               </motion.button>
@@ -448,87 +448,87 @@ export default function ActiveCall() {
 
           {/* Debug Panel */}
           {showDebug && debugInfo && (
-            <div className="p-5 border-b border-white/[0.04] space-y-3">
+            <div className="p-5 border-b border-[#8f4426]/[0.08] space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-white/50">
+                <span className="text-xs font-medium text-[#5c4632]">
                   {t("pipelineDebug")}
                 </span>
-                <div className="flex items-center gap-1.5 text-[10px] text-emerald-400/60">
-                  <div className="w-1 h-1 rounded-full bg-emerald-400" />
+                <div className="flex items-center gap-1.5 text-[10px] text-[#3e9b6e]/80">
+                  <div className="w-1 h-1 rounded-full bg-[#3e9b6e]" />
                   <span>{t("status")}</span>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="bg-white/[0.02] rounded-xl p-3 border border-white/[0.03]">
-                  <div className="text-white/20 mb-1 text-[10px] uppercase tracking-wider">
+                <div className="bg-[#8f4426]/[0.03] rounded-xl p-3 border border-[#8f4426]/[0.06]">
+                  <div className="text-[#9c8369] mb-1 text-[10px] uppercase tracking-wider">
                     {t("retrieval")}
                   </div>
-                  <div className="font-mono text-emerald-400 text-lg font-semibold">
+                  <div className="font-mono text-[#3e9b6e] text-lg font-semibold">
                     {Math.round(debugInfo.retrieval_time_ms)}ms
                   </div>
                 </div>
-                <div className="bg-white/[0.02] rounded-xl p-3 border border-white/[0.03]">
-                  <div className="text-white/20 mb-1 text-[10px] uppercase tracking-wider">
+                <div className="bg-[#8f4426]/[0.03] rounded-xl p-3 border border-[#8f4426]/[0.06]">
+                  <div className="text-[#9c8369] mb-1 text-[10px] uppercase tracking-wider">
                     {t("llm")}
                   </div>
-                  <div className="font-mono text-blue-400 text-lg font-semibold">
+                  <div className="font-mono text-[#3a9fd6] text-lg font-semibold">
                     {Math.round(debugInfo.llm_time_ms)}ms
                   </div>
                 </div>
-                <div className="bg-white/[0.02] rounded-xl p-3 border border-white/[0.03]">
-                  <div className="text-white/20 mb-1 text-[10px] uppercase tracking-wider">
+                <div className="bg-[#8f4426]/[0.03] rounded-xl p-3 border border-[#8f4426]/[0.06]">
+                  <div className="text-[#9c8369] mb-1 text-[10px] uppercase tracking-wider">
                     {t("tts")}
                   </div>
-                  <div className="font-mono text-indigo-400 text-lg font-semibold">
+                  <div className="font-mono text-[#a85a32] text-lg font-semibold">
                     {Math.round(debugInfo.tts_time_ms)}ms
                   </div>
                 </div>
-                <div className="bg-white/[0.02] rounded-xl p-3 border border-white/[0.03]">
-                  <div className="text-white/20 mb-1 text-[10px] uppercase tracking-wider">
+                <div className="bg-[#8f4426]/[0.03] rounded-xl p-3 border border-[#8f4426]/[0.06]">
+                  <div className="text-[#9c8369] mb-1 text-[10px] uppercase tracking-wider">
                     {t("total")}
                   </div>
-                  <div className="font-mono text-white/80 text-lg font-semibold">
+                  <div className="font-mono text-[#43301f]/80 text-lg font-semibold">
                     {Math.round(debugInfo.total_time_ms)}ms
                   </div>
                 </div>
               </div>
 
               {/* TTFA */}
-              <div className="flex items-center justify-between bg-amber-500/5 border border-amber-500/10 rounded-xl p-3">
-                <span className="text-amber-300/60 text-[10px] uppercase tracking-wider">
+              <div className="flex items-center justify-between bg-[#d9822b]/[0.06] border border-[#d9822b]/[0.15] rounded-xl p-3">
+                <span className="text-[#b06a1f]/70 text-[10px] uppercase tracking-wider">
                   {t("firstAudio")}
                 </span>
-                <span className="font-mono text-amber-300 text-lg font-semibold">
+                <span className="font-mono text-[#b06a1f] text-lg font-semibold">
                   {Math.round(debugInfo.first_sentence_ms ?? 0)}ms
                 </span>
               </div>
               {debugInfo.ttfa_ms != null && (
-                <div className="flex items-center justify-between bg-orange-500/5 border border-orange-500/10 rounded-xl p-3">
-                  <span className="text-orange-300/60 text-[10px] uppercase tracking-wider">
+                <div className="flex items-center justify-between bg-[#c1442e]/[0.06] border border-[#c1442e]/[0.15] rounded-xl p-3">
+                  <span className="text-[#b03a24]/70 text-[10px] uppercase tracking-wider">
                     Frontend TTFA
                   </span>
-                  <span className="font-mono text-orange-300 text-lg font-semibold">
+                  <span className="font-mono text-[#b03a24] text-lg font-semibold">
                     {Math.round(debugInfo.ttfa_ms)}ms
                   </span>
                 </div>
               )}
 
-              <div className="flex items-center gap-2 text-xs bg-white/[0.02] p-3 rounded-xl border border-white/[0.03]">
-                <Brain className="w-3.5 h-3.5 text-indigo-400/50" />
-                <span className="text-white/40">
+              <div className="flex items-center gap-2 text-xs bg-[#8f4426]/[0.03] p-3 rounded-xl border border-[#8f4426]/[0.06]">
+                <Brain className="w-3.5 h-3.5 text-[#a85a32]/70" />
+                <span className="text-[#8a7157]">
                   {t("chunksRetrieved")}:{" "}
-                  <span className="text-white/70 font-medium">
+                  <span className="text-[#5c4632] font-medium">
                     {debugInfo.chunks_retrieved}
                   </span>
                 </span>
               </div>
 
-              <div className="flex items-center gap-2 text-xs bg-white/[0.02] p-3 rounded-xl border border-white/[0.03]">
-                <Zap className="w-3.5 h-3.5 text-blue-400/50" />
-                <span className="text-white/40">
+              <div className="flex items-center gap-2 text-xs bg-[#8f4426]/[0.03] p-3 rounded-xl border border-[#8f4426]/[0.06]">
+                <Zap className="w-3.5 h-3.5 text-[#3a9fd6]/70" />
+                <span className="text-[#8a7157]">
                   {t("knowledgeSource")}:{" "}
-                  <span className="text-white/70 font-medium">
+                  <span className="text-[#5c4632] font-medium">
                     {debugInfo.knowledge_source}
                   </span>
                 </span>
@@ -537,15 +537,15 @@ export default function ActiveCall() {
           )}
 
           {/* Commands */}
-          <div className="p-5 border-b border-white/[0.04]">
-            <div className="text-xs font-medium text-white/40 mb-2">
+          <div className="p-5 border-b border-[#8f4426]/[0.08]">
+            <div className="text-xs font-medium text-[#5c4632] mb-2">
               {t("quickCommands")}
             </div>
-            <div className="bg-indigo-500/5 border border-indigo-500/10 p-3 rounded-xl">
-              <div className="text-indigo-400/80 font-mono text-xs mb-0.5">
+            <div className="bg-[#a85a32]/5 border border-[#a85a32]/15 p-3 rounded-xl">
+              <div className="text-[#a85a32]/80 font-mono text-xs mb-0.5">
                 /insert &lt;content&gt;
               </div>
-              <div className="text-white/25 text-[10px]">
+              <div className="text-[#8a7157] text-[10px]">
                 {t("uploadKnowledge")}
               </div>
             </div>
@@ -553,7 +553,7 @@ export default function ActiveCall() {
 
           {/* Conversation Log */}
           <div className="flex-1 overflow-y-auto p-5 space-y-2">
-            <div className="text-xs font-medium text-white/40 mb-3 sticky top-0 bg-[#0a0a0f]/60 backdrop-blur-xl py-2 border-b border-white/[0.04] pb-3">
+            <div className="text-xs font-medium text-[#5c4632] mb-3 sticky top-0 bg-[#f5edde]/80 backdrop-blur-xl py-2 border-b border-[#8f4426]/[0.08] pb-3">
               {t("conversationLog")}
             </div>
             <AnimatePresence>
@@ -565,24 +565,24 @@ export default function ActiveCall() {
                   transition={{ duration: 0.2 }}
                   className={`text-xs p-3 rounded-xl border ${
                     msg.role === "user"
-                      ? "bg-indigo-500/5 border-indigo-500/10"
-                      : "bg-white/[0.02] border-white/[0.04]"
+                      ? "bg-[#a85a32]/5 border-[#a85a32]/15"
+                      : "bg-[#8f4426]/[0.03] border-[#8f4426]/[0.08]"
                   }`}
                 >
                   <div className="flex items-center gap-2 mb-1.5">
                     <div
                       className={`w-1.5 h-1.5 rounded-full ${
-                        msg.role === "user" ? "bg-indigo-400" : "bg-violet-400"
+                        msg.role === "user" ? "bg-[#a85a32]" : "bg-[#3a9fd6]"
                       }`}
                     />
-                    <span className="font-medium text-white/50">
+                    <span className="font-medium text-[#8a7157]">
                       {msg.role === "user" ? t("you") : t("ai")}
                     </span>
-                    <span className="ml-auto text-[10px] text-white/15">
+                    <span className="ml-auto text-[10px] text-[#9c8369]">
                       {formatTime(msg.timestamp)}
                     </span>
                   </div>
-                  <div className="text-white/35 leading-relaxed whitespace-pre-wrap break-words">
+                  <div className="text-[#5c4632] leading-relaxed whitespace-pre-wrap break-words">
                     {msg.content}
                   </div>
                 </motion.div>

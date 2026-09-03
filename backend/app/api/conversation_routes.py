@@ -326,6 +326,12 @@ async def stream_conversation(
                             async for delta in stream_chat_fast(
                                 llm_input, lang=detected_lang,
                                 conversation_history=history_list,
+                                # CRITICAL: ground the reply in the retrieved
+                                # knowledge. Without this the streaming path
+                                # answered purely from memory and hallucinated
+                                # fees/courses — the same RAG grounding the
+                                # non-streaming /process route uses.
+                                context=context,
                             ):
                                 buf += delta
                                 sentences, buf = _pop_complete_sentences(buf)

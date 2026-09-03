@@ -46,8 +46,12 @@ export interface VADCallbacks {
   onVADMisfire?: () => void;
 }
 
-/** Default Silero thresholds while the caller owns the floor. */
-const LISTENING_THRESHOLDS = { positive: 0.3, negative: 0.25 };
+/** Default Silero thresholds while the caller owns the floor.
+ *  Deliberately SENSITIVE (0.22/0.18): soft-spoken callers, quiet mics and
+ *  small voices must still start a turn. Silero is a neural speech detector,
+ *  so keyboard/fan/chair noise still scores far below these; the raised
+ *  AI-speaking thresholds handle Mrs. D's own echo. */
+const LISTENING_THRESHOLDS = { positive: 0.22, negative: 0.18 };
 /** Raised thresholds while Mrs. D's own voice is playing — her echo must never
  *  score high enough to interrupt her (only a loud, clear caller voice can). */
 const AI_SPEAKING_THRESHOLDS = { positive: 0.65, negative: 0.55 };

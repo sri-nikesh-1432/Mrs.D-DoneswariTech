@@ -107,7 +107,10 @@ async def stream_chat_fast(
     
     try:
         logger.info("[FAST] stream_chat_fast called: %d messages, prompt=%d chars", len(messages), sum(len(m.get("content","")) for m in messages))
-        stream = await _create_with_fallback(messages, temperature=0.3, max_tokens=64, stream=True)
+        # max_tokens=300 keeps the first token fast (max_tokens never delays
+        # the first token) while still allowing a complete 2-3 sentence reply
+        # — 64 tokens cut answers off mid-sentence, which sounded robotic.
+        stream = await _create_with_fallback(messages, temperature=0.3, max_tokens=300, stream=True)
 
         async for chunk in stream:
             if not chunk.choices:

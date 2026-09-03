@@ -11,7 +11,7 @@ function App() {
   const location = useLocation();
 
   return (
-    <div className="h-screen w-full relative overflow-hidden bg-[#08080c]">
+    <div className="h-screen w-full relative overflow-hidden bg-gradient-to-br from-[#fbf6ec] via-[#f5edde] to-[#fbf6ec]">
       <AnimatePresence mode="wait">
         <Routes location={location} key={location.pathname}>
           <Route

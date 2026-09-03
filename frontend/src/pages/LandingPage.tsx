@@ -151,32 +151,32 @@ export default function LandingPage() {
   }, [instituteId]);
 
   return (
-    <div className="h-screen bg-[#08080c] text-white overflow-hidden flex flex-col">
-      {/* Subtle background gradient — ElevenLabs-style ambient light */}
+    <div className="h-screen bg-gradient-to-br from-[#fbf6ec] via-[#f5edde] to-[#fbf6ec] text-[#43301f] overflow-hidden flex flex-col">
+      {/* Subtle background gradient — warm cognac ambient light */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-[radial-gradient(ellipse_at_center,rgba(99,102,241,0.06)_0%,transparent_70%)]" />
-        <div className="absolute bottom-0 right-0 w-[600px] h-[300px] bg-[radial-gradient(ellipse_at_center,rgba(129,140,248,0.04)_0%,transparent_70%)]" />
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-[radial-gradient(ellipse_at_center,rgba(168,90,50,0.08)_0%,transparent_70%)]" />
+        <div className="absolute bottom-0 right-0 w-[600px] h-[300px] bg-[radial-gradient(ellipse_at_center,rgba(58,159,214,0.06)_0%,transparent_70%)]" />
       </div>
 
       {/* Header */}
-      <header className="relative z-10 shrink-0 h-14 px-6 border-b border-white/[0.04] bg-[#08080c]/80 backdrop-blur-xl">
+      <header className="relative z-10 shrink-0 h-14 px-6 border-b border-[#8f4426]/[0.08] bg-[#fbf6ec]/80 backdrop-blur-xl">
         <div className="max-w-6xl mx-auto h-full flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-              <Sparkles className="w-4 h-4 text-white" />
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#a85a32] to-[#c07b52] flex items-center justify-center shadow-lg shadow-[#a85a32]/20">
+              <Sparkles className="w-4 h-4 text-[#fffaf2]" />
             </div>
             <div>
-              <h1 className="text-sm font-semibold tracking-tight text-white">
+              <h1 className="text-sm font-semibold tracking-tight text-[#43301f]">
                 Mrs.D
               </h1>
-              <p className="text-[11px] text-white/30 leading-none">AI Voice Receptionist</p>
+              <p className="text-[11px] text-[#8a7157] leading-none">AI Voice Receptionist</p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5 text-xs">
-              <div className={`w-1.5 h-1.5 rounded-full ${knowledgeStatus === "ready" ? "bg-emerald-400" : "bg-amber-400"}`} />
-              <span className="text-white/30">{knowledgeStatus}</span>
+              <div className={`w-1.5 h-1.5 rounded-full ${knowledgeStatus === "ready" ? "bg-[#3e9b6e]" : "bg-[#d9822b]"}`} />
+              <span className="text-[#8a7157]">{knowledgeStatus}</span>
             </div>
 
             <LanguageSwitcher compact />
@@ -184,7 +184,7 @@ export default function LandingPage() {
             <button
               onClick={() => setShowCallSimulator(!showCallSimulator)}
               disabled={!knowledgeReady}
-              className="h-8 px-3 rounded-lg text-xs text-white/50 hover:text-white/80 hover:bg-white/[0.04] transition-all flex items-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed border border-white/[0.04]"
+              className="h-8 px-3 rounded-lg text-xs text-[#8a7157] hover:text-[#43301f] hover:bg-[#8f4426]/[0.05] transition-all flex items-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed border border-[#8f4426]/[0.12]"
             >
               <Sparkles className="w-3 h-3" />
               {showCallSimulator ? "Close" : t("voiceAgent")}
@@ -192,7 +192,7 @@ export default function LandingPage() {
 
             <button
               onClick={() => navigate("/testing-console")}
-              className="h-8 px-3 rounded-lg text-xs text-white/50 hover:text-white/80 hover:bg-white/[0.04] transition-all flex items-center gap-1.5 border border-white/[0.04]"
+              className="h-8 px-3 rounded-lg text-xs text-[#8a7157] hover:text-[#43301f] hover:bg-[#8f4426]/[0.05] transition-all flex items-center gap-1.5 border border-[#8f4426]/[0.12]"
             >
               <Terminal className="w-3 h-3" />
               {t("testingConsole")}
@@ -214,12 +214,12 @@ export default function LandingPage() {
           >
             <div className="glass-card-static p-5">
               <div className="flex items-center gap-2.5 mb-5">
-                <div className="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center">
-                  <BookOpen className="w-4 h-4 text-indigo-400" />
+                <div className="w-8 h-8 rounded-lg bg-[#a85a32]/10 flex items-center justify-center">
+                  <BookOpen className="w-4 h-4 text-[#a85a32]" />
                 </div>
                 <div>
-                  <h2 className="text-sm font-semibold">{t("instituteKnowledge")}</h2>
-                  <p className="text-[11px] text-white/30">{t("uploadDoc")}</p>
+                  <h2 className="text-sm font-semibold text-[#43301f]">{t("instituteKnowledge")}</h2>
+                  <p className="text-[11px] text-[#8a7157]">{t("uploadDoc")}</p>
                 </div>
               </div>
 
@@ -235,18 +235,18 @@ export default function LandingPage() {
                     className="hidden"
                     onChange={(e) => e.target.files?.[0] && handleKnowledgeUpload(e.target.files[0])}
                   />
-                  <Upload className="w-6 h-6 mx-auto mb-2 text-white/20" />
-                  <p className="text-xs text-white/40 mb-0.5">
-                    {t("dragDrop")} <span className="text-indigo-400">{t("browse")}</span>
+                  <Upload className="w-6 h-6 mx-auto mb-2 text-[#a85a32]/40" />
+                  <p className="text-xs text-[#8a7157] mb-0.5">
+                    {t("dragDrop")} <span className="text-[#a85a32] font-medium">{t("browse")}</span>
                   </p>
-                  <p className="text-[10px] text-white/20">{t("maxFileSize")}</p>
+                  <p className="text-[10px] text-[#9c8369]">{t("maxFileSize")}</p>
                 </div>
               ) : (
                 <div className="space-y-2.5">
-                  <div className="flex items-center justify-between p-2.5 bg-white/[0.03] rounded-xl border border-white/[0.04]">
+                  <div className="flex items-center justify-between p-2.5 bg-[#8f4426]/[0.04] rounded-xl border border-[#8f4426]/[0.08]">
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <FileText className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                      <span className="text-xs truncate">{knowledgeFile.name}</span>
+                      <FileText className="w-3.5 h-3.5 text-[#a85a32] shrink-0" />
+                      <span className="text-xs text-[#43301f] truncate">{knowledgeFile.name}</span>
                     </div>
                     <button
                       onClick={() => {
@@ -256,7 +256,7 @@ export default function LandingPage() {
                         setKnowledgeStatus("not_uploaded");
                         setKnowledgeDetails(null);
                       }}
-                      className="text-white/20 hover:text-white/50 shrink-0"
+                      className="text-[#8a7157] hover:text-[#43301f] shrink-0"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -278,34 +278,34 @@ export default function LandingPage() {
                             animate={{ opacity: 1, x: 0 }}
                             transition={{ delay: i * 0.06 }}
                             className="flex items-center gap-2.5"
-                            style={{ opacity: isPending ? 0.2 : 1 }}
+                            style={{ opacity: isPending ? 0.25 : 1 }}
                           >
                             <div
                               className="w-5 h-5 rounded-full flex items-center justify-center"
                               style={{
                                 background: isDone
-                                  ? "rgba(74,222,128,0.1)"
+                                  ? "rgba(62,155,110,0.12)"
                                   : isActive
-                                  ? "rgba(129,140,248,0.1)"
-                                  : "rgba(255,255,255,0.03)",
+                                  ? "rgba(168,90,50,0.12)"
+                                  : "rgba(143,68,38,0.05)",
                               }}
                             >
                               {isDone ? (
-                                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                                <CheckCircle2 className="w-3 h-3 text-[#3e9b6e]" />
                               ) : isActive ? (
-                                <Loader2 className="w-3 h-3 text-indigo-400 animate-spin" />
+                                <Loader2 className="w-3 h-3 text-[#a85a32] animate-spin" />
                               ) : (
-                                <div className="w-1.5 h-1.5 rounded-full bg-white/10" />
+                                <div className="w-1.5 h-1.5 rounded-full bg-[#8a7157]/30" />
                               )}
                             </div>
                             <span
                               className="text-xs"
                               style={{
                                 color: isDone
-                                  ? "#4ade80"
+                                  ? "#3e9b6e"
                                   : isActive
-                                  ? "#818cf8"
-                                  : "rgba(255,255,255,0.2)",
+                                  ? "#a85a32"
+                                  : "rgba(92,70,50,0.45)",
                                 fontWeight: isActive ? 500 : 400,
                               }}
                             >
@@ -318,8 +318,8 @@ export default function LandingPage() {
                   )}
 
                   {knowledgeError && (
-                    <div className="p-2.5 bg-red-500/5 border border-red-500/10 rounded-xl">
-                      <p className="text-xs text-red-400">{knowledgeError}</p>
+                    <div className="p-2.5 bg-[#c1442e]/[0.06] border border-[#c1442e]/[0.15] rounded-xl">
+                      <p className="text-xs text-[#b03a24]">{knowledgeError}</p>
                     </div>
                   )}
                 </div>
@@ -335,41 +335,41 @@ export default function LandingPage() {
                 className="mt-4 glass-card-static p-5"
               >
                 <div className="flex items-center gap-2.5 mb-4">
-                  <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-                    <Activity className="w-4 h-4 text-emerald-400" />
+                  <div className="w-8 h-8 rounded-lg bg-[#3e9b6e]/10 flex items-center justify-center">
+                    <Activity className="w-4 h-4 text-[#3e9b6e]" />
                   </div>
                   <div>
-                    <h2 className="text-sm font-semibold">{t("knowledgeStatus")}</h2>
-                    <p className="text-[11px] text-white/30">Current active knowledge base</p>
+                    <h2 className="text-sm font-semibold text-[#43301f]">{t("knowledgeStatus")}</h2>
+                    <p className="text-[11px] text-[#8a7157]">Current active knowledge base</p>
                   </div>
                 </div>
 
                 <div className="space-y-2 text-xs">
-                  <div className="flex items-center justify-between p-2.5 bg-white/[0.03] rounded-xl">
-                    <span className="text-white/30">{t("currentInstitute")}</span>
-                    <span className="font-medium">{knowledgeDetails.institute_name || "—"}</span>
+                  <div className="flex items-center justify-between p-2.5 bg-[#8f4426]/[0.04] rounded-xl">
+                    <span className="text-[#8a7157]">{t("currentInstitute")}</span>
+                    <span className="font-medium text-[#43301f]">{knowledgeDetails.institute_name || "—"}</span>
                   </div>
-                  <div className="flex items-center justify-between p-2.5 bg-white/[0.03] rounded-xl">
-                    <span className="text-white/30">{t("document")}</span>
-                    <span className="font-medium truncate max-w-[55%]">{knowledgeDetails.document_name || "—"}</span>
+                  <div className="flex items-center justify-between p-2.5 bg-[#8f4426]/[0.04] rounded-xl">
+                    <span className="text-[#8a7157]">{t("document")}</span>
+                    <span className="font-medium text-[#43301f] truncate max-w-[55%]">{knowledgeDetails.document_name || "—"}</span>
                   </div>
-                  <div className="flex items-center justify-between p-2.5 bg-white/[0.03] rounded-xl">
-                    <span className="text-white/30">{t("embeddingStatus")}</span>
+                  <div className="flex items-center justify-between p-2.5 bg-[#8f4426]/[0.04] rounded-xl">
+                    <span className="text-[#8a7157]">{t("embeddingStatus")}</span>
                     <span className={`font-medium flex items-center gap-2 ${
-                      knowledgeStatus === "ready" ? "text-emerald-400" :
-                      knowledgeStatus === "error" ? "text-red-400" : "text-amber-400"
+                      knowledgeStatus === "ready" ? "text-[#3e9b6e]" :
+                      knowledgeStatus === "error" ? "text-[#b03a24]" : "text-[#d9822b]"
                     }`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${
-                        knowledgeStatus === "ready" ? "bg-emerald-400" :
-                        knowledgeStatus === "error" ? "bg-red-400" : "bg-amber-400 animate-pulse"
+                        knowledgeStatus === "ready" ? "bg-[#3e9b6e]" :
+                        knowledgeStatus === "error" ? "bg-[#b03a24]" : "bg-[#d9822b] animate-pulse"
                       }`} />
                       {knowledgeStatus}
                     </span>
                   </div>
                   {typeof knowledgeDetails.chunks_count === "number" && (
-                    <div className="flex items-center justify-between p-2.5 bg-white/[0.03] rounded-xl">
-                      <span className="text-white/30">{t("chunksIndexed")}</span>
-                      <span className="font-medium text-indigo-400">{knowledgeDetails.chunks_count}</span>
+                    <div className="flex items-center justify-between p-2.5 bg-[#8f4426]/[0.04] rounded-xl">
+                      <span className="text-[#8a7157]">{t("chunksIndexed")}</span>
+                      <span className="font-medium text-[#a85a32]">{knowledgeDetails.chunks_count}</span>
                     </div>
                   )}
                 </div>
@@ -387,19 +387,19 @@ export default function LandingPage() {
             >
               <div className="glass-card-static p-6">
                 <div className="flex items-center gap-3 mb-5">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/10 to-violet-500/10 flex items-center justify-center border border-indigo-500/10">
-                    <Phone className="w-5 h-5 text-indigo-400" />
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#a85a32]/10 to-[#3a9fd6]/10 flex items-center justify-center border border-[#a85a32]/15">
+                    <Phone className="w-5 h-5 text-[#a85a32]" />
                   </div>
                   <div>
-                    <h2 className="text-base font-semibold">{t("aiCallSimulator")}</h2>
-                    <p className="text-xs text-white/30">Test voice interactions before deployment</p>
+                    <h2 className="text-base font-semibold text-[#43301f]">{t("aiCallSimulator")}</h2>
+                    <p className="text-xs text-[#8a7157]">Test voice interactions before deployment</p>
                   </div>
                 </div>
 
                 <div className="space-y-4">
-                  <div className="p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
-                    <p className="text-[10px] text-white/25 uppercase tracking-wider mb-1">{t("status")}</p>
-                    <p className="text-sm font-medium text-indigo-300">
+                  <div className="p-4 bg-[#8f4426]/[0.03] rounded-xl border border-[#8f4426]/[0.08]">
+                    <p className="text-[10px] text-[#9c8369] uppercase tracking-wider mb-1">{t("status")}</p>
+                    <p className="text-sm font-medium text-[#a85a32]">
                       {knowledgeReady ? t("readyToCall") : t("uploadFirst")}
                     </p>
                   </div>
@@ -416,7 +416,7 @@ export default function LandingPage() {
                     </span>
                   </button>
 
-                  <p className="text-[11px] text-white/20 text-center">
+                  <p className="text-[11px] text-[#9c8369] text-center">
                     Simulates real phone calls with voice recognition and AI responses
                   </p>
                 </div>
@@ -432,29 +432,29 @@ export default function LandingPage() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <button
                   onClick={() => navigate("/call-history")}
-                  className="glass-card-static p-4 hover:bg-white/[0.04] transition-colors text-left group"
+                  className="glass-card-static p-4 hover:bg-[#8f4426]/[0.05] transition-colors text-left group"
                 >
-                  <History className="w-4 h-4 text-indigo-400/60 mb-2.5 group-hover:text-indigo-400 transition-colors" />
-                  <p className="text-xs font-medium">{t("callHistory")}</p>
-                  <p className="text-[10px] text-white/25 mt-0.5">{t("viewAllCalls")}</p>
+                  <History className="w-4 h-4 text-[#a85a32]/60 mb-2.5 group-hover:text-[#a85a32] transition-colors" />
+                  <p className="text-xs font-medium text-[#43301f]">{t("callHistory")}</p>
+                  <p className="text-[10px] text-[#9c8369] mt-0.5">{t("viewAllCalls")}</p>
                 </button>
                 <button
                   onClick={() => navigate("/analytics")}
-                  className="glass-card-static p-4 hover:bg-white/[0.04] transition-colors text-left group"
+                  className="glass-card-static p-4 hover:bg-[#8f4426]/[0.05] transition-colors text-left group"
                 >
-                  <BarChart3 className="w-4 h-4 text-blue-400/60 mb-2.5 group-hover:text-blue-400 transition-colors" />
-                  <p className="text-xs font-medium">{t("analytics")}</p>
-                  <p className="text-[10px] text-white/25 mt-0.5">{t("viewInsights")}</p>
+                  <BarChart3 className="w-4 h-4 text-[#3a9fd6]/60 mb-2.5 group-hover:text-[#3a9fd6] transition-colors" />
+                  <p className="text-xs font-medium text-[#43301f]">{t("analytics")}</p>
+                  <p className="text-[10px] text-[#9c8369] mt-0.5">{t("viewInsights")}</p>
                 </button>
-                <button className="glass-card-static p-4 hover:bg-white/[0.04] transition-colors text-left group">
-                  <Activity className="w-4 h-4 text-emerald-400/60 mb-2.5 group-hover:text-emerald-400 transition-colors" />
-                  <p className="text-xs font-medium">{t("liveCalls")}</p>
-                  <p className="text-[10px] text-white/25 mt-0.5">{t("monitorActive")}</p>
+                <button className="glass-card-static p-4 hover:bg-[#8f4426]/[0.05] transition-colors text-left group">
+                  <Activity className="w-4 h-4 text-[#3e9b6e]/60 mb-2.5 group-hover:text-[#3e9b6e] transition-colors" />
+                  <p className="text-xs font-medium text-[#43301f]">{t("liveCalls")}</p>
+                  <p className="text-[10px] text-[#9c8369] mt-0.5">{t("monitorActive")}</p>
                 </button>
-                <button className="glass-card-static p-4 hover:bg-white/[0.04] transition-colors text-left group">
-                  <Settings className="w-4 h-4 text-white/20 mb-2.5 group-hover:text-white/40 transition-colors" />
-                  <p className="text-xs font-medium">{t("settings")}</p>
-                  <p className="text-[10px] text-white/25 mt-0.5">{t("configure")}</p>
+                <button className="glass-card-static p-4 hover:bg-[#8f4426]/[0.05] transition-colors text-left group">
+                  <Settings className="w-4 h-4 text-[#8a7157]/60 mb-2.5 group-hover:text-[#8a7157] transition-colors" />
+                  <p className="text-xs font-medium text-[#43301f]">{t("settings")}</p>
+                  <p className="text-[10px] text-[#9c8369] mt-0.5">{t("configure")}</p>
                 </button>
               </div>
             </motion.div>

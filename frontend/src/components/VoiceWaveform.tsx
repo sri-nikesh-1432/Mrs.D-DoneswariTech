@@ -58,18 +58,18 @@ export default function VoiceWaveform({
       const levels = levelsRef.current;
       const count = Math.min(barCount, levels.length);
 
-      // ── Color palette per mode ──────────────────────────────────────
-      let top = "rgba(100,116,139,0.4)"; // slate (idle) — muted
-      let bottom = "rgba(71,85,105,0.15)";
-      let glow = "rgba(100,116,139,0.06)";
+      // ── Color palette per mode (cognac/cream + sky blue) ───────────
+      let top = "rgba(201,184,150,0.7)"; // beige (idle) — muted
+      let bottom = "rgba(201,184,150,0.25)";
+      let glow = "rgba(201,184,150,0.06)";
       if (color === "user") {
-        top = "rgba(74,222,128,0.7)"; // emerald — caller speaking
-        bottom = "rgba(16,185,129,0.25)";
-        glow = "rgba(74,222,128,0.1)";
+        top = "rgba(168,90,50,0.75)"; // cognac — caller speaking
+        bottom = "rgba(143,68,38,0.3)";
+        glow = "rgba(168,90,50,0.12)";
       } else if (color === "ai") {
-        top = "rgba(129,140,248,0.7)"; // indigo — AI speaking
-        bottom = "rgba(99,102,241,0.25)";
-        glow = "rgba(129,140,248,0.1)";
+        top = "rgba(58,159,214,0.75)"; // sky blue — AI speaking
+        bottom = "rgba(43,130,181,0.3)";
+        glow = "rgba(58,159,214,0.12)";
       }
 
       const gap = 3;

@@ -34,17 +34,17 @@ export default function LanguageSwitcher({
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
-        className={`flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 transition-colors ${
+        className={`flex items-center gap-2 bg-[#8f4426]/[0.05] border border-[#8f4426]/[0.15] rounded-xl hover:bg-[#8f4426]/[0.1] transition-colors text-[#43301f] ${
           compact ? "px-3 py-1.5 text-xs" : "px-4 py-2 text-sm"
         }`}
         title="Translate page"
       >
-        <Globe className="w-4 h-4 text-slate-400" />
-        <span className="text-slate-300">{LANGUAGE_NATIVE_NAMES[lang]}</span>
+        <Globe className="w-4 h-4 text-[#8a7157]" />
+        <span>{LANGUAGE_NATIVE_NAMES[lang]}</span>
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-44 rounded-2xl bg-slate-900/95 backdrop-blur-xl border border-white/10 shadow-2xl overflow-hidden z-50">
+        <div className="absolute right-0 top-full mt-2 w-44 rounded-2xl bg-[#faf4e8]/95 backdrop-blur-xl border border-[#8f4426]/[0.15] shadow-2xl overflow-hidden z-50">
           {SUPPORTED_LANGUAGES.map((l) => (
             <button
               key={l}
@@ -54,12 +54,12 @@ export default function LanguageSwitcher({
               }}
               className={`w-full flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${
                 l === lang
-                  ? "text-purple-300 bg-purple-500/10"
-                  : "text-slate-300 hover:bg-white/5 hover:text-white"
+                  ? "text-[#a85a32] bg-[#a85a32]/10"
+                  : "text-[#5c4632] hover:bg-[#8f4426]/[0.05] hover:text-[#43301f]"
               }`}
             >
               <span>{LANGUAGE_NATIVE_NAMES[l]}</span>
-              {l === lang && <Check className="w-4 h-4 text-purple-400" />}
+              {l === lang && <Check className="w-4 h-4 text-[#a85a32]" />}
             </button>
           ))}
         </div>
