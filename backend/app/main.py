@@ -66,17 +66,42 @@ async def _restore_vector_store() -> None:
 
 
 async def _warmup_tts() -> None:
-    """Pre-warm the Edge-TTS WebSocket connection for low-latency first response."""
+    """Pre-warm the Edge-TTS persistent WebSocket per active voice for low-latency first response."""
     try:
         from app.tts.edge_tts_service import get_tts_service
         tts = get_tts_service()
         await tts.initialize()
-        # Synthesize a short greeting to establish the persistent WebSocket
-        audio = await tts.synthesize("Hello!", voice="en-IN-NeerjaNeural")
-        if audio:
-            logger.info("TTS WebSocket warmed up (%d bytes)", len(audio))
+
+        # Warm the persistent WebSocket for each voice we actually use in production.
+        # The first real sentence on each voice is then synthesized over an already-open
+        # connection instead of paying connect + handshake latency on the first turn.
+        warm_phrases: dict[str, str] = {
+            "en-IN-NeerjaNeural": "Hello!",
+            "en-IN-PrabhaNeural": "Hello!",
+            "te-IN-ShrutiNeural": "నమస్కారం",
+            "te-IN-ChitraNeural": "నమస్కారం",
+            "hi-IN-SwaraNeural": "नमस्ते",
+            "hi-IN-MeeraNeural": "नमस्ते",
+            "ta-IN-PallaviNeural": "வணக்கம்",
+            "ta-IN-VenkatalakshmiNeural": "வணக்கம்",
+            "kn-IN-SapnaNeural": "ನಮಸ್ಕಾರ",
+            "kn-IN-KushalNeural": "ನಮಸ್ಕಾರ",
+            "ml-IN-SobhanaNeural": "നമസ്കാരം",
+            "ml-IN-MirnalBetterBetterNeural": "നമസ്കാരം",
+        }
+        warmed = 0
+        for voice, phrase in warm_phrases.items():
+            try:
+                audio = await tts.synthesize(phrase, voice=voice)
+                if audio:
+                    warmed += 1
+            except Exception as e:
+                logger.debug("TTS warmup skipped for voice %s: %s", voice, e)
+
+        if warmed:
+            logger.info("TTS WebSocket warmed up for %d voices", warmed)
         else:
-            logger.warning("TTS warmup produced no audio")
+            logger.warning("TTS warmup produced no audio on any voice")
     except Exception as e:
         logger.warning("TTS warmup failed (non-fatal): %s", e)
 

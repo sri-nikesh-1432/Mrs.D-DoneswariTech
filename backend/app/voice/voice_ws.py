@@ -28,7 +28,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.config.settings import settings
 from app.logs.logger import get_logger
-from app.rag.groq_service import generate_response, stream_chat
+from app.rag.groq_service import generate_response, stream_chat, stream_chat_fast
 from app.rag.retriever import retrieve_context, format_context_for_prompt
 from app.rag.json_retriever import get_json_retriever
 from app.tts.edge_tts_service import EdgeTTSService
@@ -369,6 +369,15 @@ class LanguageDetector:
 # Global language detector
 _language_detector = LanguageDetector()
 
+
+
+def _detect_language(user_input: str, hint: Optional[str] = None) -> str:
+    """Thin wrapper over the global LanguageDetector for callers that import from
+    voice_ws (e.g. analytics latency-test) without depending on the SSE route
+    helpers.
+    """
+    return _language_detector.detect(user_input, stt_language=hint)
+
 
 LANGUAGE_INSTRUCTION = (
     "## Call Instructions\n"
@@ -376,17 +385,18 @@ LANGUAGE_INSTRUCTION = (
     "Roman Telugu like 'idhi enti' or 'naku MPC kavali' counts as Telugu; reply in Telugu script).\n"
     "\n"
     "BEHAVIOUR (follow strictly):\n"
-    "- NEVER restate, translate, or paraphrase the caller's words.\n"
+    "- Never restate the caller's words as a verbatim repeat.\n"
     "- Acknowledge naturally and briefly ONLY when it fits - and VARY it by context.\n"
     "- ANSWER COMPLETELY. When the caller asks for details, give the FULL breakdown.\n"
     "- NEVER end with a follow-up question just to keep the call going.\n"
-    "- DO NOT HALLUCINATE. Use ONLY the provided knowledge.\n"
-    "- Keep it SHORT like a phone call: 2-5 conversational sentences.\n"
-    "- Speak like a warm professional counsellor: confident, concise, human.\n"
-    "- NEVER start every response with 'Avunu, tappakunda' or similar repetitive phrases.\n"
-    "- Use natural fillers contextually: 'Hmm...', 'Sare...', 'Okay...', 'One second...' - vary them.\n"
-    "- If information is unavailable, say: 'That particular detail isn't available in the information I have right now.'\n"
-    "- Maintain conversation context - understand follow-ups without repeated clarification.\n"
+    "- DO NOT HALLUCINATE. Use ONLY the provided knowledge. If it isn't there, say so plainly.",
+    "- Keep it SHORT like a phone call: 2-5 conversational sentences.",
+    "- Speak like a warm professional counsellor: confident, concise, human.",
+    "- NEVER fall into a repetitive opener; vary acknowledgements naturally.",
+    "- Use natural fillers contextually and vary them: 'Hmm...', 'Sare...', 'Okay...', "
+    "'One second...', 'Sure...'\n",
+    "- If you don't know something, say so plainly instead of guessing.",
+    "- Close naturally when the caller seems satisfied; don't keep the call going.",
 )
 
 
@@ -589,6 +599,24 @@ async def _transcribe_pcm(pcm_float: np.ndarray) -> dict:
 # WebSocket greeting
 # ---------------------------------------------------------------------------
 
+GREETING_OPENERS: list[str] = [
+    "Hi, thanks for taking my call. I'm Mrs. D from Narayana, and I wanted to quickly check in with you today.",
+    "Hello there! This is Mrs. D calling from Narayana — do you have a minute for a quick chat?",
+    "Hey, I hope I'm not catching you at a bad time. I'm Mrs. D from Narayana, and I just wanted to speak with you briefly.",
+    "Hi, good to reach you. I'm Mrs. D from Narayana — I'll keep this short, I promise.",
+    "Hello! This is Mrs. D from Narayana. If you've got a moment, I'd love to tell you a little about what we offer.",
+    "Hi, this is Mrs. D calling from Narayana. Am I speaking with the right person?",
+    "Hello, thanks for picking up. I'm Mrs. D from Narayana — I'll be brief, I promise.",
+    "Hi there! Mrs. D from Narayana here. If now's not a good time, I can try another day.",
+    "Hello! This is Mrs. D from Narayana. I was just calling to share something that might interest you.",
+    "Hi, I hope I'm not disturbing you. I'm Mrs. D calling from Narayana — got a minute?",
+]
+
+
+# ---------------------------------------------------------------------------
+# WebSocket greeting
+# ---------------------------------------------------------------------------
+
 async def _send_greeting(
     websocket: WebSocket,
     mode: str,
@@ -619,11 +647,15 @@ async def _send_greeting(
                     if m:
                         institute_name = m.group(1).strip()
                         break
+            # Vary the greeting opener so every call does not start identically.
+            opener = random.choice(GREETING_OPENERS).replace("Narayana", institute_name)
             greeting_prompt = (
-                f"You are Mrs. D, a warm Indian admissions counsellor speaking on a live call.\n"
-                f"You are representing {institute_name}.\n\n"
-                f"Write a friendly, brief (2-3 sentence) greeting in {language}. "
-                f"Introduce yourself and mention {institute_name}."
+                f"You are Mrs. D, a warm Indian admissions counsellor speaking on a live call.\r\n"
+                f"You are representing {institute_name}.\r\n\r\n"
+                f"Start your reply with this natural opener (keep it in {language}, adapt phrasing naturally):\r\n"
+                f"{opener}\r\n\r\n"
+                f"Then briefly invite the caller to ask about admissions, courses, fees, hostel or scholarships. "
+                f"Keep the whole greeting to 2-3 sentences and sound like a real person on the phone."
             )
             ai_response = await generate_response(
                 conversation_history=[],
@@ -801,20 +833,35 @@ async def _process_utterance(
 
         # -- LLM streaming + sentence-level TTS -----------------------------------
         history_list = _build_history(memory)
-        lang_hint = LANGUAGE_INSTRUCTION.format(language=detected_lang)
-        sentence_q: asyncio.Queue = asyncio.Queue()
-        ai_parts: list = []
-        llm_error: Optional[str] = None
+        lang_hint = (
+            "You are Mrs. D, a warm admissions counsellor on a live call.\n"
+            f"Reply in {detected_lang}. 2-3 sentences, natural and concise.\n"
+            "Never restate the caller words. If unsure, say you don't have that detail.\n"
+            f"Knowledge: {context[-900:] if isinstance(context, str) else ''}"
+        )
 
+
+        sentence_q: asyncio.Queue = asyncio.Queue()
+
+
+        ai_parts: list[str] = []
+        llm_error: str | None = None
+        first_audio_at = 0.0
+
+        # --- LLM streaming (fast path for voice) ----------------------------------
         async def _llm_streamer():
-            nonlocal ai_parts
+            nonlocal ai_parts, llm_error
             buf = ""
             _latency_tracker.start_llm()
             try:
-                async for delta in stream_chat(
-                    f"{llm_input}\n\n{lang_hint}", history_list, context
+                query_text = f"{llm_input}\n{lang_hint}"
+                async for delta in stream_chat_fast(
+                    query_text,
+                    detected_lang,
+                    history_list[-2:] if len(history_list) >= 2 else history_list,
+                    context,
                 ):
-                    if not ai_parts:  # First token
+                    if not ai_parts:
                         _latency_tracker.mark_llm_first_token()
                     buf += delta
                     sentences, buf = _pop_complete_sentences(buf)
@@ -828,333 +875,221 @@ async def _process_utterance(
                     ai_parts.append(trailing)
                     await sentence_q.put(("sentence", idx, trailing))
             except Exception as e:
-                logger.error("WS LLM streaming failed: %s", e)
-                await sentence_q.put(("error", str(e)))
+                logger.error("WS LLM streaming failed (conv=%s): %s", conversation_id, e)
+                llm_error = str(e)
+                await sentence_q.put(("error", llm_error))
             finally:
                 _latency_tracker.end_llm()
                 await sentence_q.put(("end", None))
 
         llm_task = asyncio.create_task(_llm_streamer())
-        synth_lang = detected_lang
-        sentence_count = 0
-        first_sentence_ms = 0
-        last_sentence_text = ""
-        _latency_tracker.start_tts()
 
+        # --- TTS: synthesize each complete sentence as soon as the LLM emits it ---
+        tts_service = get_tts_service()
+        sentence_count = 0
+        first_sentence_text = ""
         try:
+            _latency_tracker.start_tts()
             while True:
                 kind = await sentence_q.get()
                 if kind[0] == "end":
                     break
                 if kind[0] == "error":
-                    llm_error = kind[1]
                     break
 
                 _idx, payload = kind[1], kind[2]
-                # Send a natural pause event between sentences for breathing
-                if sentence_count > 0 and last_sentence_text:
-                    pause_ms = _natural_pause_ms(last_sentence_text)
-                    await websocket.send_json({
-                        "type": "pause",
-                        "duration_ms": pause_ms,
-                    })
-                tts_start = time.time()
-                async for chunk in tts_service.stream_sentences(
-                    payload, language=synth_lang
-                ):
-                    if chunk.get("audio_data") is None:
+                if not payload:
+                    continue
+
+                now = time.time()
+                if sentence_count == 0:
+                    first_audio_at = now
+
+                async for chunk in tts_service.stream_sentences(payload, language=detected_lang):
+                    audio = chunk.get("audio_data")
+                    if not audio:
                         continue
-                    if first_sentence_ms == 0:
-                        first_sentence_ms = (time.time() - turn_start) * 1000
-                        _latency_tracker.mark_tts_first_audio()
+                    _latency_tracker.mark_tts_first_audio()
                     await websocket.send_json({
                         "type": "sentence",
-                        "index": _idx,
+                        "index": sentence_count,
                         "text": chunk["text"],
-                        "audio_data": chunk["audio_data"],
+                        "audio_data": audio,
                     })
+                    if sentence_count == 0 and not first_sentence_text:
+                        first_sentence_text = chunk["text"]
                     sentence_count += 1
-                    last_sentence_text = chunk["text"]
-                tts_ms = (time.time() - tts_start) * 1000
         finally:
             if not llm_task.done():
                 llm_task.cancel()
+            try:
+                await llm_task
+            except asyncio.CancelledError:
+                pass
             _latency_tracker.end_tts()
 
-        ai_response = "".join(ai_parts).strip()
-        if llm_error and not ai_response:
-            ai_response = (
-                "I can help with that. We offer MPC, BiPC, MEC and CEC streams. "
-                "What would you like to know more about - courses, fees or admission?"
-            )
+        if first_audio_at:
+            _latency_tracker.tts_first_audio = first_audio_at
 
-        # Update memory (keep 30 messages = 15 turns for better context)
+        ai_response = "".join(ai_parts).strip()
         memory.append(user_text)
         memory.append(ai_response)
-        if len(memory) > 30:
-            del memory[: len(memory) - 30]
+        ai_state["last_response"] = ai_response
+        ai_state["speaking"] = False
+        ai_state["finished_at"] = time.time()
 
-        total_ms = (time.time() - turn_start) * 1000
-        
-        # Get comprehensive latency metrics
-        latency_metrics = _latency_tracker.get_metrics()
-        
+        metrics = _latency_tracker.get_metrics()
+        metrics["sentence_count"] = sentence_count
+        metrics["first_sentence_text"] = first_sentence_text[:120]
+        metrics["llm_error"] = llm_error
         logger.info(
-            "WS turn done | conv=%s | stt=%.0fms | rag=%.0fms | total=%.0fms | sentences=%d",
-            conversation_id, 
-            latency_metrics.get("stt_ms", 0), 
-            latency_metrics.get("rag_ms", 0), 
-            total_ms, 
+            "WS_TURN | conv=%s | lang=%s | stt=%.0fms | rag=%.0fms | "
+            "llm_ttft=%.0fms | llm_total=%.0fms | tts_first=%.0fms | "
+            "ttfa=%.0fms | total=%.0fms | sentences=%d%s",
+            conversation_id,
+            detected_lang,
+            metrics.get("stt_ms", 0),
+            metrics.get("rag_ms", 0),
+            metrics.get("llm_ttft_ms", 0),
+            metrics.get("llm_total_ms", 0),
+            metrics.get("tts_first_audio_ms", 0),
+            metrics.get("ttfa_ms", 0),
+            metrics.get("total_turn_ms", 0),
             sentence_count,
+            f" ERROR={llm_error[:80]}" if llm_error else "",
         )
 
         await websocket.send_json({
             "type": "turn_done",
             "ai_response": ai_response,
-            "debug_info": {
-                "stt_time_ms": latency_metrics.get("stt_ms", 0),
-                "rag_time_ms": latency_metrics.get("rag_ms", 0),
-                "llm_ttft_ms": latency_metrics.get("llm_ttft_ms", 0),
-                "llm_total_ms": latency_metrics.get("llm_total_ms", 0),
-                "tts_first_audio_ms": latency_metrics.get("tts_first_audio_ms", 0),
-                "tts_total_ms": latency_metrics.get("tts_total_ms", 0),
-                "ttfa_ms": latency_metrics.get("ttfa_ms", 0),
-                "total_turn_ms": latency_metrics.get("total_turn_ms", 0),
-                "first_sentence_ms": round(first_sentence_ms) if first_sentence_ms else 0,
-                "sentence_count": sentence_count,
-                "knowledge_source": "json" if mode == "test" else "faiss",
-            },
+            "debug_info": metrics,
         })
-        # Mark AI as finished for echo cancellation cooldown
-        ai_state["speaking"] = False
-        ai_state["finished_at"] = time.time()
-        ai_state["last_response"] = ai_response
 
     except Exception as e:
-        logger.error("WS process_utterance failed: %s", e, exc_info=True)
-        ai_state["speaking"] = False
-        ai_state["finished_at"] = time.time()
+        logger.exception("WS utterance processing failed (conv=%s): %s", conversation_id, e)
         try:
-            await websocket.send_json({"type": "error", "detail": str(e)})
+            await websocket.send_json({
+                "type": "turn_done",
+                "ai_response": "",
+                "debug_info": {"error": str(e)},
+            })
         except Exception:
             pass
+        finally:
+            ai_state["speaking"] = False
 
 
 # ---------------------------------------------------------------------------
-# Main WebSocket handler
+# WebSocket voice agent endpoint
 # ---------------------------------------------------------------------------
 
-async def _handle_voice_ws(websocket: WebSocket):
-    """Main WebSocket handler for the voice agent.
+@router.websocket("/voice/{agent_id}")
+async def ws_voice_agent(websocket: WebSocket):
+    """Real-time bidirectional voice WebSocket for a published agent.
 
-    Protocol:
-      1. Client sends JSON config: {mode, knowledge_file, institute_id, language}
-      2. Server sends greeting audio (sentence events)
-      3. Client streams PCM int16 16kHz mono audio frames (binary)
-      4. Server detects speech end (energy VAD), transcribes, generates response
-      5. Server streams sentence audio back (JSON with base64 audio_data)
-      6. Repeat from step 3
+    Client -> Server: PCM 16 kHz mono audio frames (binary)
+    Server -> Client: JSON control messages + base64 MP3 sentence audio
+
+    Flow:
+      1. Client opens WS, sends {type: "hello", ...}
+      2. Server sends greeting sentences (streamed TTS)
+      3. Client streams audio frames; server runs VAD -> STT -> LLM -> TTS
+      4. On disconnect, session is cleaned up
     """
     await websocket.accept()
-    conversation_id = f"ws_{uuid.uuid4().hex[:12]}"
-    conversation_memory: list = []
-    mode = "test"
-    knowledge_file = "institute.json"
-    institute_id = 1
-    language = "English"
+    logger.info("WS voice connect: agent=%s client=%s", websocket.path, websocket.client)
 
     try:
-        # -- Phase 1: Receive configuration ------------------------------------
-        config_msg = await asyncio.wait_for(websocket.receive_text(), timeout=10)
-        config = json.loads(config_msg)
-        mode = config.get("mode", "test")
-        knowledge_file = config.get("knowledge_file", "institute.json")
-        institute_id = config.get("institute_id", 1)
-        language = config.get("language", "English")
-
-        logger.info(
-            "WS voice connected | conv=%s | mode=%s | lang=%s",
-            conversation_id, mode, language,
-        )
-
-        await websocket.send_json({
-            "type": "connected",
-            "conversation_id": conversation_id,
-        })
-
-        # -- Phase 2: Greeting -------------------------------------------------
-        await _send_greeting(
-            websocket, mode, knowledge_file, institute_id, language, conversation_memory
-        )
-
-        # -- Phase 3: Main loop -- receive audio, detect speech, process --------
-        pcm_buffer = bytearray()
-        pre_speech_frames: list = []  # rolling buffer of recent silence frames
-        silence_frame_count = 0
-        is_speaking = False
-        frame_count = 0
-        turn_start_time = 0.0
-        # Echo cancellation: track when AI last spoke to avoid self-interruption
-        ai_state = {"speaking": False, "finished_at": 0.0, "last_response": ""}  # mutable container
-        BARGE_IN_COOLDOWN_MS = 500  # ignore mic for 500ms after AI stops (increased for better echo suppression)
-        current_energy_threshold = ENERGY_THRESHOLD
-        # Adaptive threshold based on recent audio levels
-        recent_rms_values = []
-        # Enhanced turn detector (spec §10)
-        _turn_detector.reset()
-
-        while True:
-            msg = await websocket.receive()
-
-            if msg["type"] == "websocket.receive":
-                if "text" in msg and msg["text"]:
-                    # JSON control message
-                    try:
-                        ctrl = json.loads(msg["text"])
-                        if ctrl.get("type") == "config":
-                            mode = ctrl.get("mode", mode)
-                            knowledge_file = ctrl.get("knowledge_file", knowledge_file)
-                            institute_id = ctrl.get("institute_id", institute_id)
-                        elif ctrl.get("type") == "end":
-                            await websocket.send_json({"type": "ended"})
-                            break
-                    except json.JSONDecodeError:
-                        pass
-                    continue
-
-                if "bytes" in msg and msg["bytes"]:
-                    audio_data = msg["bytes"]
-
-                    # Check if this is a JSON-in-binary (control message)
-                    if len(audio_data) > 2 and audio_data[:1] == b"{":
-                        try:
-                            ctrl = json.loads(audio_data.decode("utf-8"))
-                            if ctrl.get("type") == "end":
-                                await websocket.send_json({"type": "ended"})
-                                break
-                            continue
-                        except (UnicodeDecodeError, json.JSONDecodeError):
-                            pass
-
-                    # PCM audio frame: int16 mono 16kHz
-                    if len(audio_data) < 2:
-                        continue
-
-                    # Convert int16 bytes -> float32 numpy
-                    samples_int16 = np.frombuffer(audio_data, dtype=np.int16)
-                    samples_float = samples_int16.astype(np.float32) / 32768.0
-
-                    # -- Server-side VAD: energy-based speech detection ---------
-                    for i in range(0, len(samples_float), FRAME_SAMPLES):
-                        frame = samples_float[i : i + FRAME_SAMPLES]
-                        if len(frame) < FRAME_SAMPLES // 2:
-                            continue
-
-                        rms = float(np.sqrt(np.mean(frame**2)))
-                        frame_count += 1
-                        
-                        # Adaptive threshold: track recent RMS levels
-                        recent_rms_values.append(rms)
-                        if len(recent_rms_values) > 50:  # Keep last 50 frames (~1 second)
-                            recent_rms_values.pop(0)
-                        
-                        # Echo cancellation: raise threshold right after AI spoke
-                        if ai_state["speaking"] or (time.time() - ai_state["finished_at"]) < (BARGE_IN_COOLDOWN_MS / 1000.0):
-                            # Much harder to trigger during/after AI speech
-                            current_energy_threshold = ENERGY_THRESHOLD * 4
-                        else:
-                            # Adaptive baseline: use 75th percentile of recent RMS
-                            if recent_rms_values:
-                                baseline = np.percentile(recent_rms_values, 75)
-                                current_energy_threshold = max(ENERGY_THRESHOLD, baseline * 1.5)
-                            else:
-                                current_energy_threshold = ENERGY_THRESHOLD
-
-                        if rms > current_energy_threshold:
-                            if not is_speaking:
-                                is_speaking = True
-                                _turn_detector.reset()  # Reset turn detector for new utterance
-                                pcm_buffer = bytearray()
-                                turn_start_time = time.time()
-                                # Include pre-speech buffer to avoid clipping the start
-                                for pf in pre_speech_frames:
-                                    pcm_buffer.extend(pf)
-                                pre_speech_frames = []
-                                await websocket.send_json({"type": "speech_start"})
-
-                            pcm_buffer.extend(frame.tobytes())
-
-                            # Hard cap: prevent runaway buffers. Measured on the
-                            # ACTUAL buffered audio (bytes), so silence between
-                            # utterances can never inflate the counter.
-                            max_bytes = int(MAX_UTTERANCE_SECONDS * SAMPLE_RATE) * 2
-                            if len(pcm_buffer) > max_bytes:
-                                is_speaking = False
-                                frame_count = 0
-                                await _process_utterance(
-                                    websocket, pcm_buffer, conversation_id,
-                                    mode, knowledge_file, institute_id,
-                                    language, conversation_memory, ai_state,
-                                )
-                                pcm_buffer = bytearray()
-                                _turn_detector.reset()
-
-                        elif is_speaking:
-                            # Silence during speech -- include the gap and update turn detector
-                            pcm_buffer.extend(frame.tobytes())
-                            # Use enhanced turn detector (spec §10)
-                            if _turn_detector.update(False):  # False = silence
-                                # Speech ended according to adaptive threshold!
-                                is_speaking = False
-                                frame_count = 0
-                                # Require >300 ms of audio to process
-                                min_bytes = int(SAMPLE_RATE * 0.3) * 2  # 16-bit = 2 bytes
-                                if len(pcm_buffer) > min_bytes:
-                                    await websocket.send_json({"type": "speech_end"})
-                                    await _process_utterance(
-                                        websocket, pcm_buffer, conversation_id,
-                                        mode, knowledge_file, institute_id,
-                                        language, conversation_memory, ai_state,
-                                    )
-                                pcm_buffer = bytearray()
-                                _turn_detector.reset()
-                        else:
-                            # Not speaking yet -- keep a rolling pre-speech buffer
-                            pre_speech_frames.append(frame.tobytes())
-                            if len(pre_speech_frames) > PRE_SPEECH_FRAMES:
-                                pre_speech_frames.pop(0)
-
-            elif msg["type"] == "websocket.disconnect":
-                break
-
-    except asyncio.TimeoutError:
-        logger.warning("WS voice: config timeout (conv=%s)", conversation_id)
-    except WebSocketDisconnect:
-        logger.info("WS voice: client disconnected (conv=%s)", conversation_id)
+        hello = await asyncio.wait_for(websocket.receive_json(), timeout=10.0)
+        mode = str(hello.get("mode") or "live").lower()
+        knowledge_file = str(hello.get("knowledge_file") or "institute.json")
+        institute_id = int(hello.get("institute_id") or 0)
+        language = str(hello.get("language") or "English")
+        conversation_id = str(hello.get("conversation_id") or uuid.uuid4().hex[:12])
+        memory: list = json.loads(hello.get("memory") or "[]")
     except Exception as e:
-        logger.error("WS voice error (conv=%s): %s", conversation_id, e, exc_info=True)
+        logger.warning("WS hello failed: %s", e)
         try:
-            await websocket.send_json({"type": "error", "detail": str(e)})
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Handshake failed: {e}",
+            })
         except Exception:
             pass
+        return
+
+    ai_state: dict = {"speaking": False, "finished_at": 0.0, "last_response": ""}
+
+    await _send_greeting(websocket, mode, knowledge_file, institute_id, language, memory, ai_state)
+
+    pcm_buffer: bytearray = bytearray()
+    speech_started = False
+    utterance_frames = 0
+
+    try:
+        while True:
+            frame = await asyncio.wait_for(
+                websocket.receive_bytes(),
+                timeout=2.0,
+            )
+            if len(frame) < 4:
+                continue
+
+            try:
+                pcm_int16 = np.frombuffer(frame, dtype=np.int16)
+                pcm_float = pcm_int16.astype(np.float32) / 32768.0
+                rms = float(np.sqrt(np.mean(pcm_float ** 2)))
+            except Exception:
+                continue
+
+            is_speech = rms > ENERGY_THRESHOLD
+
+            if is_speech:
+                if not speech_started:
+                    speech_started = True
+                pcm_buffer.extend(frame)
+                utterance_frames += 1
+            else:
+                if speech_started:
+                    pcm_buffer.extend(frame)
+                    utterance_frames += 1
+
+            if speech_started and not is_speech:
+                should_cut = _turn_detector.update(False)
+                if should_cut and utterance_frames >= PRE_SPEECH_FRAMES:
+                    _turn_detector.reset()
+                    if len(pcm_buffer) >= FRAME_SAMPLES * 5:
+                        pcm_copy = bytearray(pcm_buffer)
+                        pcm_buffer.clear()
+                        speech_started = False
+                        utterance_frames = 0
+                        await _process_utterance(
+                            websocket,
+                            pcm_copy,
+                            conversation_id,
+                            mode,
+                            knowledge_file,
+                            institute_id,
+                            language,
+                            memory,
+                            ai_state,
+                        )
+                    else:
+                        pcm_buffer.clear()
+                        speech_started = False
+                        utterance_frames = 0
+            elif is_speech:
+                if not speech_started:
+                    _turn_detector.reset()
+                _turn_detector.update(True)
+    except WebSocketDisconnect:
+        logger.info("WS voice disconnect: agent=%s", websocket.path)
+    except asyncio.TimeoutError:
+        logger.info("WS voice timeout: agent=%s", websocket.path)
+    except Exception as e:
+        logger.exception("WS voice loop error: %s", e)
     finally:
-        logger.info("WS voice: session ended (conv=%s)", conversation_id)
-
-
-# ---------------------------------------------------------------------------
-# FastAPI WebSocket route
-# ---------------------------------------------------------------------------
-
-@router.websocket("/ws/voice")
-async def voice_websocket(websocket: WebSocket):
-    """WebSocket endpoint for real-time voice conversation.
-
-    Protocol:
-      1. Client sends JSON config: {mode, knowledge_file, institute_id, language}
-      2. Server sends greeting audio (sentence events)
-      3. Client streams PCM int16 16kHz mono audio frames (binary)
-      4. Server detects speech end (energy VAD), transcribes, generates response
-      5. Server streams sentence audio back (JSON with base64 audio_data)
-      6. Repeat from step 3
-    """
-    await _handle_voice_ws(websocket)
+        try:
+            await websocket.close()
+        except Exception:
+            pass

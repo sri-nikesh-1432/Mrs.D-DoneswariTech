@@ -43,11 +43,15 @@ class EdgeTTSService:
             "English": "en-IN-NeerjaNeural",  # Indian English female
             "English-Alt": "en-IN-PrabhaNeural",  # Indian English female (alternative)
             "Telugu": "te-IN-ShrutiNeural",    # Telugu female
+            "Telugu-Alt": "te-IN-ChitraNeural", # Telugu female (alternative)
             "Hindi": "hi-IN-SwaraNeural",      # Hindi female
             "Hindi-Alt": "hi-IN-MeeraNeural",  # Hindi female (alternative)
             "Tamil": "ta-IN-PallaviNeural",    # Tamil female
+            "Tamil-Alt": "ta-IN-VenkatalakshmiNeural",  # Tamil female (alternative)
             "Kannada": "kn-IN-SapnaNeural",    # Kannada female
+            "Kannada-Alt": "kn-IN-KushalNeural",  # Kannada female (alternative)
             "Malayalam": "ml-IN-SobhanaNeural", # Malayalam female
+            "Malayalam-Alt": "ml-IN-MirnalBetterBetterNeural",  # Malayalam female (alternative)
         }
         self.voice = os.getenv("TTS_VOICE", "te-IN-ShrutiNeural")
         self.rate = os.getenv("TTS_RATE", "+10%")  # ~1.1x speed, calm counsellor pace
@@ -360,6 +364,28 @@ class EdgeTTSService:
             pitch_delta += 2          # higher (enthusiasm)
             volume_delta += 2         # a touch louder
 
+        # ── Warm-acknowledgement / reassurance tweaks ──
+        # Short reassuring phrases should feel bright and calm, not flat.
+        warm_openers = (
+            "avunu", "sare", "okay", "sure", "absolutely", "yes", "definitely",
+            "got it", "perfect", "great", "nice", "certainly", "of course",
+            "నమస్కారం", "సరే", "అవును", "అలాగే", "బెసరగా",
+        )
+        if s.lower().startswith(warm_openers):
+            rate_delta += 2
+            pitch_delta += 1
+            volume_delta += 1
+
+        # ── Closing / next-step questions: slightly slower, warmer, lower ──
+        # Questions that invite action ("Would you like to visit?", "Shall I book it?") 
+        # should not sound hurried — they are the conversational close.
+        if s.endswith("?") and any(
+            w in s.lower() for w in ["visit", "callback", "come", "arrange", "schedule", "book", "sit", "meet"]
+        ):
+            rate_delta -= 2
+            pitch_delta -= 1
+            volume_delta -= 1
+
         # ── Organic jitter (±4 rate, ±3 pitch, ±3 volume) ──
         # Wide jitter — real people never say two sentences with identical
         # prosody. The variation is what makes it feel alive. Each sentence
@@ -367,6 +393,12 @@ class EdgeTTSService:
         rate_delta += random.randint(-4, 4)
         pitch_delta += random.randint(-3, 3)
         volume_delta += random.randint(-3, 3)
+
+        # Clamp prosody to a sane human range so we never sound robotic or 
+        # cartoonish. Larger swings destroy naturalness.
+        rate = max(0, min(30, base_rate + rate_delta))
+        pitch = max(-8, min(12, base_pitch + pitch_delta))
+        volume = max(-5, min(10, base_volume + volume_delta))
 
         rate = base_rate + rate_delta
         pitch = base_pitch + pitch_delta
