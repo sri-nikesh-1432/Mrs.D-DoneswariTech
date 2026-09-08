@@ -28,7 +28,7 @@ from sqlalchemy import select
 
 from app.database.models import CallHistory, CallReport, Sentiment
 from app.logs.logger import get_logger
-from app.romantelugu import looks_roman_telugu, transliterate_roman_telugu
+from app.roman_telugu import transliterate_roman_telugu
 
 logger = get_logger(__name__)
 

@@ -183,7 +183,7 @@ class CallReport(Base):
     __tablename__ = "call_reports"
 
     id = Column(Integer, primary_key=True, index=True)
-    call_id = Column(String(64), unique=True, nullable=False, index=True)
+    call_id = Column(String(64), ForeignKey("call_history.call_id"), unique=True, nullable=False, index=True)
     institute_id = Column(Integer, ForeignKey("institutes.id"), nullable=False)
 
     # Caller / lead info extracted from conversation
@@ -221,6 +221,9 @@ class CallReport(Base):
 CallHistory.report = relationship(
     "CallReport", back_populates="call", uselist=False, cascade="all, delete-orphan"
 )
+
+
+
 
 class CallAnalytics(Base):
     """

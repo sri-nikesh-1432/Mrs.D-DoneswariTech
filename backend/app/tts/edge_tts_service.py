@@ -399,10 +399,6 @@ class EdgeTTSService:
         rate = max(0, min(30, base_rate + rate_delta))
         pitch = max(-8, min(12, base_pitch + pitch_delta))
         volume = max(-5, min(10, base_volume + volume_delta))
-
-        rate = base_rate + rate_delta
-        pitch = base_pitch + pitch_delta
-        volume = base_volume + volume_delta
         return f"{rate:+d}%", f"{pitch:+d}Hz", f"{volume:+d}%"
 
     # Natural breathing-cadence pause AFTER a sentence, in milliseconds. Humans

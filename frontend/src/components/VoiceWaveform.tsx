@@ -21,7 +21,7 @@ export default function VoiceWaveform({ bars = 24, color, active = false, amplit
     });
   }, [bars, active, amplitude]);
 
-  const cls = colorPick === "ai" ? "bg-sky-400/60" : "bg-amber-500/70";
+  const cls = colorPick === "ai" ? "bg-neutral-400/60" : "bg-amber-500/70";
 
   return (
     <div className={`flex items-end gap-[3px] ${className}`}>

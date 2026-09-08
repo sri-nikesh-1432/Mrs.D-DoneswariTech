@@ -23,6 +23,7 @@ from app.voice.voice_ws import (
     _transcribe_pcm,
     _natural_pause_ms,
     _language_detector,
+    _pop_complete_sentences,
 )
 from app.rag.retriever import retrieve_context, format_context_for_prompt
 from app.rag.json_retriever import get_json_retriever
@@ -165,7 +166,7 @@ async def voice_latency_test(
             "note": "This endpoint measures the backend STT->LLM->TTS path.",
         }
 
-    detected_lang = _detect_language(user_text_final, stt_language=detected_lang_code)
+    detected_lang = _detect_language(user_text_final, hint=detected_lang_code)
     llm_input = transliterate_roman_telugu(user_text_final)
 
     tracker.start_rag()

@@ -5,6 +5,8 @@ Handles institute management, calls, and analytics.
 
 import uuid
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import Optional
@@ -50,37 +52,41 @@ async def list_institutes(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class CreateInstituteRequest(BaseModel):
+    name: str
+    phone_number: str
+    language: str = "en"
+    voice: str = "en-IN-NeerjaNeural"
+    greeting_message: Optional[str] = None
+
+
 @router.post("/institute")
 async def create_institute(
-    name: str,
-    phone_number: str,
-    language: str = "en",
-    voice: str = "en-IN-NeerjaNeural",
-    greeting_message: Optional[str] = None,
+    body: CreateInstituteRequest,
     session: AsyncSession = Depends(get_database)
 ):
     """Create a new institute."""
     try:
         institute = Institute(
             institute_id=f"inst_{uuid.uuid4().hex[:12]}",
-            name=name,
-            phone_number=phone_number,
-            language=language,
-            voice=voice,
-            greeting_message=greeting_message
+            name=body.name,
+            phone_number=body.phone_number,
+            language=body.language,
+            voice=body.voice,
+            greeting_message=body.greeting_message,
         )
         session.add(institute)
         await session.commit()
         await session.refresh(institute)
-        
+
         logger.info(f"Created institute: {institute.name}")
-        
+
         return {
             "institute_id": institute.institute_id,
             "id": institute.id,
             "name": institute.name,
             "phone_number": institute.phone_number,
-            "status": "active"
+            "status": "active",
         }
     except Exception as e:
         logger.error(f"Error creating institute: {e}")
@@ -92,11 +98,19 @@ async def get_institute(
     institute_id: str,
     session: AsyncSession = Depends(get_database)
 ):
-    """Get institute details."""
+    """Get institute details.
+
+    Accepts both the string institute_id and the integer id.
+    """
     try:
-        result = await session.execute(
-            select(Institute).where(Institute.institute_id == institute_id)
-        )
+        if institute_id.isdigit():
+            result = await session.execute(
+                select(Institute).where(Institute.id == int(institute_id))
+            )
+        else:
+            result = await session.execute(
+                select(Institute).where(Institute.institute_id == institute_id)
+            )
         institute = result.scalar_one_or_none()
         
         if not institute:
@@ -127,11 +141,19 @@ async def get_institute_status(
     institute_id: str,
     session: AsyncSession = Depends(get_database)
 ):
-    """Get institute status including SIP and knowledge."""
+    """Get institute status including SIP and knowledge.
+
+    Accepts both string institute_id and integer id.
+    """
     try:
-        result = await session.execute(
-            select(Institute).where(Institute.institute_id == institute_id)
-        )
+        if institute_id.isdigit():
+            result = await session.execute(
+                select(Institute).where(Institute.id == int(institute_id))
+            )
+        else:
+            result = await session.execute(
+                select(Institute).where(Institute.institute_id == institute_id)
+            )
         institute = result.scalar_one_or_none()
         
         if not institute:
@@ -169,12 +191,21 @@ async def get_call_history(
     offset: int = 0,
     session: AsyncSession = Depends(get_database)
 ):
-    """Get call history for an institute."""
+    """Get call history for an institute.
+
+    `institute_id` may be the string institute_id (e.g. "inst_a88f...") or
+    the integer id — both are accepted for frontend compatibility.
+    """
     try:
-        # Get institute
-        inst_result = await session.execute(
-            select(Institute).where(Institute.institute_id == institute_id)
-        )
+        # Accept both string institute_id and integer id.
+        if institute_id.isdigit():
+            inst_result = await session.execute(
+                select(Institute).where(Institute.id == int(institute_id))
+            )
+        else:
+            inst_result = await session.execute(
+                select(Institute).where(Institute.institute_id == institute_id)
+            )
         institute = inst_result.scalar_one_or_none()
         
         if not institute:
@@ -265,12 +296,19 @@ async def get_analytics(
     institute_id: str,
     session: AsyncSession = Depends(get_database)
 ):
-    """Get analytics for an institute."""
+    """Get analytics for an institute.
+
+    Accepts both string institute_id and integer id.
+    """
     try:
-        # Get institute
-        inst_result = await session.execute(
-            select(Institute).where(Institute.institute_id == institute_id)
-        )
+        if institute_id.isdigit():
+            inst_result = await session.execute(
+                select(Institute).where(Institute.id == int(institute_id))
+            )
+        else:
+            inst_result = await session.execute(
+                select(Institute).where(Institute.institute_id == institute_id)
+            )
         institute = inst_result.scalar_one_or_none()
         
         if not institute:
@@ -329,12 +367,19 @@ async def get_live_status(
     institute_id: str,
     session: AsyncSession = Depends(get_database)
 ):
-    """Get live status including active calls."""
+    """Get live status including active calls.
+
+    Accepts both string institute_id and integer id.
+    """
     try:
-        # Get institute
-        inst_result = await session.execute(
-            select(Institute).where(Institute.institute_id == institute_id)
-        )
+        if institute_id.isdigit():
+            inst_result = await session.execute(
+                select(Institute).where(Institute.id == int(institute_id))
+            )
+        else:
+            inst_result = await session.execute(
+                select(Institute).where(Institute.institute_id == institute_id)
+            )
         institute = inst_result.scalar_one_or_none()
         
         if not institute:

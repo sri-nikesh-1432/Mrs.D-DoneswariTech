@@ -1,5 +1,5 @@
 import React from "react";
-import { Routes, Route, useLocation } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import Onboarding from "./pages/Onboarding";
 import Agent from "./pages/Agent";
@@ -10,9 +10,10 @@ function App() {
   const location = useLocation();
 
   return (
-    <div className="h-screen w-full relative overflow-hidden bg-sky-50">
+    <div className="h-screen w-full relative overflow-hidden bg-neutral-50">
       <AnimatePresence mode="wait">
         <Routes location={location} key={location.pathname}>
+          <Route path="/" element={<Navigate to="/onboarding" replace />} />
           <Route
             path="/onboarding"
             element={

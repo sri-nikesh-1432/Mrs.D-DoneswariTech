@@ -20,25 +20,39 @@ from typing import Optional, Tuple
 _tts_cache: dict[str, str] = {}
 _tts_cache_ready = False
 
-async def warm_tts_cache(tts_service) -> None:
-    """Pre-synthesize all cached responses at startup for instant audio."""
+async def warm_tts_cache(tts_service, max_entries: int = 6) -> None:
+    """Pre-synthesize a bounded set of cached responses at startup for instant audio.
+    
+    Bounding to `max_entries` keeps startup fast; the rest of the cache is
+    populated on demand (lazily) when those questions are actually asked.
+    """
     global _tts_cache_ready
     if _tts_cache_ready:
         return
     try:
+        warmed = 0
         for _, responses in _CACHE_ENTRIES:
-            for lang, text in responses.items():
+            if warmed >= max_entries:
+                break
+            # Warm the English entry first (most common), then one regional.
+            for lang in ("English", "Telugu", "Hindi"):
+                text = responses.get(lang)
+                if not text:
+                    continue
                 key = f"{hash(text)}_{lang}"
                 if key not in _tts_cache:
                     try:
                         audio = await tts_service.synthesize(text, language=lang)
                         if audio:
                             _tts_cache[key] = base64.b64encode(audio).decode("utf-8")
+                            warmed += 1
                     except Exception:
                         pass  # TTS warmup failure is non-fatal
+                if warmed >= max_entries:
+                    break
         _tts_cache_ready = True
         import logging
-        logging.getLogger(__name__).info("TTS cache warmed: %d entries", len(_tts_cache))
+        logging.getLogger(__name__).info("TTS cache warmed: %d/%d entries", len(_tts_cache), warmed)
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning("TTS cache warmup failed: %s", e)

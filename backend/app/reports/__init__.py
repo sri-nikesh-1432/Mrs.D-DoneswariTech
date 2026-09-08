@@ -2,6 +2,8 @@
 Reports module for Mrs. D AI Admission Campaign Platform.
 """
 
-from .summary_service import SummaryService
+# SummaryService is kept as a module but not imported at package init
+# because it depends on a legacy Student model that no longer exists.
+# Import it explicitly where needed.
 
-__all__ = ["SummaryService"]
+__all__ = []

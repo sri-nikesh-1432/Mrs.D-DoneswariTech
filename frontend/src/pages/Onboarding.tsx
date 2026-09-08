@@ -76,18 +76,18 @@ export default function Onboarding() {
   const fileName = file ? `${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)` : null;
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-sky-50 via-white to-sky-100 px-6 py-10 flex flex-col items-center justify-center">
+    <div className="min-h-screen bg-gradient-to-b from-neutral-50 via-white to-neutral-100 px-6 py-10 flex flex-col items-center justify-center">
       <div className="w-full max-w-xl">
         {/* Logo */}
         <div className="flex items-center gap-3 mb-2">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-sky-400 to-sky-600 flex items-center justify-center shadow-md">
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-neutral-800 to-neutral-900 flex items-center justify-center shadow-md">
             <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
-          <span className="text-2xl font-semibold text-sky-900 tracking-tight">Mrs.D</span>
+          <span className="text-2xl font-display text-neutral-900 tracking-tight">Mrs.D</span>
         </div>
-        <p className="text-sm text-sky-600 font-medium mb-8">AI Voice Receptionist</p>
+        <p className="text-sm text-neutral-600 font-medium mb-8">AI Voice Receptionist</p>
 
         <AnimatePresence mode="wait">
           {!agentCreated ? (
@@ -99,15 +99,15 @@ export default function Onboarding() {
               className="glass-card p-8 space-y-6"
             >
               <div>
-                <h1 className="text-2xl font-semibold text-sky-900">Create your AI Calling Agent</h1>
-                <p className="text-sm text-sky-600 mt-2">Train your AI agent with your own business knowledge and let it handle calls like a real counsellor.</p>
+                <h1 className="text-3xl font-display text-neutral-900">Create your AI calling agent</h1>
+                <p className="text-sm text-neutral-600 mt-2">Train your AI agent with your own business knowledge and let it handle calls like a real counsellor.</p>
               </div>
 
               {error && <div className="bg-red-50 text-red-700 text-sm px-4 py-3 rounded-xl border border-red-200">{error}</div>}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="sm:col-span-2">
-                  <label className="text-sm font-medium text-sky-800 mb-1.5 block">Your Name</label>
+                  <label className="text-sm font-medium text-neutral-800 mb-1.5 block">Your Name</label>
                   <input
                     className="glass-input"
                     placeholder="e.g. Mr. Sharma"
@@ -116,7 +116,7 @@ export default function Onboarding() {
                   />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="text-sm font-medium text-sky-800 mb-1.5 block">Phone Number</label>
+                  <label className="text-sm font-medium text-neutral-800 mb-1.5 block">Phone Number</label>
                   <input
                     className="glass-input"
                     type="tel"
@@ -126,7 +126,7 @@ export default function Onboarding() {
                   />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="text-sm font-medium text-sky-800 mb-1.5 block">Agent Name</label>
+                  <label className="text-sm font-medium text-neutral-800 mb-1.5 block">Agent Name</label>
                   <div className="flex items-center gap-2">
                     <input
                       className="glass-input"
@@ -134,13 +134,13 @@ export default function Onboarding() {
                       value={agentName}
                       onChange={(e) => setAgentName(e.target.value)}
                     />
-                    <span className="text-xs text-sky-500">It's permanently associated with your account.</span>
+                    <span className="text-xs text-neutral-500">It's permanently associated with your account.</span>
                   </div>
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="text-sm font-medium text-sky-800 mb-1.5 block">Knowledge Base</label>
+                  <label className="text-sm font-medium text-neutral-800 mb-1.5 block">Knowledge Base</label>
                   <div
-                    className={`drop-zone ${dragging ? "border-sky-500 bg-sky-50" : ""}`}
+                    className={`drop-zone ${dragging ? "border-neutral-500 bg-neutral-50" : ""}`}
                     onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
                     onDragLeave={() => setDragging(false)}
                     onDrop={(e) => {
@@ -163,10 +163,10 @@ export default function Onboarding() {
                     />
                     {fileName ? (
                       <div className="space-y-1">
-                        <p className="text-sm font-medium text-sky-800 truncate max-w-full">{fileName}</p>
+                        <p className="text-sm font-medium text-neutral-800 truncate max-w-full">{fileName}</p>
                         <button
                           type="button"
-                          className="text-xs text-sky-500 hover:text-sky-700 underline"
+                          className="text-xs text-neutral-500 hover:text-neutral-700 underline"
                           onClick={(e) => { e.stopPropagation(); setFile(null); }}
                         >
                           Remove
@@ -174,8 +174,8 @@ export default function Onboarding() {
                       </div>
                     ) : (
                       <div>
-                        <p className="text-sm text-sky-600">Upload your institution or business information</p>
-                        <p className="text-xs text-sky-400 mt-1 font-medium">PDF</p>
+                        <p className="text-sm text-neutral-600">Upload your institution or business information</p>
+                        <p className="text-xs text-neutral-400 mt-1 font-medium">PDF</p>
                       </div>
                     )}
                   </div>
@@ -198,17 +198,17 @@ export default function Onboarding() {
               exit={{ opacity: 0, scale: 0.98 }}
               className="glass-card p-10 text-center"
             >
-              <div className="w-20 h-20 rounded-full bg-sky-100 mx-auto mb-5 flex items-center justify-center">
-                <div className="w-10 h-10 rounded-full border-2 border-sky-400 border-t-transparent animate-spin" />
+              <div className="w-20 h-20 rounded-full bg-neutral-100 mx-auto mb-5 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-full border-2 border-neutral-400 border-t-transparent animate-spin" />
               </div>
-              <h2 className="text-xl font-semibold text-sky-900">{STEPS[trainingStep].label}</h2>
+              <h2 className="text-2xl font-display text-neutral-900">{STEPS[trainingStep].label}</h2>
               <div className="mt-6 space-y-2">
                 {STEPS.map((s, i) => (
                   <div
                     key={s.key}
-                    className={`step-item flex items-center gap-2 text-sm ${i === trainingStep ? "text-sky-800 font-medium" : "text-sky-400"}`}
+                    className={`step-item flex items-center gap-2 text-sm ${i === trainingStep ? "text-neutral-800 font-medium" : "text-neutral-400"}`}
                   >
-                    <div className={`w-5 h-5 rounded-full flex-shrink-0 ${i === trainingStep ? "bg-sky-500" : "bg-sky-100"}`} />
+                    <div className={`w-5 h-5 rounded-full flex-shrink-0 ${i === trainingStep ? "bg-neutral-500" : "bg-neutral-100"}`} />
                     {s.label}
                   </div>
                 ))}

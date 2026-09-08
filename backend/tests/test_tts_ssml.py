@@ -86,11 +86,12 @@ class TestExpressiveSSML:
             assert _re.match(r"[+-]\d+%$", rate), rate
             assert _re.match(r"[+-]\d+Hz$", pitch), pitch
             assert _re.match(r"[+-]\d+%$", volume), volume
-            # Jitter stays within ±2 of the base deltas — never extreme.
-            # (Short questions can reach +13% rate; long quiet lines -4%.)
-            assert -15 <= int(rate[:-1]) <= 15
-            assert -6 <= int(pitch[:-2]) <= 6
-            assert -10 <= int(volume[:-1]) <= 10
+            # _prosody_for clamps to rate [0,30], pitch [-8,12], volume [-5,10]
+            # so even the widest jitter + sentence modifiers stay in a sane
+            # human range and never sound robotic or cartoonish.
+            assert 0 <= int(rate[:-1]) <= 30
+            assert -8 <= int(pitch[:-2]) <= 12
+            assert -5 <= int(volume[:-1]) <= 10
 
 
 class TestRawSynthStructure:

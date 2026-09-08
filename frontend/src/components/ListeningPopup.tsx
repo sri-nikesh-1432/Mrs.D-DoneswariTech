@@ -36,7 +36,7 @@ export default function ListeningPopup({ amplitude = 0, lang = "English" }: Prop
             />
           ))}
         </div>
-        <span className="text-sm font-medium text-sky-700 bg-sky-50/80 px-3 py-1 rounded-full">
+        <span className="text-sm font-medium text-neutral-700 bg-neutral-100 px-3 py-1 rounded-full">
           {label}
         </span>
       </div>

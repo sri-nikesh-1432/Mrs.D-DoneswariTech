@@ -21,16 +21,16 @@ const STATE_LABELS: Record<OrbState, string> = {
 
 export default function AgentOrb({ state }: Props) {
   const cls = {
-    idle: "bg-gradient-to-br from-sky-100 to-sky-50 border-sky-200",
-    connecting: "bg-gradient-to-br from-sky-100 via-blue-50 to-sky-50 border-sky-300",
-    listening: "bg-gradient-to-br from-sky-100 via-blue-50 to-sky-50 border-sky-400",
-    thinking: "bg-gradient-to-br from-sky-100 via-indigo-50 to-sky-50 border-indigo-300",
-    speaking: "bg-gradient-to-br from-sky-100 via-sky-50 to-blue-50 border-sky-500 shadow-sky-200",
+    idle: "bg-gradient-to-br from-neutral-100 to-neutral-50 border-neutral-200",
+    connecting: "bg-gradient-to-br from-neutral-100 via-neutral-50 to-neutral-100 border-neutral-300",
+    listening: "bg-gradient-to-br from-neutral-100 via-neutral-50 to-neutral-100 border-neutral-400",
+    thinking: "bg-gradient-to-br from-neutral-100 via-neutral-50 to-neutral-100 border-neutral-300",
+    speaking: "bg-gradient-to-br from-neutral-100 via-neutral-50 to-neutral-100 border-neutral-500 shadow-neutral-200",
     calling: "bg-gradient-to-br from-amber-100 to-orange-50 border-amber-400",
     connected: "bg-gradient-to-br from-green-100 to-emerald-50 border-green-400",
     ended: "bg-gradient-to-br from-gray-100 to-gray-50 border-gray-300",
     error: "bg-gradient-to-br from-red-100 to-rose-50 border-red-300",
-  greeting: "bg-gradient-to-br from-sky-100 to-sky-50 border-sky-300",
+  greeting: "bg-gradient-to-br from-neutral-100 to-neutral-50 border-neutral-300",
   }[state];
 
   return (
@@ -49,24 +49,24 @@ export default function AgentOrb({ state }: Props) {
           {/* Inner icon */}
           <div className="flex items-center justify-center w-full h-full">
             {state === "idle" && (
-              <svg className="w-12 h-12 text-sky-400/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <svg className="w-12 h-12 text-neutral-400/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             )}
             {state === "listening" && (
-              <svg className="w-14 h-14 text-sky-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round">
+              <svg className="w-14 h-14 text-neutral-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round">
                 <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
                 <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
                 <path d="M12 19v2" strokeWidth={2} />
               </svg>
             )}
             {state === "thinking" && (
-              <svg className="w-12 h-12 text-indigo-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <svg className="w-12 h-12 text-neutral-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 0 1-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 0 1 4.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3v5.714a2.25 2.25 0 0 1-.659 1.591L14.25 21" />
               </svg>
             )}
             {state === "speaking" && (
-              <svg className="w-14 h-14 text-sky-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round">
+              <svg className="w-14 h-14 text-neutral-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round">
                 <path d="M12 1a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z" />
                 <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
                 <path d="M12 19v2" strokeWidth={2} />
@@ -91,18 +91,18 @@ export default function AgentOrb({ state }: Props) {
         </div>
         {/* Ambient glow based on state */}
         <div className="absolute inset-0 rounded-full opacity-30 blur-xl" style={{
-          background: state === "speaking" ? "radial-gradient(circle, rgba(58,159,214,0.4), transparent 70%)" :
-                        state === "listening" ? "radial-gradient(circle, rgba(90,184,228,0.3), transparent 70%)" :
-                        state === "thinking" ? "radial-gradient(circle, rgba(129,140,248,0.3), transparent 70%)" :
-                        state === "calling" ? "radial-gradient(circle, rgba(245,158,11,0.3), transparent 70%)" :
-                        state === "connected" ? "radial-gradient(circle, rgba(16,185,129,0.3), transparent 70%)" :
-                        "radial-gradient(circle, rgba(58,159,214,0.15), transparent 70%)"
+          background: state === "speaking" ? "radial-gradient(circle, rgba(24,24,27,0.35), transparent 70%)" :
+                        state === "listening" ? "radial-gradient(circle, rgba(24,24,27,0.25), transparent 70%)" :
+                        state === "thinking" ? "radial-gradient(circle, rgba(24,24,27,0.25), transparent 70%)" :
+                        state === "calling" ? "radial-gradient(circle, rgba(217,119,6,0.25), transparent 70%)" :
+                        state === "connected" ? "radial-gradient(circle, rgba(22,163,74,0.25), transparent 70%)" :
+                        "radial-gradient(circle, rgba(24,24,27,0.12), transparent 70%)"
         }} />
       </div>
-      <span className={`text-sm font-medium text-sky-700 ${
-        state === "speaking" ? "text-sky-600" :
-        state === "listening" ? "text-sky-500" :
-        state === "thinking" ? "text-indigo-500" :
+      <span className={`text-sm font-medium text-neutral-700 ${
+        state === "speaking" ? "text-neutral-600" :
+        state === "listening" ? "text-neutral-500" :
+        state === "thinking" ? "text-neutral-500" :
         state === "calling" ? "text-amber-600" :
         state === "connected" ? "text-green-600" : ""
       }`}>

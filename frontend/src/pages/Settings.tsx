@@ -53,9 +53,9 @@ export default function Settings() {
   };
 
   return (
-    <div className="h-screen w-full flex flex-col bg-sky-50 overflow-hidden">
+    <div className="h-screen w-full flex flex-col bg-neutral-50 overflow-hidden">
       {/* Top bar */}
-      <header className="glass-nav px-4 py-3 flex items-center justify-between z-20 border-b border-sky-200/60 flex-shrink-0">
+      <header className="glass-nav px-4 py-3 flex items-center justify-between z-20 border-b border-neutral-200 flex-shrink-0">
         <div className="flex items-center gap-3">
           <button
             className="btn-ghost-premium text-xs"
@@ -67,23 +67,23 @@ export default function Settings() {
             Back
           </button>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-sky-400 to-sky-600 flex items-center justify-center shadow-sm">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-neutral-800 to-neutral-900 flex items-center justify-center shadow-sm">
               <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
-            <span className="text-sm font-semibold text-sky-900">Mrs.D</span>
+            <span className="text-sm font-display text-lg text-neutral-900 leading-none">Mrs.D</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <button className="btn-ghost-premium text-xs" onClick={() => navigate("/calls")}>Calls & Leads</button>
-          <div className="w-7 h-7 rounded-full bg-sky-200 text-sky-700 text-xs font-medium flex items-center justify-center">U</div>
+          <div className="w-7 h-7 rounded-full bg-neutral-200 text-neutral-700 text-xs font-medium flex items-center justify-center">U</div>
         </div>
       </header>
 
       <div className="flex-1 overflow-y-auto p-4">
-        <h1 className="text-xl font-semibold text-sky-900 mb-1">Settings</h1>
-        <p className="text-sm text-sky-600 mb-6">Configure your AI calling agent.</p>
+        <h1 className="text-2xl font-display text-neutral-900 mb-1">Settings</h1>
+        <p className="text-sm text-neutral-600 mb-6">Configure your AI calling agent.</p>
 
         <div className="max-w-2xl space-y-6">
           {/* Agent identity */}
@@ -91,11 +91,11 @@ export default function Settings() {
             <div className="space-y-3">
               <Field label="Agent Name">
                 <input className="glass-input w-64" value={agentName} onChange={(e) => setAgentName(e.target.value)} />
-                <p className="text-xs text-sky-400 mt-1">The agent's name is permanently associated with your account.</p>
+                <p className="text-xs text-neutral-400 mt-1">The agent's name is permanently associated with your account.</p>
               </Field>
               <Field label="Business / Institution Name">
                 <input className="glass-input w-80" value={businessName} onChange={(e) => setBusinessName(e.target.value)} />
-                <p className="text-xs text-sky-400 mt-1">This name appears in greetings and call reports.</p>
+                <p className="text-xs text-neutral-400 mt-1">This name appears in greetings and call reports.</p>
               </Field>
               <Field label="Phone Number">
                 <input className="glass-input w-64" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
@@ -139,11 +139,11 @@ export default function Settings() {
                   step="0.05"
                   value={speed}
                   onChange={(e) => setSpeed(parseFloat(e.target.value))}
-                  className="flex-1 accent-sky-500"
+                  className="flex-1 accent-neutral-900"
                 />
-                <span className="text-sm text-sky-700 w-16 text-right">{speed.toFixed(2)}×</span>
+                <span className="text-sm text-neutral-700 w-16 text-right">{speed.toFixed(2)}×</span>
               </div>
-              <p className="text-xs text-sky-400 mt-1">Target: 1.15–1.25× for natural phone pace.</p>
+              <p className="text-xs text-neutral-400 mt-1">Target: 1.15–1.25× for natural phone pace.</p>
             </Field>
             <Field label="Background Ambience">
               <select className="glass-select w-64" defaultValue="none">
@@ -151,7 +151,7 @@ export default function Settings() {
                 <option value="subtle">Very subtle room tone</option>
                 <option value="office">Faint office ambience</option>
               </select>
-              <p className="text-xs text-sky-400 mt-1">Extremely low volume. Never interferes with speech.</p>
+              <p className="text-xs text-neutral-400 mt-1">Extremely low volume. Never interferes with speech.</p>
             </Field>
           </Section>
 
@@ -164,27 +164,27 @@ export default function Settings() {
                 onChange={(e) => setGreeting(e.target.value)}
                 placeholder="Hi, thanks for taking my call. I'm Mrs.D…"
               />
-              <p className="text-xs text-sky-400 mt-1">Used for outbound calls. Keep it natural — never robotic.</p>
+              <p className="text-xs text-neutral-400 mt-1">Used for outbound calls. Keep it natural — never robotic.</p>
             </Field>
           </Section>
 
           {/* Knowledge base */}
           <Section title="Knowledge Base">
-            <div className="bg-sky-50/50 rounded-2xl p-4 space-y-3 border border-sky-100">
+            <div className="bg-neutral-50 rounded-2xl p-4 space-y-3 border border-neutral-100">
               <div className="flex justify-between text-sm">
-                <span className="text-sky-500">Current Knowledge Base</span>
-                <span className="text-sky-900 font-medium">{knowledgeName}</span>
+                <span className="text-neutral-500">Current Knowledge Base</span>
+                <span className="text-neutral-900 font-medium">{knowledgeName}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-sky-500">Status</span>
-                <span className="text-sky-900 font-medium flex items-center gap-1.5">
+                <span className="text-neutral-500">Status</span>
+                <span className="text-neutral-900 font-medium flex items-center gap-1.5">
                   <span className="status-dot green" />
                   {knowledgeStatus}
                 </span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-sky-500">Version</span>
-                <span className="text-sky-900 font-medium">{knowledgeVersion}</span>
+                <span className="text-neutral-500">Version</span>
+                <span className="text-neutral-900 font-medium">{knowledgeVersion}</span>
               </div>
               <button
                 className="btn-glow text-sm w-full"
@@ -210,14 +210,14 @@ export default function Settings() {
               >
                 Upload New Knowledge
               </button>
-              <p className="text-xs text-sky-400">Uploading a new PDF creates a new version. The live version stays active until you publish.</p>
+              <p className="text-xs text-neutral-400">Uploading a new PDF creates a new version. The live version stays active until you publish.</p>
             </div>
           </Section>
 
           {/* Publish */}
           <Section title="Publish">
-            <div className="bg-sky-50/50 rounded-2xl p-4 border border-sky-100">
-              <p className="text-sm text-sky-700 mb-3">
+            <div className="bg-neutral-50 rounded-2xl p-4 border border-neutral-100">
+              <p className="text-sm text-neutral-700 mb-3">
                 Your agent is ready to handle live calls. Publishing creates a versioned snapshot of the current knowledge and configuration.
               </p>
               <div className="flex gap-3">
@@ -229,7 +229,7 @@ export default function Settings() {
                   {publishing ? "Publishing…" : "Publish Mrs.D"}
                 </button>
                 <div className={`flex items-center gap-1.5 text-xs ${
-                  knowledgeStatus === "Ready" ? "text-green-600" : "text-sky-500"
+                  knowledgeStatus === "Ready" ? "text-green-600" : "text-neutral-500"
                 }`}>
                   <span className={`status-dot ${knowledgeStatus === "Ready" ? "green" : "orange"}`} />
                   {knowledgeStatus === "Ready" ? "Ready to publish" : knowledgeStatus}
@@ -240,8 +240,8 @@ export default function Settings() {
 
           {/* Test Call */}
           <Section title="Test Call">
-            <div className="bg-sky-50/50 rounded-2xl p-4 border border-sky-100 space-y-3">
-              <p className="text-sm text-sky-700">
+            <div className="bg-neutral-50 rounded-2xl p-4 border border-neutral-100 space-y-3">
+              <p className="text-sm text-neutral-700">
                 Mrs.D calls the number below and conducts a real voice conversation.
               </p>
               <div className="flex gap-2">
@@ -261,14 +261,14 @@ export default function Settings() {
                 </button>
               </div>
               {outboundStatus && (
-                <div className="text-xs text-sky-600 space-y-1">
+                <div className="text-xs text-neutral-600 space-y-1">
                   <div>Call SID: {outboundStatus.call_sid}</div>
                   <div>To: {outboundStatus.to}</div>
                   <div>Status: <span className="font-medium">{outboundStatus.status}</span></div>
                   <div>Started: {new Date(outboundStatus.started_at).toLocaleString()}</div>
                 </div>
               )}
-              <p className="text-xs text-sky-400">
+              <p className="text-xs text-neutral-400">
                 Telephony must be configured in .env (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER).
               </p>
             </div>
@@ -276,18 +276,18 @@ export default function Settings() {
 
           {/* Account */}
           <Section title="Account">
-            <div className="bg-sky-50/50 rounded-2xl p-4 border border-sky-100 text-sm space-y-2">
+            <div className="bg-neutral-50 rounded-2xl p-4 border border-neutral-100 text-sm space-y-2">
               <div className="flex justify-between">
-                <span className="text-sky-500">Account holder</span>
-                <span className="text-sky-900 font-medium">{agentName}</span>
+                <span className="text-neutral-500">Account holder</span>
+                <span className="text-neutral-900 font-medium">{agentName}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-sky-500">Phone</span>
-                <span className="text-sky-900">{phone}</span>
+                <span className="text-neutral-500">Phone</span>
+                <span className="text-neutral-900">{phone}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-sky-500">Published version</span>
-                <span className="text-sky-900 font-medium">{knowledgeVersion}</span>
+                <span className="text-neutral-500">Published version</span>
+                <span className="text-neutral-900 font-medium">{knowledgeVersion}</span>
               </div>
               <button className="btn-ghost-premium text-xs mt-2">Sign out</button>
             </div>
@@ -300,8 +300,8 @@ export default function Settings() {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="bg-white/70 rounded-2xl p-4 border border-sky-100">
-      <h2 className="text-sm font-semibold text-sky-900 mb-4">{title}</h2>
+    <div className="bg-white/70 rounded-2xl p-4 border border-neutral-100">
+      <h2 className="text-sm font-semibold text-neutral-900 mb-4">{title}</h2>
       {children}
     </div>
   );
@@ -310,7 +310,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="mb-4 last:mb-0">
-      <div className="text-xs text-sky-500 font-medium mb-1.5">{label}</div>
+      <div className="text-xs text-neutral-500 font-medium mb-1.5">{label}</div>
       {children}
     </div>
   );
