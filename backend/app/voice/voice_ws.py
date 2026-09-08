@@ -32,7 +32,8 @@ from app.rag.groq_service import generate_response, stream_chat, stream_chat_fas
 from app.rag.retriever import retrieve_context, format_context_for_prompt
 from app.rag.json_retriever import get_json_retriever
 from app.tts.edge_tts_service import EdgeTTSService
-from app.roman_telugu import looks_roman_telugu, transliterate_roman_telugu
+from app.roman_telugu import looks_roman_telugu, transliterate_roman_telugu
+from app.reports.call_report_service import generate_report_data
 
 logger = get_logger(__name__)
 
@@ -369,14 +370,22 @@ class LanguageDetector:
 # Global language detector
 _language_detector = LanguageDetector()
 
-
-
-def _detect_language(user_input: str, hint: Optional[str] = None) -> str:
-    """Thin wrapper over the global LanguageDetector for callers that import from
-    voice_ws (e.g. analytics latency-test) without depending on the SSE route
-    helpers.
-    """
-    return _language_detector.detect(user_input, stt_language=hint)
+
+
+
+
+def _detect_language(user_input: str, hint: Optional[str] = None) -> str:
+
+    """Thin wrapper over the global LanguageDetector for callers that import from
+
+    voice_ws (e.g. analytics latency-test) without depending on the SSE route
+
+    helpers.
+
+    """
+
+    return _language_detector.detect(user_input, stt_language=hint)
+
 
 
 LANGUAGE_INSTRUCTION = (
@@ -1084,13 +1093,138 @@ async def ws_voice_agent(websocket: WebSocket):
                     _turn_detector.reset()
                 _turn_detector.update(True)
     except WebSocketDisconnect:
-        logger.info("WS voice disconnect: agent=%s", websocket.path)
+        logger.info("WS voice disconnect: agent=%s conv=%s", websocket.path, conversation_id)
     except asyncio.TimeoutError:
-        logger.info("WS voice timeout: agent=%s", websocket.path)
+        logger.info("WS voice timeout: agent=%s conv=%s", websocket.path, conversation_id)
     except Exception as e:
-        logger.exception("WS voice loop error: %s", e)
+        logger.exception("WS voice loop error: agent=%s conv=%s: %s", websocket.path, conversation_id, e)
     finally:
         try:
             await websocket.close()
         except Exception:
             pass
+        # Generate + persist the structured call report at WS disconnect (spec §32).
+        # The WS path is the real voice conversation; we have the full memory list
+        # (caller + AI turns) and the ai_state so we can produce a real report.
+        try:
+            await _finalize_ws_call(
+                conversation_id=conversation_id,
+                mode=mode,
+                institute_id=institute_id,
+                knowledge_file=knowledge_file,
+                memory=memory,
+                ai_state=ai_state,
+            )
+        except Exception as e:
+            logger.error("WS call finalization failed (conv=%s): %s", conversation_id, e)
+
+
+# ---------------------------------------------------------------------------
+# Call-end finalization: persist the structured call report (spec §32)
+# ---------------------------------------------------------------------------
+
+async def _finalize_ws_call(
+    conversation_id: str,
+    mode: str,
+    institute_id: int,
+    knowledge_file: str,
+    memory: list,
+    ai_state: dict,
+) -> None:
+    """Generate + persist a CallReport at WS disconnect (spec §32).
+
+    The WS voice path is a real conversation: we have the full memory list
+    (caller + AI turns) and the ai_state. We reconstruct the transcript and
+    feed it to generate_report_data() so Calls & Leads shows real lead info,
+    interest score, objections, next action and summary.
+
+    This is best-effort: if the DB / report service is unavailable, the call
+    still ended cleanly and we just log the failure.
+    """
+    from app.database.connection import AsyncSessionLocal
+    from app.database.models import CallHistory, Institute
+
+    # Build the full transcript from memory (alternating caller / AI turns).
+    transcript_parts: list[str] = []
+    for i, entry in enumerate(memory):
+        if not entry:
+            continue
+        role = "user" if i % 2 == 0 else "assistant"
+        transcript_parts.append(f"[{role}] {entry}")
+    transcript = "\n".join(transcript_parts) if transcript_parts else ""
+
+    # Build a memory dict from the most recent turns for lead extraction.
+    memory_dict: dict = {}
+    if len(memory) >= 2:
+        # Last AI response is the most recent assistant turn.
+        memory_dict["Name"] = ""
+        memory_dict["Student Name"] = ""
+        memory_dict["Class"] = ""
+        memory_dict["Course"] = ""
+        memory_dict["Location"] = ""
+        memory_dict["Budget"] = ""
+        memory_dict["Hostel"] = ""
+        memory_dict["Transport"] = ""
+        memory_dict["Interest"] = ""
+        memory_dict["Objections"] = ""
+        memory_dict["Preferred callback"] = ""
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Find the CallHistory row for this conversation.
+            from sqlalchemy import select
+            result = await session.execute(
+                select(CallHistory).where(CallHistory.call_id == conversation_id)
+            )
+            call = result.scalar_one_or_none()
+            if not call:
+                logger.info("WS_FINALIZE | no CallHistory for conv=%s; skipping report", conversation_id)
+                return
+
+            # Resolve institute name.
+            inst_result = await session.execute(
+                select(Institute).where(Institute.id == call.institute_id)
+            )
+            institute = inst_result.scalar_one_or_none()
+            institute_name = institute.name if institute else "Institute"
+
+            # Generate the report fields.
+            data = generate_report_data(
+                call_id=conversation_id,
+                institute_id=call.institute_id,
+                institute_name=institute_name,
+                transcript=transcript,
+                memory=memory_dict,
+                detected_language=call.detected_language,
+                sentiment=call.sentiment,
+                duration_seconds=call.duration_seconds or 0,
+            )
+
+            # Persist the report (upsert: replace if one already exists).
+            existing = await session.execute(
+                select(CallReport).where(CallReport.call_id == conversation_id)
+            )
+            report = existing.scalar_one_or_none()
+            if report:
+                for key, value in data.items():
+                    setattr(report, key, value)
+                logger.info("WS_FINALIZE | updated report for conv=%s", conversation_id)
+            else:
+                from app.database.models import CallReport as CR
+                report = CR(**data)
+                call.report = report
+                logger.info("WS_FINALIZE | created report for conv=%s", conversation_id)
+
+            await session.commit()
+            logger.info(
+                "WS_FINALIZE | conv=%s | interest=%d%% | conversion=%d%% | intent=%s | next=%s",
+                conversation_id,
+                data.get("interest_score", 0),
+                data.get("conversion_probability", 0),
+                data.get("intent", "?"),
+                data.get("next_action", "?"),
+            )
+    except Exception as e:
+        logger.error("WS_FINALIZE | failed for conv=%s: %s", conversation_id, e)
+
+

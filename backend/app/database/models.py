@@ -167,9 +167,60 @@ class CallHistory(Base):
     
     # Relationships
     institute = relationship("Institute", back_populates="calls")
+    report = relationship("CallReport", back_populates="call", uselist=False, cascade="all, delete-orphan")
 
 
 # ── Call Analytics ───────────────────────────────────────────────────────────
+
+class CallReport(Base):
+    """
+    Structured call report generated at call end (spec §32).
+    
+    Contains: caller, student, class, course, location, budget, hostel, transport,
+    interest score, conversion probability, intent, objections, next action,
+    summary, questions, main questions, lead status.
+    """
+    __tablename__ = "call_reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    call_id = Column(String(64), unique=True, nullable=False, index=True)
+    institute_id = Column(Integer, ForeignKey("institutes.id"), nullable=False)
+
+    # Caller / lead info extracted from conversation
+    caller_name = Column(String(255), nullable=True)
+    student_name = Column(String(255), nullable=True)
+    student_class = Column(String(50), nullable=True)
+    course = Column(String(255), nullable=True)
+    location = Column(String(255), nullable=True)
+    budget = Column(String(255), nullable=True)
+    hostel = Column(String(50), nullable=True)
+    transport = Column(String(50), nullable=True)
+
+    # Qualification
+    interest_score = Column(Integer, default=0)
+    conversion_probability = Column(Integer, default=0)
+    intent = Column(String(20), default="COLD")  # HOT / WARM / COLD
+    lead_status = Column(String(20), default="NEW")
+
+    # Objections + next action
+    objections = Column(JSON, nullable=True)  # list of strings
+    next_action = Column(String(255), nullable=True)
+
+    # Narrative
+    summary = Column(Text, nullable=True)
+    questions_asked = Column(JSON, nullable=True)  # list of strings
+
+    # Generated at end of call
+    generated_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    call = relationship("CallHistory", back_populates="report", uselist=False)
+
+
+# Re-assign the bidirectional relationship once both classes exist.
+CallHistory.report = relationship(
+    "CallReport", back_populates="call", uselist=False, cascade="all, delete-orphan"
+)
 
 class CallAnalytics(Base):
     """

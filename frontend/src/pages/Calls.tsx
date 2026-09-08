@@ -1,103 +1,53 @@
-import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
-
-interface Lead {
-  id: string;
-  caller: string;
-  phone: string;
-  student: string;
-  className: string;
-  course: string;
-  location: string;
-  hostel: string;
-  transport: string;
-  interest: number;
-  status: "HOT" | "WARM" | "COLD" | "NEW";
-  summary: string;
-  questions: string[];
-  objections: string[];
-  nextAction: string;
-  createdAt: string;
-  durationSeconds: number;
-}
-
-const MOCK_LEADS: Lead[] = [
-  {
-    id: "c001",
-    caller: "Rahul",
-    phone: "+91 98765 43210",
-    student: "Aarav",
-    className: "VIII",
-    course: "eTechno",
-    location: "Hyderabad",
-    hostel: "Interested",
-    transport: "Asked about availability",
-    interest: 82,
-    status: "HOT",
-    summary: "Caller is actively exploring admission for their Class VIII child. They showed strong interest in the eTechno programme and asked about hostel and admission process.",
-    questions: ["Fee?", "Hostel?", "Admission procedure?", "Campus location?"],
-    objections: ["Fee clarification"],
-    nextAction: "Campus visit",
-    createdAt: "2026-09-07T10:15:00Z",
-    durationSeconds: 243,
-  },
-  {
-    id: "c002",
-    caller: "Priya",
-    phone: "+91 98765 11111",
-    student: "Kavya",
-    className: "VI",
-    course: "eChamps",
-    location: "Hyderabad",
-    hostel: "No",
-    transport: "Maybe",
-    interest: 64,
-    status: "WARM",
-    summary: "Caller enquiring about Class VI programme. Interested in eChamps, asked about transport availability.",
-    questions: ["What programmes for Class VI?", "Transport facility?"],
-    objections: [],
-    nextAction: "Send information",
-    createdAt: "2026-09-06T14:22:00Z",
-    durationSeconds: 180,
-  },
-  {
-    id: "c003",
-    caller: "Srinivas",
-    phone: "+91 98765 22222",
-    student: "",
-    className: "",
-    course: "",
-    location: "",
-    hostel: "",
-    transport: "",
-    interest: 25,
-    status: "COLD",
-    summary: "Caller just exploring, not ready to commit. Suggested callback in 3 months.",
-    questions: ["General info"],
-    objections: ["Timing"],
-    nextAction: "Callback",
-    createdAt: "2026-09-05T09:10:00Z",
-    durationSeconds: 90,
-  },
-];
+import React, { useState, useEffect } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { listCalls, getCallWithReport } from "../services/api";
 
 export default function Calls() {
   const navigate = useNavigate();
-  const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+  const { instituteId } = useParams<{ instituteId: string }>();
+  const [selectedCall, setSelectedCall] = useState<any>(null);
+  const [calls, setCalls] = useState<any[]>([]);
   const [filter, setFilter] = useState<"ALL" | "HOT" | "WARM" | "COLD">("ALL");
-  const leads = MOCK_LEADS.filter((l) => filter === "ALL" || l.status === filter);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!instituteId) {
+      setLoading(false);
+      return;
+    }
+    listCalls(Number(instituteId))
+      .then((data) => setCalls(data.calls || []))
+      .catch(() => setCalls([]))
+      .finally(() => setLoading(false));
+  }, [instituteId]);
 
   const summary = {
-    totalCalls: MOCK_LEADS.length,
-    answeredCalls: 2,
-    missedCalls: 0,
-    interestedLeads: MOCK_LEADS.filter((l) => l.interest > 60).length,
-    hotLeads: MOCK_LEADS.filter((l) => l.status === "HOT").length,
-    warmLeads: MOCK_LEADS.filter((l) => l.status === "WARM").length,
-    coldLeads: MOCK_LEADS.filter((l) => l.status === "COLD").length,
-    conversionRate: 65,
-    avgDuration: Math.round(MOCK_LEADS.reduce((s, l) => s + l.durationSeconds, 0) / MOCK_LEADS.length),
+    totalCalls: calls.length,
+    answeredCalls: calls.filter((c) => c.call_status === "completed").length,
+    missedCalls: calls.filter((c) => c.call_status === "missed").length,
+    interestedLeads: 0,
+    hotLeads: 0,
+    warmLeads: 0,
+    coldLeads: 0,
+    conversionRate: 0,
+    avgDuration: 0,
   };
+  if (calls.length > 0) {
+    const withReport = calls.filter((c) => c.report);
+    summary.interestedLeads = withReport.filter((c) => (c.report?.interest_score || 0) > 60).length;
+    summary.hotLeads = withReport.filter((c) => c.report?.intent === "HOT").length;
+    summary.warmLeads = withReport.filter((c) => c.report?.intent === "WARM").length;
+    summary.coldLeads = withReport.filter((c) => c.report?.intent === "COLD").length;
+    summary.conversionRate = Math.round((summary.answeredCalls / summary.totalCalls) * 100);
+    summary.avgDuration = Math.round(
+      calls.reduce((s, c) => s + (c.duration_seconds || 0), 0) / calls.length
+    );
+  }
+
+  const filteredCalls = calls.filter((c) => {
+    if (filter === "ALL") return true;
+    return c.report?.intent === filter;
+  });
 
   return (
     <div className="h-screen w-full flex flex-col bg-sky-50 overflow-hidden">
@@ -157,7 +107,6 @@ export default function Calls() {
                 onClick={() => setFilter(f)}
               >
                 {f === "ALL" ? "All" : f}
-                {f !== "ALL" && <span className="ml-1 opacity-60">({MOCK_LEADS.filter((l) => l.status === f).length})</span>}
               </button>
             ))}
           </div>
@@ -177,102 +126,134 @@ export default function Calls() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-sky-100">
-                {leads.map((lead) => (
-                  <tr
-                    key={lead.id}
-                    className="hover:bg-sky-50/40 cursor-pointer transition-colors"
-                    onClick={() => setSelectedLead(lead)}
-                  >
-                    <td className="px-4 py-3 font-medium text-sky-900">{lead.caller}</td>
-                    <td className="px-4 py-3 text-sky-700">{lead.student || "—"}</td>
-                    <td className="px-4 py-3 text-sky-700 hidden sm:table-cell">{lead.course || "—"}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-16 h-1.5 rounded-full bg-sky-100 overflow-hidden">
-                          <div className={`h-full rounded-full ${interestColor(lead.interest)}`} style={{ width: `${lead.interest}%` }} />
-                        </div>
-                        <span className="text-xs text-sky-500 font-medium">{lead.interest}%</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-                        lead.status === "HOT" ? "bg-red-100 text-red-700" :
-                        lead.status === "WARM" ? "bg-amber-100 text-amber-700" :
-                        "bg-sky-100 text-sky-600"
-                      }`}>
-                        {lead.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-sky-600 hidden sm:table-cell">{formatDuration(lead.durationSeconds)}</td>
-                    <td className="px-4 py-3 text-right">
-                      <button className="text-xs text-sky-500 hover:text-sky-700 font-medium">View</button>
-                    </td>
+                {loading ? (
+                  Array.from({ length: 5 }).map((_, i) => (
+                    <tr key={i} className="animate-pulse">
+                      {Array.from({ length: 7 }).map((_, j) => (
+                        <td key={j} className="px-4 py-3"><div className="h-4 bg-sky-200 rounded w-3/4" /></td>
+                      ))}
+                    </tr>
+                  ))
+                ) : filteredCalls.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-sky-400 text-sm">No calls yet</td>
                   </tr>
-                ))}
+                ) : (
+                  filteredCalls.map((call) => {
+                    const report = call.report;
+                    const intent = report?.intent || "COLD";
+                    return (
+                      <tr
+                        key={call.call_id}
+                        className="hover:bg-sky-50/40 cursor-pointer transition-colors"
+                        onClick={() => {
+                          setSelectedCall(call);
+                          if (!report) {
+                            getCallWithReport(call.call_id).then((full) => setSelectedCall(full));
+                          }
+                        }}
+                      >
+                        <td className="px-4 py-3 font-medium text-sky-900">{call.caller_name || call.caller_number}</td>
+                        <td className="px-4 py-3 text-sky-700">{report?.student_name || "—"}</td>
+                        <td className="px-4 py-3 text-sky-700 hidden sm:table-cell">{report?.course || "—"}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-16 h-1.5 rounded-full bg-sky-100 overflow-hidden">
+                              <div className={`h-full rounded-full ${interestColor(report?.interest_score || 0)}`} style={{ width: `${(report?.interest_score || 0)}%` }} />
+                            </div>
+                            <span className="text-xs text-sky-500 font-medium">{report?.interest_score || 0}%</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                            intent === "HOT" ? "bg-red-100 text-red-700" :
+                            intent === "WARM" ? "bg-amber-100 text-amber-700" :
+                            "bg-sky-100 text-sky-600"
+                          }`}>
+                            {report?.lead_status || "NEW"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-sky-600 hidden sm:table-cell">{formatDuration(call.duration_seconds || 0)}</td>
+                        <td className="px-4 py-3 text-right">
+                          <button className="text-xs text-sky-500 hover:text-sky-700 font-medium">View</button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
-            {leads.length === 0 && (
-              <div className="p-8 text-center text-sky-400 text-sm">No calls yet</div>
-            )}
           </div>
         </div>
 
-        {/* Lead detail panel */}
-        {selectedLead && (
+        {/* Call detail panel */}
+        {selectedCall && (
           <aside className="w-80 bg-white/80 border-l border-sky-200/50 p-4 overflow-y-auto flex-shrink-0">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-sky-900">Lead Details</h2>
-              <button className="text-xs text-sky-500 hover:text-sky-700" onClick={() => setSelectedLead(null)}>Close</button>
+              <h2 className="text-sm font-semibold text-sky-900">Call Report</h2>
+              <button className="text-xs text-sky-500 hover:text-sky-700" onClick={() => setSelectedCall(null)}>Close</button>
             </div>
             <div className="space-y-4">
               <div>
-                <div className="text-lg font-semibold text-sky-900">{selectedLead.caller}</div>
-                <div className="text-xs text-sky-500">{selectedLead.phone}</div>
+                <div className="text-lg font-semibold text-sky-900">{selectedCall.caller_name || selectedCall.caller_number}</div>
+                <div className="text-xs text-sky-500">{selectedCall.caller_number}</div>
               </div>
               <div>
                 <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-                  selectedLead.status === "HOT" ? "bg-red-100 text-red-700" :
-                  selectedLead.status === "WARM" ? "bg-amber-100 text-amber-700" :
+                  selectedCall.report?.intent === "HOT" ? "bg-red-100 text-red-700" :
+                  selectedCall.report?.intent === "WARM" ? "bg-amber-100 text-amber-700" :
                   "bg-sky-100 text-sky-600"
                 }`}>
-                  {selectedLead.status} LEAD
+                  {selectedCall.report?.lead_status || "NEW LEAD"}
                 </span>
               </div>
 
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <div className="bg-sky-50/50 rounded-xl p-3">
                   <div className="text-[10px] text-sky-400 uppercase">Student</div>
-                  <div className="font-medium text-sky-900">{selectedLead.student || "—"}</div>
+                  <div className="font-medium text-sky-900">{selectedCall.report?.student_name || "—"}</div>
                 </div>
                 <div className="bg-sky-50/50 rounded-xl p-3">
                   <div className="text-[10px] text-sky-400 uppercase">Class</div>
-                  <div className="font-medium text-sky-900">{selectedLead.className || "—"}</div>
+                  <div className="font-medium text-sky-900">{selectedCall.report?.student_class || "—"}</div>
                 </div>
                 <div className="bg-sky-50/50 rounded-xl p-3">
                   <div className="text-[10px] text-sky-400 uppercase">Course</div>
-                  <div className="font-medium text-sky-900">{selectedLead.course || "—"}</div>
+                  <div className="font-medium text-sky-900">{selectedCall.report?.course || "—"}</div>
                 </div>
                 <div className="bg-sky-50/50 rounded-xl p-3">
                   <div className="text-[10px] text-sky-400 uppercase">Location</div>
-                  <div className="font-medium text-sky-900">{selectedLead.location || "—"}</div>
+                  <div className="font-medium text-sky-900">{selectedCall.report?.location || "—"}</div>
                 </div>
               </div>
 
               <div>
-                <div className="text-xs text-sky-400 uppercase mb-1">Interest</div>
+                <div className="text-xs text-sky-400 uppercase mb-1.5">Interest Score</div>
                 <div className="flex items-center gap-2">
                   <div className="flex-1 h-2 rounded-full bg-sky-100 overflow-hidden">
-                    <div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-red-400" style={{ width: `${selectedLead.interest}%` }} />
+                    <div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-red-400" style={{ width: `${(selectedCall.report?.interest_score || 0)}%` }} />
                   </div>
-                  <span className="text-sm font-semibold text-sky-700">{selectedLead.interest}%</span>
+                  <span className="text-sm font-semibold text-sky-700">{selectedCall.report?.interest_score || 0}%</span>
+                  <span className="text-xs text-sky-400">AI-estimated</span>
                 </div>
               </div>
 
-              {selectedLead.questions.length > 0 && (
+              <div>
+                <div className="text-xs text-sky-400 uppercase mb-1.5">Conversion Likelihood</div>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 h-2 rounded-full bg-sky-100 overflow-hidden">
+                    <div className="h-full rounded-full bg-gradient-to-r from-sky-400 to-blue-500" style={{ width: `${(selectedCall.report?.conversion_probability || 0)}%` }} />
+                  </div>
+                  <span className="text-sm font-semibold text-sky-700">{selectedCall.report?.conversion_probability || 0}%</span>
+                  <span className="text-xs text-sky-400">AI-estimated</span>
+                </div>
+              </div>
+
+              {selectedCall.report?.questions_asked?.length > 0 && (
                 <div>
                   <div className="text-xs text-sky-400 uppercase mb-1.5">Questions Asked</div>
                   <div className="space-y-1">
-                    {selectedLead.questions.map((q, i) => (
+                    {selectedCall.report.questions_asked.map((q: string, i: number) => (
                       <div key={i} className="flex items-start gap-2 text-sm text-sky-700">
                         <span className="text-sky-300 mt-0.5">•</span>
                         {q}
@@ -282,11 +263,11 @@ export default function Calls() {
                 </div>
               )}
 
-              {selectedLead.objections.length > 0 && (
+              {selectedCall.report?.objections?.length > 0 && (
                 <div>
                   <div className="text-xs text-sky-400 uppercase mb-1.5">Objections</div>
                   <div className="space-y-1">
-                    {selectedLead.objections.map((o, i) => (
+                    {selectedCall.report.objections.map((o: string, i: number) => (
                       <div key={i} className="flex items-start gap-2 text-sm text-sky-700">
                         <span className="text-red-300 mt-0.5">•</span>
                         {o}
@@ -298,17 +279,17 @@ export default function Calls() {
 
               <div>
                 <div className="text-xs text-sky-400 uppercase mb-1.5">Next Action</div>
-                <div className="text-sm font-medium text-sky-900">{selectedLead.nextAction}</div>
+                <div className="text-sm font-medium text-sky-900">{selectedCall.report?.next_action || "—"}</div>
               </div>
 
               <div>
                 <div className="text-xs text-sky-400 uppercase mb-1.5">Summary</div>
-                <p className="text-sm text-sky-700 leading-relaxed">{selectedLead.summary}</p>
+                <p className="text-sm text-sky-700 leading-relaxed">{selectedCall.report?.summary || "—"}</p>
               </div>
 
               <div className="pt-2 border-t border-sky-100">
                 <div className="text-[10px] text-sky-400">Call date</div>
-                <div className="text-xs text-sky-600">{new Date(selectedLead.createdAt).toLocaleString()}</div>
+                <div className="text-xs text-sky-600">{new Date(selectedCall.started_at).toLocaleString()}</div>
               </div>
             </div>
           </aside>

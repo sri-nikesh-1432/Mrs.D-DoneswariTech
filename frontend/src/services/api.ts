@@ -197,3 +197,21 @@ export async function getCallStatus(callSid: string): Promise<any> {
   }
   return res.json();
 }
+
+export async function getCallWithReport(callId: string): Promise<any> {
+  const res = await fetch(`/api/telephony/calls/${callId}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Call not found.");
+  }
+  return res.json();
+}
+
+export async function listCalls(instituteId: number, limit = 50): Promise<any> {
+  const res = await fetch(`/api/receptionist/institute/${instituteId}/calls?limit=${limit}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Failed to load calls.");
+  }
+  return res.json();
+}
