@@ -600,16 +600,16 @@ async def _transcribe_pcm(pcm_float: np.ndarray) -> dict:
 # ---------------------------------------------------------------------------
 
 GREETING_OPENERS: list[str] = [
-    "Hi, thanks for taking my call. I'm Mrs. D from Narayana, and I wanted to quickly check in with you today.",
-    "Hello there! This is Mrs. D calling from Narayana — do you have a minute for a quick chat?",
-    "Hey, I hope I'm not catching you at a bad time. I'm Mrs. D from Narayana, and I just wanted to speak with you briefly.",
-    "Hi, good to reach you. I'm Mrs. D from Narayana — I'll keep this short, I promise.",
-    "Hello! This is Mrs. D from Narayana. If you've got a moment, I'd love to tell you a little about what we offer.",
-    "Hi, this is Mrs. D calling from Narayana. Am I speaking with the right person?",
-    "Hello, thanks for picking up. I'm Mrs. D from Narayana — I'll be brief, I promise.",
-    "Hi there! Mrs. D from Narayana here. If now's not a good time, I can try another day.",
-    "Hello! This is Mrs. D from Narayana. I was just calling to share something that might interest you.",
-    "Hi, I hope I'm not disturbing you. I'm Mrs. D calling from Narayana — got a minute?",
+    "Hi, thanks for taking my call. I'm Mrs. D, and I wanted to quickly check in with you today.",
+    "Hello there! This is Mrs. D — do you have a minute for a quick chat?",
+    "Hey, I hope I'm not catching you at a bad time. I'm Mrs. D, and I just wanted to speak with you briefly.",
+    "Hi, good to reach you. I'm Mrs. D — I'll keep this short, I promise.",
+    "Hello! This is Mrs. D. If you've got a moment, I'd love to tell you a little about what we offer.",
+    "Hi, this is Mrs. D. Am I speaking with the right person?",
+    "Hello, thanks for picking up. I'm Mrs. D — I'll be brief, I promise.",
+    "Hi there! Mrs. D here. If now's not a good time, I can try another day.",
+    "Hello! This is Mrs. D. I was just calling to share something that might interest you.",
+    "Hi, I hope I'm not disturbing you. I'm Mrs. D — got a minute?",
 ]
 
 
@@ -648,11 +648,12 @@ async def _send_greeting(
                         institute_name = m.group(1).strip()
                         break
             # Vary the greeting opener so every call does not start identically.
-            opener = random.choice(GREETING_OPENERS).replace("Narayana", institute_name)
+            opener = random.choice(GREETING_OPENERS)
             greeting_prompt = (
-                f"You are Mrs. D, a warm Indian admissions counsellor speaking on a live call.\r\n"
+                f"You are Mrs. D, a warm admissions counsellor speaking on a live call.\r\n"
                 f"You are representing {institute_name}.\r\n\r\n"
-                f"Start your reply with this natural opener (keep it in {language}, adapt phrasing naturally):\r\n"
+                f"Start your reply with a natural opener that sounds like you work at {institute_name} "
+                f"and are calling a prospective parent (keep it in {language}, adapt phrasing naturally):\r\n"
                 f"{opener}\r\n\r\n"
                 f"Then briefly invite the caller to ask about admissions, courses, fees, hostel or scholarships. "
                 f"Keep the whole greeting to 2-3 sentences and sound like a real person on the phone."

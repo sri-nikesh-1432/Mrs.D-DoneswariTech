@@ -313,7 +313,7 @@ export default function ActiveCall() {
                   ? "ai"
                   : isUserSpeaking
                   ? "user"
-                  : "idle"
+                  : undefined
               }
               className="w-full h-12"
             />

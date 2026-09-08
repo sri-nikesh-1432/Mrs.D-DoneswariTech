@@ -17,7 +17,8 @@ export type VoiceWSState =
   | "listening"
   | "processing"
   | "speaking"
-  | "error";
+  | "error"
+  | "greeting";
 
 export interface VoiceWSConfig {
   mode?: "test" | "process";
@@ -52,6 +53,7 @@ interface VoiceWSCallbacks {
   onTranscript?: (text: string, language: string) => void;
   onTurnDone?: (aiResponse: string, debugInfo: VoiceWSDebugInfo) => void;
   onError?: (detail: string) => void;
+  onAudioChunk?: (pcm: Int16Array) => void;
 }
 
 const SAMPLE_RATE = 16000;
@@ -101,22 +103,31 @@ export class VoiceWebSocket {
       this.ws = new WebSocket(url);
       this.ws.binaryType = "arraybuffer";
 
-      this.ws.onopen = () => {
-        console.log("[VoiceWS] Connected to", url);
-        this.ws!.send(
-          JSON.stringify({
-            type: "config",
-            mode: config.mode || "test",
-            knowledge_file: config.knowledgeFile || "institute.json",
-            institute_id: config.instituteId || 1,
-            language: config.language || "English",
-          })
-        );
-      };
+    // Allow a small typed-uuid helper inline (no extra dependency).
+    // eslint-disable-next-line no-restricted-globals
+    const uuid = { v4: () => Math.random().toString(36).slice(2) + Date.now().toString(36).slice(-6) };        this.ws.onopen = () => {
+          console.log("[VoiceWS] Connected to", url);
+          this.ws!.send(
+            JSON.stringify({
+              type: "hello",
+              mode: config.mode || "test",
+              knowledge_file: config.knowledgeFile || "institute.json",
+              institute_id: config.instituteId || 1,
+              language: config.language || "English",
+              conversation_id: this.conversationId || uuid.v4().slice(0, 12),
+              memory: this.messages.map((m) => ({ role: m.role, content: m.content })),
+            })
+          );
+        };
 
       this.ws.onmessage = (event) => {
         if (typeof event.data === "string") {
           this.handleJSONMessage(event.data);
+        } else if (event.data instanceof ArrayBuffer) {
+          // PCM audio from server (future binary wav transport)
+          if (this.callbacks.onAudioChunk) {
+            this.callbacks.onAudioChunk(new Int16Array(event.data));
+          }
         }
       };
 
@@ -165,7 +176,7 @@ export class VoiceWebSocket {
         break;
 
       case "turn_done":
-        this.setState("listening");
+        this.setState(msg.ai_response ? "listening" : "listening");
         this.callbacks.onTurnDone?.(msg.ai_response || "", msg.debug_info || {});
         // Finalize AI message
         if (this.currentAiIndex >= 0 && msg.ai_response) {
@@ -174,6 +185,11 @@ export class VoiceWebSocket {
         }
         this.currentAiIndex = -1;
         this.currentAiText = "";
+        break;
+
+      case "greeting":
+        // Backend-initiated greeting progress (future enhancement).
+        this.setState("greeting");
         break;
 
       case "processing":

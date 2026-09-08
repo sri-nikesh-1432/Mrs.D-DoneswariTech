@@ -231,7 +231,7 @@ export default function AICallSimulator({
                   ? "ai"
                   : isUserSpeaking
                   ? "user"
-                  : "idle"
+                  : undefined
               }
               className="w-full h-12"
             />

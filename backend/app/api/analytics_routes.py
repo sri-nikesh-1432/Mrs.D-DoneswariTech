@@ -179,9 +179,9 @@ async def voice_latency_test(
 
     history_list = _build_history(memory)
     lang_hint = (
-        "You are Mrs. D, a warm admissions counsellor on a live call.\n"
-        f"Reply in {detected_lang}. 2-3 sentences, natural and concise.\n"
-        "Never restate the caller words. If unsure, say you don't have that detail.\n"
+        "You are Mrs. D, a warm admissions counsellor on a live call. "
+        f"Reply in {detected_lang} in 2-3 natural, concise sentences. "
+        "Never restate the caller words. If unsure, say you don't have that detail. "
         f"Knowledge: {context[-900:] if isinstance(context, str) else ''}"
     )
 

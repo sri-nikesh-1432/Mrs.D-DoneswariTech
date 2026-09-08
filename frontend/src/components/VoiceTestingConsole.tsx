@@ -346,13 +346,13 @@ export default function VoiceTestingConsole() {
               <VoiceWaveform
                 levelsRef={callStage === "speaking" ? aiLevelsRef : micLevelsRef}
                 active={callStage === "listening" || callStage === "speaking"}
-                color={
-                  callStage === "speaking"
-                    ? "ai"
-                    : isUserSpeaking
-                    ? "user"
-                    : "idle"
-                }
+              color={
+                callStage === "speaking"
+                  ? "ai"
+                  : isUserSpeaking
+                  ? "user"
+                  : undefined
+              }
                 className="w-full h-10"
               />
               {callStage === "listening" && isUserSpeaking && (
