@@ -65,11 +65,46 @@ export async function createInstitute(data: {
     id: number;
     name: string;
     phone_number: string;
-    sip_status: string;
+    status: string;
   }>("/receptionist/institute", {
     method: "POST",
     body: JSON.stringify(data),
   });
+}
+
+/**
+ * Initiate a complete onboarding flow: create institute, upload PDF, wait for
+ * knowledge to become READY, then return the real institute_id so the Agent
+ * page can connect to the correct tenant. The PDF processing is synchronous
+ * in the current backend, so this returns once the knowledge is marked READY.
+ */
+export async function onboard(
+  profile: { name: string; phone_number: string; language?: string; voice?: string },
+  file: File
+): Promise<{
+  institute_id: string;
+  institute_name: string;
+  knowledge_id: number;
+  status: string;
+}> {
+  // 1. Create institute.
+  const institute = await createInstitute({
+    name: profile.name,
+    phone_number: profile.phone_number,
+    language: profile.language || "en",
+    voice: profile.voice || "en-IN-NeerjaNeural",
+  });
+
+  // 2. Upload + process the PDF. The backend processes synchronously and
+  //    returns once the knowledge row is READY.
+  const knowledge = await uploadKnowledge(file, institute.id);
+
+  return {
+    institute_id: institute.institute_id,
+    institute_name: knowledge.institute_name,
+    knowledge_id: knowledge.knowledge_id,
+    status: knowledge.status,
+  };
 }
 
 export async function getInstitute(instituteId: string) {
@@ -125,4 +160,40 @@ export async function getAnalytics(instituteId: string) {
 
 export async function getLiveStatus(instituteId: string) {
   return request<any>(`/receptionist/institute/${instituteId}/live-status`);
+}
+
+// ── Telephony (spec §58 §59) ───────────────────────────────────────────────
+export async function initiateOutboundCall(
+  phoneNumber: string,
+  instituteId: number
+): Promise<{
+  call_sid: string;
+  to: string;
+  from: string;
+  status: string;
+  institute_id: number;
+  institute_name: string;
+  started_at: string;
+}> {
+  const form = new FormData();
+  form.append("phone_number", phoneNumber);
+  form.append("institute_id", String(instituteId));
+  const res = await fetch("/api/telephony/outbound", {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Outbound call failed.");
+  }
+  return res.json();
+}
+
+export async function getCallStatus(callSid: string): Promise<any> {
+  const res = await fetch(`/api/receptionist/call/${callSid}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Call not found.");
+  }
+  return res.json();
 }

@@ -4,6 +4,7 @@ import AgentOrb from "../components/AgentOrb";
 import ListeningPopup from "../components/ListeningPopup";
 import VoiceWaveform from "../components/VoiceWaveform";
 import { voiceWebSocket, VoiceWSState } from "../services/voiceWebSocket";
+import { getInstitute } from "../services/api";
 
 const VOICE_STATES: Record<VoiceWSState, "idle" | "connecting" | "listening" | "thinking" | "speaking" | "calling" | "connected" | "ended" | "error" | "greeting"> = {
   disconnected: "idle",
@@ -41,6 +42,9 @@ export default function Agent() {
   const [microOn, setMicroOn] = useState(false);
   const [amplitude, setAmplitude] = useState(0);
   const [lang, setLang] = useState("English");
+  const [instituteName, setInstituteName] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [loading, setLoading] = useState(true);
   const wsRef = useRef<ReturnType<typeof voiceWebSocket.connect> | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -50,11 +54,17 @@ export default function Agent() {
     if (!agentId) return;
     setState("connecting");
     try {
+      // Resolve the real institute config from the backend so the WS hello
+      // carries the actual institute_id and we display the real business name.
+      const institute = await getInstitute(agentId);
+      setInstituteName(institute.name || "");
+      setPhoneNumber(institute.phone_number || "");
+
       await voiceWebSocket.connect(
         {
           mode: "test",
           knowledgeFile: "institute.json",
-          instituteId: 1,
+          instituteId: Number(institute.id) || 1,
           language: lang,
         },
         {
@@ -85,8 +95,11 @@ export default function Agent() {
           },
         }
       );
-    } catch (e) {
+    } catch (e: any) {
+      console.error("Agent connect failed:", e);
       setState("error");
+    } finally {
+      setLoading(false);
     }
   }, [agentId, lang]);
 
@@ -96,6 +109,18 @@ export default function Agent() {
       voiceWebSocket.disconnect();
     };
   }, [connect]);
+
+  // Show a short loading state while we resolve the institute from the backend.
+  if (loading) {
+    return (
+      <div className="h-screen w-full flex items-center justify-center bg-sky-50">
+        <div className="text-center">
+          <div className="w-10 h-10 rounded-full border-2 border-sky-300 border-t-transparent animate-spin mx-auto mb-3" />
+          <p className="text-sm text-sky-500">Loading Mrs.D…</p>
+        </div>
+      </div>
+    );
+  }
 
   const toggleMic = async () => {
     if (microOn) {
@@ -167,7 +192,7 @@ export default function Agent() {
             <div className="text-sm font-semibold text-sky-900">Mrs.D</div>
             <div className="flex items-center gap-1.5 text-[10px] text-sky-500">
               <span className="status-dot green" />
-              <span>Published</span>
+              <span>{instituteName || "Published"}</span>
             </div>
           </div>
         </div>

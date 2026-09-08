@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { SUPPORTED_LANGUAGES, LANGUAGE_NATIVE_NAMES } from "../i18n";
-import { uploadKnowledge } from "../services/api";
+import { uploadKnowledge, initiateOutboundCall } from "../services/api";
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -16,6 +16,9 @@ export default function Settings() {
   const [knowledgeStatus, setKnowledgeStatus] = useState("Ready");
   const [knowledgeVersion, setKnowledgeVersion] = useState("v1");
   const [publishing, setPublishing] = useState(false);
+  const [testCallPhone, setTestCallPhone] = useState("");
+  const [outboundStatus, setOutboundStatus] = useState<any>(null);
+  const [calling, setCalling] = useState(false);
 
   const voices: Record<string, string> = {
     "English": "en-IN-NeerjaNeural",
@@ -33,6 +36,20 @@ export default function Settings() {
     setKnowledgeVersion((v) => `v${parseInt(v.slice(1)) + 1}`);
     setKnowledgeStatus("Ready");
     alert("Agent published! Mrs.D is now live.");
+  };
+
+  const handleTestCall = async () => {
+    if (!testCallPhone.trim()) return;
+    setCalling(true);
+    try {
+      const result = await initiateOutboundCall(testCallPhone.trim(), 1);
+      setOutboundStatus(result);
+      setTestCallPhone("");
+    } catch (e: any) {
+      alert(e?.message || "Test call failed. Is the telephony provider configured?");
+    } finally {
+      setCalling(false);
+    }
   };
 
   return (
@@ -218,6 +235,42 @@ export default function Settings() {
                   {knowledgeStatus === "Ready" ? "Ready to publish" : knowledgeStatus}
                 </div>
               </div>
+            </div>
+          </Section>
+
+          {/* Test Call */}
+          <Section title="Test Call">
+            <div className="bg-sky-50/50 rounded-2xl p-4 border border-sky-100 space-y-3">
+              <p className="text-sm text-sky-700">
+                Mrs.D calls the number below and conducts a real voice conversation.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  className="glass-input w-64"
+                  type="tel"
+                  placeholder="+91 98765 43210"
+                  value={testCallPhone}
+                  onChange={(e) => setTestCallPhone(e.target.value)}
+                />
+                <button
+                  className="btn-glow text-sm"
+                  onClick={handleTestCall}
+                  disabled={!testCallPhone.trim() || calling}
+                >
+                  {calling ? "Calling…" : "Call"}
+                </button>
+              </div>
+              {outboundStatus && (
+                <div className="text-xs text-sky-600 space-y-1">
+                  <div>Call SID: {outboundStatus.call_sid}</div>
+                  <div>To: {outboundStatus.to}</div>
+                  <div>Status: <span className="font-medium">{outboundStatus.status}</span></div>
+                  <div>Started: {new Date(outboundStatus.started_at).toLocaleString()}</div>
+                </div>
+              )}
+              <p className="text-xs text-sky-400">
+                Telephony must be configured in .env (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER).
+              </p>
             </div>
           </Section>
 

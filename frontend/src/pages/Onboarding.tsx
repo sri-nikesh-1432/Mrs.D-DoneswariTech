@@ -1,7 +1,7 @@
 import React, { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { uploadKnowledge } from "../services/api";
-import { createInstitute } from "../services/api";
+import { onboard } from "../services/api";
+import { useNavigate } from "react-router-dom";
 
 const STEPS = [
   { key: "reading", label: "Reading your document..." },
@@ -13,6 +13,7 @@ const STEPS = [
 ];
 
 export default function Onboarding() {
+  const navigate = useNavigate();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [agentName, setAgentName] = useState("Mrs.D");
@@ -49,16 +50,23 @@ export default function Onboarding() {
     }
     setUploading(true);
     try {
-      const { knowledge_id, institute_id } = await uploadKnowledge(file, undefined);
-      await createInstitute({
-        name: name.trim(),
-        phone_number: phone.trim(),
-        language: "English",
-        voice: "en-IN-NeerjaNeural",
-        greeting_message: "",
-      });
+      // 1. Create institute + 2. upload/process PDF in one shot.
+      const result = await onboard(
+        {
+          name: name.trim(),
+          phone_number: phone.trim(),
+          language: "en",
+          voice: "en-IN-NeerjaNeural",
+        },
+        file
+      );
       setUploading(false);
       kickoff();
+      // After training animation completes, route to the Agent page with the
+      // real institute_id so the WS connects to the correct tenant.
+      setAgentCreated(true);
+      // Store the route target so "Open Mrs.D" navigates with the real id.
+      sessionStorage.setItem("mrsd_onboarding_institute_id", result.institute_id);
     } catch (e: any) {
       setUploading(false);
       setError(e?.message || "Something went wrong. Try again.");
@@ -211,7 +219,16 @@ export default function Onboarding() {
                   animate={{ opacity: 1, y: 0 }}
                   className="mt-6"
                 >
-                  <button className="btn-glow px-8 py-3" onClick={() => { setAgentCreated(false); setTrainingStep(0); }}>
+                  <button
+                    className="btn-glow px-8 py-3"
+                    onClick={() => {
+                      const id = sessionStorage.getItem("mrsd_onboarding_institute_id") || "1";
+                      setAgentCreated(false);
+                      setTrainingStep(0);
+                      sessionStorage.removeItem("mrsd_onboarding_institute_id");
+                      navigate(`/agent/${id}`);
+                    }}
+                  >
                     Open Mrs.D
                   </button>
                 </motion.div>
