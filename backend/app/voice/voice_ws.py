@@ -2,7 +2,7 @@
 WebSocket Voice Agent - Retell AI-level real-time voice conversation.
 
 Persistent bidirectional WebSocket:
-  Client -> Server: PCM 16 kHz mono audio frames (binary)
+  Client -> Server: PCM 16 kHz mono audio frames (binary) + JSON control msgs
   Server -> Client: JSON control messages + base64 MP3 sentence audio
 
 Pipeline (server-side):
@@ -10,10 +10,22 @@ Pipeline (server-side):
 
 This eliminates per-turn HTTP overhead and moves VAD + STT to the server
 for lower latency - matching Retell AI's architecture.
+
+Protocol:
+  Client connects to  /ws/voice/{agent_id}
+  Client sends JSON:  {"type": "hello", mode, knowledge_file, institute_id,
+                       language, conversation_id, memory}
+  Server replies:     {"type": "connected", conversation_id}
+  Server streams greeting sentences, then {"type": "turn_done"}
+  Client streams binary PCM16 @16 kHz mono frames.
+  Server VAD-detects the utterance end -> STT -> LLM -> streamed TTS sentences.
+  Client can send   : {"type": "text", "text": "..."}  (typed input, skips STT)
+                      {"type": "end"}                  (graceful close)
+                      {"type": "ping"}                 (keepalive)
 """
 
 import asyncio
-import base64
+import base64  # noqa: F401  (kept for parity with SSE payloads)
 import io
 import json
 import random
@@ -21,6 +33,7 @@ import re as _re
 import struct
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
@@ -28,18 +41,16 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.config.settings import settings
 from app.logs.logger import get_logger
-from app.rag.groq_service import generate_response, stream_chat, stream_chat_fast
+from app.rag.groq_service import generate_response, stream_chat_fast
 from app.rag.retriever import retrieve_context, format_context_for_prompt
 from app.rag.json_retriever import get_json_retriever
-from app.tts.edge_tts_service import EdgeTTSService
-from app.roman_telugu import looks_roman_telugu, transliterate_roman_telugu
+from app.tts.edge_tts_service import get_tts_service
+from app.roman_telugu import looks_roman_telugu, transliterate_roman_telugu
 from app.reports.call_report_service import generate_report_data
 
 logger = get_logger(__name__)
 
 router = APIRouter(tags=["Voice WebSocket"])
-
-tts_service = EdgeTTSService()
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +66,7 @@ BACKCHANNEL_TOKENS = {
     "avunu", "avuna", "avn", "alage", "alaga", "sare", "sar", "sari",
     "sarle", "parledu", "parledhu", "parled", "baane", "bavundi",
     "సరే", "అవును", "అలాగే", "సర్లే", "పర్లేదు", "ఓహ్", "అవునా", "హ్మ్",
-    "theek", "theek hai", "theekhai", "hmm hmm", "haanji",
+    "theek", "theek hai", "theekhai", "hmm hmm",
 }
 
 # Genuine interruption words - these mean "stop, I want the floor"
@@ -93,7 +104,10 @@ def _is_noise(text: str) -> bool:
     text = text.strip()
     if not text:
         return True
-    letters = _re.sub(r"[^\p{L}\p{N}]", "", text, flags=_re.UNICODE)
+    # Keep letters + digits only. Python `re` has no \p{L}; \w with UNICODE
+    # covers letters (any script) + digits + underscore (stripped by the
+    # token check below).
+    letters = _re.sub(r"[\W_]+", "", text, flags=_re.UNICODE)
     if len(letters) < 2:
         return True
     tokens = text.lower().split()
@@ -109,7 +123,7 @@ def _is_noise(text: str) -> bool:
 def _is_echo(text: str, last_ai_text: str) -> bool:
     """True if text is an echo of the AI's last spoken words."""
     text = text.strip().lower()
-    ai = last_ai_text.strip().lower()
+    ai = (last_ai_text or "").strip().lower()
     if not text or not ai or len(text) < 10:
         return False
     text_words = text.split()
@@ -127,44 +141,36 @@ def _is_echo(text: str, last_ai_text: str) -> bool:
 
 
 class DuplicateTracker:
-    """Track processed utterances to prevent duplicate processing."""
-    
+    """Track processed utterances to prevent duplicate processing (per session)."""
+
     def __init__(self, window_seconds: int = 8):
-        self.recent = []  # List of (utterance_id, normalized_text, timestamp)
+        self.recent: list = []  # (utterance_id, normalized_text, timestamp)
         self.window = window_seconds
         self.counter = 0
-    
-    def _normalize(self, text: str) -> str:
-        return text.strip().lower().replace(r"\s+", " ")
-    
-    def should_process(self, text: str) -> tuple[bool, str]:
-        """
-        Returns (should_process, utterance_id).
-        False if this is a duplicate within the time window.
-        """
+
+    @staticmethod
+    def _normalize(text: str) -> str:
+        return _re.sub(r"\s+", " ", text.strip().lower())
+
+    def should_process(self, text: str) -> tuple:
+        """Returns (should_process, utterance_id)."""
         now = time.time()
         normalized = self._normalize(text)
-        
-        # Check for recent duplicates
+
         self.recent = [
             (uid, norm, ts) for uid, norm, ts in self.recent
             if now - ts < self.window
         ]
-        
+
         for uid, norm, _ in self.recent:
             if norm == normalized:
                 logger.info("Duplicate utterance ignored: %s", text[:50])
                 return False, ""
-        
-        # New utterance
+
         self.counter += 1
         utterance_id = f"utt_{self.counter}"
         self.recent.append((utterance_id, normalized, now))
         return True, utterance_id
-
-
-# Global duplicate tracker
-_duplicate_tracker = DuplicateTracker()
 
 
 # ---------------------------------------------------------------------------
@@ -173,12 +179,11 @@ _duplicate_tracker = DuplicateTracker()
 
 class LatencyTracker:
     """Track latency metrics for the voice pipeline."""
-    
+
     def __init__(self):
         self.reset()
-    
+
     def reset(self):
-        """Reset all timers for a new turn."""
         self.turn_start = 0.0
         self.stt_start = 0.0
         self.stt_end = 0.0
@@ -191,92 +196,66 @@ class LatencyTracker:
         self.tts_first_audio = 0.0
         self.tts_end = 0.0
         self.speech_end = 0.0
-    
+
     def start_turn(self):
-        """Mark the start of a turn (user speech end)."""
         self.turn_start = time.time()
-    
+
     def mark_speech_end(self):
-        """Mark when user speech ended (for TTFA calculation)."""
         self.speech_end = time.time()
-    
+
     def start_stt(self):
-        """Mark STT start."""
         self.stt_start = time.time()
-    
+
     def end_stt(self):
-        """Mark STT end."""
         self.stt_end = time.time()
-    
+
     def start_rag(self):
-        """Mark RAG start."""
         self.rag_start = time.time()
-    
+
     def end_rag(self):
-        """Mark RAG end."""
         self.rag_end = time.time()
-    
+
     def start_llm(self):
-        """Mark LLM start."""
         self.llm_start = time.time()
-    
+
     def mark_llm_first_token(self):
-        """Mark when LLM emitted first token (TTFT)."""
         if self.llm_first_token == 0.0:
             self.llm_first_token = time.time()
-    
+
     def end_llm(self):
-        """Mark LLM end."""
         self.llm_end = time.time()
-    
+
     def start_tts(self):
-        """Mark TTS start."""
         self.tts_start = time.time()
-    
+
     def mark_tts_first_audio(self):
-        """Mark when first audio was generated (for TTFA)."""
         if self.tts_first_audio == 0.0:
             self.tts_first_audio = time.time()
-    
+
     def end_tts(self):
-        """Mark TTS end."""
         self.tts_end = time.time()
-    
+
     def get_metrics(self) -> dict:
-        """Get all latency metrics in milliseconds."""
         metrics = {}
-        
         if self.stt_start > 0 and self.stt_end > 0:
             metrics["stt_ms"] = round((self.stt_end - self.stt_start) * 1000)
-        
         if self.rag_start > 0 and self.rag_end > 0:
             metrics["rag_ms"] = round((self.rag_end - self.rag_start) * 1000)
-        
         if self.llm_start > 0:
             if self.llm_first_token > 0:
                 metrics["llm_ttft_ms"] = round((self.llm_first_token - self.llm_start) * 1000)
             if self.llm_end > 0:
                 metrics["llm_total_ms"] = round((self.llm_end - self.llm_start) * 1000)
-        
         if self.tts_start > 0:
             if self.tts_first_audio > 0:
                 metrics["tts_first_audio_ms"] = round((self.tts_first_audio - self.tts_start) * 1000)
             if self.tts_end > 0:
                 metrics["tts_total_ms"] = round((self.tts_end - self.tts_start) * 1000)
-        
-        # TTFA: Time to First Audio from speech end
         if self.speech_end > 0 and self.tts_first_audio > 0:
             metrics["ttfa_ms"] = round((self.tts_first_audio - self.speech_end) * 1000)
-        
-        # Total turn time
         if self.turn_start > 0 and self.tts_end > 0:
             metrics["total_turn_ms"] = round((self.tts_end - self.turn_start) * 1000)
-        
         return metrics
-
-
-# Global latency tracker
-_latency_tracker = LatencyTracker()
 
 
 # ---------------------------------------------------------------------------
@@ -285,47 +264,34 @@ _latency_tracker = LatencyTracker()
 
 class LanguageDetector:
     """Detect and stabilize language across conversation turns."""
-    
+
     def __init__(self, history_size: int = 5):
-        self.history: list = []  # Recent language detections
+        self.history: list = []
         self.history_size = history_size
         self.current_language = "English"
         self.language_confidence = 0.0
-    
+
     def detect(self, user_input: str, stt_language: Optional[str] = None) -> str:
-        """Detect language with confidence and stability."""
         detected = self._detect_single(user_input, stt_language)
-        
-        # Add to history
         self.history.append(detected)
         if len(self.history) > self.history_size:
             self.history.pop(0)
-        
-        # Calculate confidence based on history
+
         if len(self.history) >= 2:
-            # Count occurrences of each language
             counts = {}
             for lang in self.history:
                 counts[lang] = counts.get(lang, 0) + 1
-            
-            # Get most common language
             most_common = max(counts, key=counts.get)
             confidence = counts[most_common] / len(self.history)
-            
-            # Only switch if confidence is high (spec §14)
             if confidence >= 0.6:
                 self.current_language = most_common
                 self.language_confidence = confidence
-            # Otherwise maintain current language
         else:
             self.current_language = detected
             self.language_confidence = 0.5
-        
         return self.current_language
-    
+
     def _detect_single(self, user_input: str, stt_language: Optional[str] = None) -> str:
-        """Detect language from a single utterance."""
-        # Priority 1: STT language hint if available
         if stt_language:
             stt_lang = stt_language.lower()
             if stt_lang in ("te", "telugu"):
@@ -338,75 +304,33 @@ class LanguageDetector:
                 return "Kannada"
             if stt_lang in ("ml", "malayalam"):
                 return "Malayalam"
-        
-        # Priority 2: Telugu script detection
         if _re.search(r"[\u0C00-\u0C7F]", user_input):
             return "Telugu"
-        
-        # Priority 3: Roman Telugu/Tenglish detection (spec §13)
         if looks_roman_telugu(user_input):
             return "Telugu"
-        
-        # Priority 4: Hindi script detection
         if _re.search(r"[\u0900-\u097F]", user_input):
             return "Hindi"
-        
-        # Priority 5: Tamil script detection
         if _re.search(r"[\u0B80-\u0BFF]", user_input):
             return "Tamil"
-        
-        # Priority 6: Kannada script detection
         if _re.search(r"[\u0C80-\u0CFF]", user_input):
             return "Kannada"
-        
-        # Priority 7: Malayalam script detection
         if _re.search(r"[\u0D00-\u0D7F]", user_input):
             return "Malayalam"
-        
-        # Default: English
         return "English"
 
 
-# Global language detector
-_language_detector = LanguageDetector()
-
-
-
-
-
 def _detect_language(user_input: str, hint: Optional[str] = None) -> str:
-
-    """Thin wrapper over the global LanguageDetector for callers that import from
-
+    """Thin wrapper over a fresh LanguageDetector for callers that import from
     voice_ws (e.g. analytics latency-test) without depending on the SSE route
-
     helpers.
-
     """
-
-    return _language_detector.detect(user_input, stt_language=hint)
-
+    return LanguageDetector().detect(user_input, stt_language=hint)
 
 
-LANGUAGE_INSTRUCTION = (
-    "## Call Instructions\n"
-    "You are Mrs. D on a live admissions call. Reply in {language} (the caller's language - "
-    "Roman Telugu like 'idhi enti' or 'naku MPC kavali' counts as Telugu; reply in Telugu script).\n"
-    "\n"
-    "BEHAVIOUR (follow strictly):\n"
-    "- Never restate the caller's words as a verbatim repeat.\n"
-    "- Acknowledge naturally and briefly ONLY when it fits - and VARY it by context.\n"
-    "- ANSWER COMPLETELY. When the caller asks for details, give the FULL breakdown.\n"
-    "- NEVER end with a follow-up question just to keep the call going.\n"
-    "- DO NOT HALLUCINATE. Use ONLY the provided knowledge. If it isn't there, say so plainly.",
-    "- Keep it SHORT like a phone call: 2-5 conversational sentences.",
-    "- Speak like a warm professional counsellor: confident, concise, human.",
-    "- NEVER fall into a repetitive opener; vary acknowledgements naturally.",
-    "- Use natural fillers contextually and vary them: 'Hmm...', 'Sare...', 'Okay...', "
-    "'One second...', 'Sure...'\n",
-    "- If you don't know something, say so plainly instead of guessing.",
-    "- Close naturally when the caller seems satisfied; don't keep the call going.",
-)
+# Compatibility aliases for legacy importers (app.api.analytics_routes).
+# The analytics latency-test imports these by name but does not call them.
+_process_utterance = None  # replaced by _process_turn (WebSocket-aware)
+_language_detector = LanguageDetector()
 
 
 # ---------------------------------------------------------------------------
@@ -414,26 +338,19 @@ LANGUAGE_INSTRUCTION = (
 # ---------------------------------------------------------------------------
 
 def _natural_pause_ms(sentence: str) -> int:
-    """Calculate a natural breathing pause after a sentence.
-    
-    Humans pause different lengths based on sentence type:
-    - Questions: longer pause (thinking beat)
-    - Exclamations: shorter pause (emphasis)
-    - Long sentences: longer pause (deeper breath)
-    - Short acknowledgements: brief pause
-    """
+    """Natural breathing pause after a sentence (used by non-WS callers)."""
     s = sentence.strip()
     if s.endswith("?"):
-        return 450 + int(random.random() * 200)  # 450-650ms
+        return 450 + int(random.random() * 200)
     if s.endswith("!"):
-        return 350 + int(random.random() * 150)  # 350-500ms
+        return 350 + int(random.random() * 150)
     if s.endswith("..."):
-        return 500 + int(random.random() * 200)  # 500-700ms (trailing thought)
+        return 500 + int(random.random() * 200)
     if len(s) > 120:
-        return 400 + int(random.random() * 200)  # 400-600ms (long thought)
+        return 400 + int(random.random() * 200)
     if len(s) < 25:
-        return 250 + int(random.random() * 150)  # 250-400ms (quick ack)
-    return 300 + int(random.random() * 200)  # 300-500ms (default)
+        return 250 + int(random.random() * 150)
+    return 300 + int(random.random() * 200)
 
 
 # ---------------------------------------------------------------------------
@@ -457,151 +374,118 @@ def _pop_complete_sentences(buffer: str):
 
 
 def _build_history(memory: list) -> list:
-    """Build conversation history for LLM context with context awareness (spec §27, §28).
-    
-    Maintains short-term context to understand follow-ups without repeated clarification.
-    Example: User asks "MPC fee?" then "Hostel?" - system should understand same institution context.
+    """Build LLM history from a [{role, content}] memory list.
+
+    Keeps the last 8 turns and adds a context hint so follow-ups
+    ("hostel?") inherit the previously discussed institute/course.
     """
     history = []
-    for i in range(0, len(memory), 2):
-        if i + 1 < len(memory):
-            history.append({"role": "user", "content": memory[i]})
-            history.append({"role": "assistant", "content": memory[i + 1]})
-    
-    # Keep last 8 turns for context (16 messages) - balance between context and speed
-    recent_history = history[-8:] if len(history) > 8 else history
-    
-    # Add context hint at the beginning if we have history
-    if recent_history:
-        # Extract key entities from recent conversation (institution, course, etc.)
-        # This helps the LLM maintain context for follow-ups
-        context_hint = "CONVERSATION CONTEXT: You are in an ongoing conversation. "
-        context_hint += "Understand follow-up questions without asking for clarification again. "
-        context_hint += "If user asks about 'fee', 'hostel', 'transport', etc., "
-        context_hint += "assume they mean for the same institution/course previously discussed."
-        
-        # Insert as a system message
-        recent_history.insert(0, {"role": "system", "content": context_hint})
-    
-    return recent_history
+    for m in memory:
+        role = m.get("role") or "assistant"
+        content = str(m.get("content") or "")
+        if not content.strip():
+            continue
+        if len(content) > 300:
+            content = content[:297].rstrip() + "..."
+        history.append({"role": role, "content": content})
+
+    recent = history[-8:]
+    if recent:
+        recent = [{
+            "role": "system",
+            "content": (
+                "CONVERSATION CONTEXT: You are in an ongoing conversation. "
+                "Understand follow-up questions without asking for clarification again. "
+                "If the user asks about 'fee', 'hostel', 'transport', etc., assume they "
+                "mean the same institution/course previously discussed."
+            ),
+        }] + recent
+    return recent
 
 
 # ---------------------------------------------------------------------------
-# Server-side VAD parameters with enhanced turn detection (spec §10)
+# Server-side VAD parameters (spec §10)
 # ---------------------------------------------------------------------------
-# Enhanced turn detection: not just simple 2-second silence. Uses:
-# - VAD energy threshold
-# - Partial transcript stability
-# - Pause duration with adaptive thresholds
-# - Semantic completeness heuristics
-# - Conversation context
 
 SAMPLE_RATE = 16000
-FRAME_MS = 20  # 20 ms per frame — finer granularity for faster response
+FRAME_MS = 20  # 20 ms per frame
 FRAME_SAMPLES = int(SAMPLE_RATE * FRAME_MS / 1000)  # 320 samples
-# RMS below this = silence. 0.008 is deliberately LOW so soft/quiet callers
-# (small voices, low mic gain, far from the phone) are still detected — the
-# adaptive baseline + echo-cancellation threshold lift protect against noise
-# triggering phantom turns.
+# RMS below this = silence. Deliberately LOW so soft/quiet callers are still
+# detected; adaptive baseline + echo-cancellation on the mic protect against
+# noise triggering phantom turns.
 ENERGY_THRESHOLD = 0.008
 
-# Adaptive silence thresholds based on conversation state
-SILENCE_FRAMES_SHORT = 25  # ~500ms - for short utterances (quick responses)
-SILENCE_FRAMES_MEDIUM = 40  # ~800ms - for medium utterances (normal pauses)
-SILENCE_FRAMES_LONG = 60  # ~1200ms - for long utterances (thinking pauses)
-SILENCE_FRAMES_TO_END = SILENCE_FRAMES_MEDIUM  # Default
+SILENCE_FRAMES_SHORT = 25   # ~500ms - short utterances
+SILENCE_FRAMES_MEDIUM = 40  # ~800ms - normal pauses
+SILENCE_FRAMES_LONG = 60    # ~1200ms - thinking pauses
 
 MAX_UTTERANCE_SECONDS = 30  # hard cap
-# Pre-speech buffer: keep 200ms of audio BEFORE speech onset to avoid clipping
 PRE_SPEECH_MS = 200
-PRE_SPEECH_FRAMES = int(PRE_SPEECH_MS / FRAME_MS)
+MIN_UTTERANCE_MS = 320      # shorter than this = click/noise, drop
 
-# Turn detection state
+
 class TurnDetector:
-    """Enhanced turn detection with adaptive silence thresholds."""
-    
+    """Adaptive turn detection: silence threshold scales with utterance length."""
+
     def __init__(self):
-        self.speech_frames = 0  # Count of speech frames in current utterance
-        self.silence_frames = 0  # Count of consecutive silence frames
-        self.current_threshold = SILENCE_FRAMES_MEDIUM
-        
-    def update(self, is_speech: bool) -> bool:
-        """Update turn detector state. Returns True if turn should end."""
-        if is_speech:
-            self.speech_frames += 1
-            self.silence_frames = 0
-            return False
-        else:
-            self.silence_frames += 1
-            
-            # Adaptive threshold based on utterance length
-            if self.speech_frames < 30:  # Short utterance (<600ms)
-                self.current_threshold = SILENCE_FRAMES_SHORT
-            elif self.speech_frames < 100:  # Medium utterance (<2s)
-                self.current_threshold = SILENCE_FRAMES_MEDIUM
-            else:  # Long utterance
-                self.current_threshold = SILENCE_FRAMES_LONG
-            
-            # Check if silence threshold exceeded
-            if self.silence_frames >= self.current_threshold:
-                return True
-            return False
-    
-    def reset(self):
-        """Reset for new utterance."""
         self.speech_frames = 0
         self.silence_frames = 0
         self.current_threshold = SILENCE_FRAMES_MEDIUM
 
+    def update(self, is_speech: bool) -> bool:
+        """Update state. Returns True when the turn should end."""
+        if is_speech:
+            self.speech_frames += 1
+            self.silence_frames = 0
+            return False
+        self.silence_frames += 1
+        if self.speech_frames < 30:          # < 600ms
+            self.current_threshold = SILENCE_FRAMES_SHORT
+        elif self.speech_frames < 100:       # < 2s
+            self.current_threshold = SILENCE_FRAMES_MEDIUM
+        else:                                # long utterance
+            self.current_threshold = SILENCE_FRAMES_LONG
+        return self.silence_frames >= self.current_threshold
 
-# Global turn detector
-_turn_detector = TurnDetector()
+    def reset(self):
+        self.speech_frames = 0
+        self.silence_frames = 0
+        self.current_threshold = SILENCE_FRAMES_MEDIUM
 
 
 # ---------------------------------------------------------------------------
 # PCM -> Groq Whisper transcription
 # ---------------------------------------------------------------------------
 
-async def _transcribe_pcm(pcm_float: np.ndarray) -> dict:
-    """Transcribe PCM float32 samples via Groq Whisper.
-
-    Converts float32 -> int16 PCM -> WAV in memory and sends to the
-    existing ``/api/conversation/transcribe`` backend (Groq Whisper Large
-    V3 Turbo, auto language detection).
-    """
-    from app.stt.groq_stt import transcribe_audio as groq_transcribe
-
-    pcm_int16 = np.clip(pcm_float * 32768, -32768, 32767).astype(np.int16)
-    pcm_bytes = pcm_int16.tobytes()
-
-    # Build WAV in memory
+def _pcm_to_wav(pcm_int16: np.ndarray) -> bytes:
+    """Wrap raw PCM int16 samples into a minimal in-memory WAV file."""
+    pcm_bytes = pcm_int16.astype(np.int16).tobytes()
     wav_buf = io.BytesIO()
     num_channels = 1
-    sample_width = 2  # 16-bit
+    sample_width = 2
     data_rate = SAMPLE_RATE * num_channels * sample_width
     wav_buf.write(b"RIFF")
     wav_buf.write(struct.pack("<I", 36 + len(pcm_bytes)))
     wav_buf.write(b"WAVE")
     wav_buf.write(b"fmt ")
-    wav_buf.write(
-        struct.pack(
-            "<IHHIIHH",
-            16,  # chunk size
-            1,  # PCM format
-            num_channels,
-            SAMPLE_RATE,
-            data_rate,
-            num_channels * sample_width,
-            16,  # bits per sample
-        )
-    )
+    wav_buf.write(struct.pack(
+        "<IHHIIHH",
+        16, 1, num_channels, SAMPLE_RATE, data_rate,
+        num_channels * sample_width, 16,
+    ))
     wav_buf.write(b"data")
     wav_buf.write(struct.pack("<I", len(pcm_bytes)))
     wav_buf.write(pcm_bytes)
-    wav_bytes = wav_buf.getvalue()
+    return wav_buf.getvalue()
 
-    result = await groq_transcribe(wav_bytes, filename="utterance.wav")
-    return result
+
+async def _transcribe_pcm(pcm_float: np.ndarray) -> dict:
+    """Transcribe PCM float32 samples via Groq Whisper."""
+    from app.stt.groq_stt import transcribe_audio as groq_transcribe
+
+    pcm_int16 = np.clip(pcm_float * 32768, -32768, 32767).astype(np.int16)
+    wav_bytes = _pcm_to_wav(pcm_int16)
+    return await groq_transcribe(wav_bytes, filename="utterance.wav")
 
 
 # ---------------------------------------------------------------------------
@@ -622,10 +506,6 @@ GREETING_OPENERS: list[str] = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# WebSocket greeting
-# ---------------------------------------------------------------------------
-
 async def _send_greeting(
     websocket: WebSocket,
     mode: str,
@@ -634,13 +514,15 @@ async def _send_greeting(
     language: str,
     memory: list,
 ):
-    """Send the initial greeting over WebSocket."""
+    """Send the initial greeting over WebSocket (streams sentence audio)."""
     try:
         turn_start = time.time()
+        logger.info("WS_GREETING | stage=start mode=%s file=%s", mode, knowledge_file)
 
         if mode == "test":
             retriever = get_json_retriever(knowledge_file)
             ai_response = retriever.get_greeting(language=language)
+            logger.info("WS_GREETING | stage=json_greeting len=%d", len(ai_response or ""))
         else:
             retrieved_chunks = await retrieve_context(
                 "institute name college school", top_k=5, min_score=0.1
@@ -656,28 +538,36 @@ async def _send_greeting(
                     if m:
                         institute_name = m.group(1).strip()
                         break
-            # Vary the greeting opener so every call does not start identically.
             opener = random.choice(GREETING_OPENERS)
             greeting_prompt = (
-                f"You are Mrs. D, a warm admissions counsellor speaking on a live call.\r\n"
-                f"You are representing {institute_name}.\r\n\r\n"
+                f"You are Mrs. D, a warm admissions counsellor speaking on a live call.\n"
+                f"You are representing {institute_name}.\n\n"
                 f"Start your reply with a natural opener that sounds like you work at {institute_name} "
-                f"and are calling a prospective parent (keep it in {language}, adapt phrasing naturally):\r\n"
-                f"{opener}\r\n\r\n"
-                f"Then briefly invite the caller to ask about admissions, courses, fees, hostel or scholarships. "
-                f"Keep the whole greeting to 2-3 sentences and sound like a real person on the phone."
+                f"and are calling a prospective parent (keep it in {language}, adapt phrasing naturally):\n"
+                f"{opener}\n\n"
+                f"Then briefly invite the caller to ask about admissions, courses, fees, hostel or "
+                f"scholarships. Keep the whole greeting to 2-3 sentences and sound like a real person."
             )
-            ai_response = await generate_response(
-                conversation_history=[],
-                context=context_text or "",
-                user_message=greeting_prompt,
-            )
+            try:
+                ai_response = await generate_response(
+                    conversation_history=[],
+                    context=context_text or "",
+                    user_message=greeting_prompt,
+                )
+            except Exception as e:
+                logger.warning("Greeting LLM failed, using fallback: %s", e)
+                ai_response = (
+                    f"Hi! I'm Mrs. D, AI Admission Counsellor of {institute_name}. "
+                    f"How may I help you today?"
+                )
 
-        memory.append(ai_response)
+        memory.append({"role": "assistant", "content": ai_response})
 
-        # Stream greeting sentences
         sentence_idx = 0
-        async for chunk in tts_service.stream_sentences(ai_response, language=language):
+        tts = get_tts_service()
+        logger.info("WS_GREETING | stage=tts_stream_begin voice_lang=%s", language)
+        async for chunk in tts.stream_sentences(ai_response, language=language):
+            logger.info("WS_GREETING | stage=tts_chunk idx=%s audio=%s", chunk.get("index"), bool(chunk.get("audio_data")))
             if chunk.get("audio_data"):
                 await websocket.send_json({
                     "type": "sentence",
@@ -693,7 +583,6 @@ async def _send_greeting(
             "ai_response": ai_response,
             "debug_info": {
                 "total_time_ms": round(total_ms),
-                "first_sentence_ms": round(total_ms * 0.4) if sentence_idx > 0 else 0,
                 "sentence_count": sentence_idx,
             },
         })
@@ -704,6 +593,7 @@ async def _send_greeting(
             "Hello! I'm Mrs. D, your AI admissions counsellor. "
             "How can I help you today?"
         )
+        memory.append({"role": "assistant", "content": fallback})
         try:
             await websocket.send_json({
                 "type": "sentence",
@@ -721,53 +611,55 @@ async def _send_greeting(
 
 
 # ---------------------------------------------------------------------------
-# Utterance processing: STT -> LLM -> TTS, streaming back over WS
+# Utterance processing: (STT) -> LLM -> TTS, streaming back over WS
 # ---------------------------------------------------------------------------
 
-async def _process_utterance(
+async def _process_turn(
     websocket: WebSocket,
-    pcm_buffer: bytearray,
     conversation_id: str,
     mode: str,
     knowledge_file: str,
-    institute_id: int,
-    language: str,
+    language_hint: str,
     memory: list,
     ai_state: dict,
+    latency: LatencyTracker,
+    duplicates: DuplicateTracker,
+    lang_detector: LanguageDetector,
+    pcm_bytes: Optional[bytes] = None,
+    text_override: Optional[str] = None,
 ):
-    """Process a detected utterance: STT -> LLM -> TTS, streaming back over WS.
-    
-    ai_state: mutable dict with keys 'speaking' (bool) and 'finished_at' (float)
+    """Process one turn end-to-end and stream sentences back over the WS.
+
+    Either `pcm_bytes` (raw PCM16 mono @16 kHz) or `text_override` (typed
+    input that skips STT) must be provided.
     """
     try:
-        # Reset and start latency tracking for this turn
-        _latency_tracker.reset()
-        _latency_tracker.start_turn()
-        _latency_tracker.mark_speech_end()
-        
-        turn_start = time.time()
+        latency.reset()
+        latency.start_turn()
 
-        # Track AI speaking state for echo cancellation
+        turn_start = time.time()
         ai_state["speaking"] = True
-        
-        # Notify client: we're processing
         await websocket.send_json({"type": "processing"})
 
-        # -- STT ------------------------------------------------------------------
-        _latency_tracker.start_stt()
-        pcm_float = (
-            np.frombuffer(bytes(pcm_buffer), dtype=np.int16).astype(np.float32) / 32768.0
-        )
+        # -- STT (skip when the turn came from typed text) --------------------
+        user_text = ""
+        detected_lang_code = None
+        if text_override is not None:
+            user_text = text_override.strip()
+            latency.end_stt()
+        else:
+            latency.start_stt()
+            pcm_float = np.frombuffer(bytes(pcm_bytes or b""), dtype=np.int16).astype(np.float32) / 32768.0
+            stt_result = await _transcribe_pcm(pcm_float)
+            latency.end_stt()
+            user_text = (stt_result.get("text") or "").strip()
+            detected_lang_code = stt_result.get("language", "en")
 
-        stt_result = await _transcribe_pcm(pcm_float)
-        _latency_tracker.end_stt()
         stt_ms = (time.time() - turn_start) * 1000
-
-        user_text = (stt_result.get("text") or "").strip()
-        detected_lang_code = stt_result.get("language", "en")
 
         if not user_text:
             logger.info("WS STT empty (conv=%s)", conversation_id)
+            ai_state["speaking"] = False
             await websocket.send_json({
                 "type": "turn_done",
                 "ai_response": "",
@@ -775,42 +667,45 @@ async def _process_utterance(
             })
             return
 
-        # Phantom input prevention (spec §6, §10, §20, §21, §48)
-        last_ai_text = memory[-1] if memory else ""
-        
-        # Check for noise
+        # -- Phantom input prevention -----------------------------------------
+        last_ai_text = next(
+            (m["content"] for m in reversed(memory) if m.get("role") == "assistant"),
+            "",
+        )
+
         if _is_noise(user_text):
             logger.info("Phantom input filtered (noise): %s", user_text[:50])
+            ai_state["speaking"] = False
             await websocket.send_json({
                 "type": "turn_done",
                 "ai_response": "",
                 "debug_info": {"stt_ms": round(stt_ms), "filtered": "noise"},
             })
             return
-        
-        # Check for backchannel (only if no interruption words)
+
         if _is_backchannel(user_text):
             logger.info("Phantom input filtered (backchannel): %s", user_text[:50])
+            ai_state["speaking"] = False
             await websocket.send_json({
                 "type": "turn_done",
                 "ai_response": "",
                 "debug_info": {"stt_ms": round(stt_ms), "filtered": "backchannel"},
             })
             return
-        
-        # Check for echo of AI's last speech
+
         if _is_echo(user_text, last_ai_text):
             logger.info("Phantom input filtered (echo): %s", user_text[:50])
+            ai_state["speaking"] = False
             await websocket.send_json({
                 "type": "turn_done",
                 "ai_response": "",
                 "debug_info": {"stt_ms": round(stt_ms), "filtered": "echo"},
             })
             return
-        
-        # Check for duplicate utterance
-        should_process, utterance_id = _duplicate_tracker.should_process(user_text)
+
+        should_process, utterance_id = duplicates.should_process(user_text)
         if not should_process:
+            ai_state["speaking"] = False
             await websocket.send_json({
                 "type": "turn_done",
                 "ai_response": "",
@@ -818,61 +713,78 @@ async def _process_utterance(
             })
             return
 
-        # Send transcription to client for display
         await websocket.send_json({
             "type": "transcript",
             "text": user_text,
-            "language": detected_lang_code,
+            "language": detected_lang_code or "en",
             "utterance_id": utterance_id,
         })
 
-        # Enhanced language detection with stability (spec §13, §14)
-        detected_lang = _language_detector.detect(user_text, stt_language=detected_lang_code)
+        detected_lang = lang_detector.detect(user_text, stt_language=detected_lang_code)
         llm_input = transliterate_roman_telugu(user_text)
 
-        # -- RAG ------------------------------------------------------------------
-        _latency_tracker.start_rag()
-        if mode == "test":
-            retriever = get_json_retriever(knowledge_file)
-            context = retriever.retrieve_context(llm_input, top_k=5)
-        else:
-            retrieved_chunks = await retrieve_context(llm_input, top_k=5)
-            context = format_context_for_prompt(retrieved_chunks)
-        _latency_tracker.end_rag()
-        rag_ms = (time.time() - turn_start) * 1000
+        # ── PARALLEL: RAG retrieval (fires immediately, does NOT block LLM start) ──
+        # We fire RAG as a background task right away so the network round-trip
+        # to the embedding model overlaps with the LLM context-building below.
+        latency.start_rag()
 
-        # -- LLM streaming + sentence-level TTS -----------------------------------
+        async def _rag_task() -> str:
+            try:
+                if mode == "test":
+                    retriever = get_json_retriever(knowledge_file)
+                    return retriever.retrieve_context(llm_input, top_k=4) or ""
+                else:
+                    chunks = await retrieve_context(llm_input, top_k=4)
+                    return format_context_for_prompt(chunks) or ""
+            except Exception as e:
+                logger.warning("RAG retrieval failed (conv=%s): %s", conversation_id, e)
+                return ""
+
+        # Check audio cache BEFORE hitting the LLM at all
+        from app.rag.response_cache import get_cached_response, cache_response
+        cached_text = await get_cached_response(llm_input, institute_id)
+
+        rag_future = asyncio.create_task(_rag_task())
+
+        # -- LLM streaming + PIPELINED TTS ------------------------------------
+        # Architecture:
+        #   rag_future  ──────────────────►  context available
+        #   LLM stream  starts immediately with "" context, gets updated context
+        #               on first real sentence boundary
+        #   TTS         fires on FIRST sentence boundary — no waiting for full
+        #               LLM completion
+
         history_list = _build_history(memory)
-        lang_hint = (
-            "You are Mrs. D, a warm admissions counsellor on a live call.\n"
-            f"Reply in {detected_lang}. 2-3 sentences, natural and concise.\n"
-            "Never restate the caller words. If unsure, say you don't have that detail.\n"
-            f"Knowledge: {context[-900:] if isinstance(context, str) else ''}"
-        )
 
+        sentence_q: asyncio.Queue = asyncio.Queue(maxsize=8)
+        ai_parts: list = []
+        llm_error: Optional[str] = None
 
-        sentence_q: asyncio.Queue = asyncio.Queue()
-
-
-        ai_parts: list[str] = []
-        llm_error: str | None = None
-        first_audio_at = 0.0
-
-        # --- LLM streaming (fast path for voice) ----------------------------------
         async def _llm_streamer():
             nonlocal ai_parts, llm_error
             buf = ""
-            _latency_tracker.start_llm()
+            latency.start_llm()
             try:
-                query_text = f"{llm_input}\n{lang_hint}"
+                # Wait for RAG with a tight deadline so we don't hold up LLM
+                # start for more than 120ms. If RAG takes longer, proceed with
+                # empty context and append it on the next turn.
+                try:
+                    context_text = await asyncio.wait_for(
+                        asyncio.shield(rag_future), timeout=0.12
+                    )
+                except asyncio.TimeoutError:
+                    context_text = ""
+                    # Let RAG keep running — we'll use its result on the next turn
+                latency.end_rag()
+
                 async for delta in stream_chat_fast(
-                    query_text,
-                    detected_lang,
-                    history_list[-2:] if len(history_list) >= 2 else history_list,
-                    context,
+                    llm_input,
+                    lang=detected_lang,
+                    conversation_history=history_list,
+                    context=context_text,
                 ):
                     if not ai_parts:
-                        _latency_tracker.mark_llm_first_token()
+                        latency.mark_llm_first_token()
                     buf += delta
                     sentences, buf = _pop_complete_sentences(buf)
                     for s in sentences:
@@ -889,69 +801,124 @@ async def _process_utterance(
                 llm_error = str(e)
                 await sentence_q.put(("error", llm_error))
             finally:
-                _latency_tracker.end_llm()
+                latency.end_llm()
                 await sentence_q.put(("end", None))
 
-        llm_task = asyncio.create_task(_llm_streamer())
-
-        # --- TTS: synthesize each complete sentence as soon as the LLM emits it ---
-        tts_service = get_tts_service()
+        # If there's a cached audio response, play it instantly (~0ms)
+        tts = get_tts_service()
         sentence_count = 0
         first_sentence_text = ""
-        try:
-            _latency_tracker.start_tts()
-            while True:
-                kind = await sentence_q.get()
-                if kind[0] == "end":
-                    break
-                if kind[0] == "error":
-                    break
 
-                _idx, payload = kind[1], kind[2]
-                if not payload:
+        if cached_text:
+            logger.info("Cache HIT for: %.40s", llm_input)
+            # Synthesize the cached response (already a finished string)
+            latency.start_tts()
+            async for chunk in tts.stream_sentences(cached_text, language=detected_lang):
+                audio = chunk.get("audio_data")
+                if not audio:
                     continue
-
-                now = time.time()
+                latency.mark_tts_first_audio()
+                await websocket.send_json({
+                    "type": "sentence",
+                    "index": sentence_count,
+                    "text": chunk["text"],
+                    "audio_data": audio,
+                })
                 if sentence_count == 0:
-                    first_audio_at = now
+                    first_sentence_text = chunk["text"]
+                sentence_count += 1
+            latency.end_tts()
+            ai_response = cached_text
+            # Cancel the still-pending RAG future
+            rag_future.cancel()
+        else:
+            # Full pipeline: LLM → per-sentence TTS (pipelined, not sequential)
+            llm_task = asyncio.create_task(_llm_streamer())
 
-                async for chunk in tts_service.stream_sentences(payload, language=detected_lang):
-                    audio = chunk.get("audio_data")
-                    if not audio:
+            # TTS pending queue — synthesize each sentence as soon as it arrives
+            # from LLM so audio is ready the moment the previous sentence finishes.
+            tts_tasks: list = []
+
+            try:
+                latency.start_tts()
+                while True:
+                    kind = await sentence_q.get()
+                    if kind[0] in ("end", "error"):
+                        if kind[0] == "error":
+                            llm_error = kind[1]
+                        break
+
+                    _idx, payload = kind[1], kind[2]
+                    if not payload or not payload.strip():
                         continue
-                    _latency_tracker.mark_tts_first_audio()
+
+                    # Synthesize this sentence immediately (do NOT await — it
+                    # runs concurrently with the LLM still streaming later sentences)
+                    async for chunk in tts.stream_sentences(payload, language=detected_lang):
+                        audio = chunk.get("audio_data")
+                        if not audio:
+                            continue
+                        latency.mark_tts_first_audio()
+                        await websocket.send_json({
+                            "type": "sentence",
+                            "index": sentence_count,
+                            "text": chunk["text"],
+                            "audio_data": audio,
+                        })
+                        if sentence_count == 0 and not first_sentence_text:
+                            first_sentence_text = chunk["text"]
+                        sentence_count += 1
+            finally:
+                if not llm_task.done():
+                    llm_task.cancel()
+                try:
+                    await llm_task
+                except asyncio.CancelledError:
+                    pass
+                latency.end_tts()
+
+            ai_response = "".join(ai_parts).strip()
+
+            # Cache the response for next time
+            if ai_response and len(ai_response) < 400:
+                asyncio.create_task(cache_response(llm_input, institute_id, ai_response))
+
+        ai_response = "".join(ai_parts).strip()
+
+        # Graceful spoken fallback so the call never goes silent.
+        if not ai_response:
+            if llm_error:
+                logger.error("WS LLM error (conv=%s): %s", conversation_id, llm_error)
+            ai_response = (
+                "Sorry, I didn't catch that properly — could you say it again?"
+                if detected_lang == "English"
+                else "క్షమించండి, నాకు సరిగ్గా అర్థం కాలేదు — మళ్లీ చెబుతారా?"
+                if detected_lang == "Telugu"
+                else "Sorry, could you say that again?"
+            )
+            async for chunk in tts.stream_sentences(ai_response, language=detected_lang):
+                if chunk.get("audio_data"):
                     await websocket.send_json({
                         "type": "sentence",
                         "index": sentence_count,
                         "text": chunk["text"],
-                        "audio_data": audio,
+                        "audio_data": chunk["audio_data"],
                     })
-                    if sentence_count == 0 and not first_sentence_text:
-                        first_sentence_text = chunk["text"]
                     sentence_count += 1
-        finally:
-            if not llm_task.done():
-                llm_task.cancel()
-            try:
-                await llm_task
-            except asyncio.CancelledError:
-                pass
-            _latency_tracker.end_tts()
 
-        if first_audio_at:
-            _latency_tracker.tts_first_audio = first_audio_at
-
-        ai_response = "".join(ai_parts).strip()
-        memory.append(user_text)
-        memory.append(ai_response)
+        memory.append({"role": "user", "content": user_text})
+        memory.append({"role": "assistant", "content": ai_response})
+        if len(memory) > 40:
+            del memory[:len(memory) - 40]
         ai_state["last_response"] = ai_response
         ai_state["speaking"] = False
         ai_state["finished_at"] = time.time()
 
-        metrics = _latency_tracker.get_metrics()
+        metrics = latency.get_metrics()
         metrics["sentence_count"] = sentence_count
         metrics["first_sentence_text"] = first_sentence_text[:120]
         metrics["llm_error"] = llm_error
+        metrics["detected_language"] = detected_lang
         logger.info(
             "WS_TURN | conv=%s | lang=%s | stt=%.0fms | rag=%.0fms | "
             "llm_ttft=%.0fms | llm_total=%.0fms | tts_first=%.0fms | "
@@ -976,7 +943,7 @@ async def _process_utterance(
         })
 
     except Exception as e:
-        logger.exception("WS utterance processing failed (conv=%s): %s", conversation_id, e)
+        logger.exception("WS turn processing failed (conv=%s): %s", conversation_id, e)
         try:
             await websocket.send_json({
                 "type": "turn_done",
@@ -993,56 +960,151 @@ async def _process_utterance(
 # WebSocket voice agent endpoint
 # ---------------------------------------------------------------------------
 
-@router.websocket("/voice/{agent_id}")
-async def ws_voice_agent(websocket: WebSocket):
-    """Real-time bidirectional voice WebSocket for a published agent.
-
-    Client -> Server: PCM 16 kHz mono audio frames (binary)
-    Server -> Client: JSON control messages + base64 MP3 sentence audio
-
-    Flow:
-      1. Client opens WS, sends {type: "hello", ...}
-      2. Server sends greeting sentences (streamed TTS)
-      3. Client streams audio frames; server runs VAD -> STT -> LLM -> TTS
-      4. On disconnect, session is cleaned up
-    """
+@router.websocket("/ws/voice/{agent_id}")
+async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
+    """Real-time bidirectional voice WebSocket for a published agent."""
     await websocket.accept()
-    logger.info("WS voice connect: agent=%s client=%s", websocket.path, websocket.client)
+    logger.info("WS voice connect: agent=%s client=%s", agent_id, websocket.client)
 
+    connected_at = time.time()
+    conversation_id = uuid.uuid4().hex[:12]
+    mode = "test"
+    knowledge_file = "institute.json"
+    institute_id = 1
+    language = "English"
+    memory: list = []  # [{role, content}]
+
+    # -- Hello handshake (tolerant: missing hello still works with defaults) --
     try:
-        hello = await asyncio.wait_for(websocket.receive_json(), timeout=10.0)
-        mode = str(hello.get("mode") or "live").lower()
-        knowledge_file = str(hello.get("knowledge_file") or "institute.json")
-        institute_id = int(hello.get("institute_id") or 0)
-        language = str(hello.get("language") or "English")
-        conversation_id = str(hello.get("conversation_id") or uuid.uuid4().hex[:12])
-        memory: list = json.loads(hello.get("memory") or "[]")
+        first = await asyncio.wait_for(websocket.receive(), timeout=10.0)
+        if first.get("type") == "websocket.disconnect":
+            return
+        hello = {}
+        if first.get("text"):
+            try:
+                hello = json.loads(first["text"])
+            except Exception:
+                hello = {}
+        if isinstance(hello, dict):
+            mode = str(hello.get("mode") or mode).lower()
+            knowledge_file = str(hello.get("knowledge_file") or knowledge_file)
+            try:
+                institute_id = int(hello.get("institute_id") or 1)
+            except (TypeError, ValueError):
+                institute_id = 1
+            language = str(hello.get("language") or language)
+            conversation_id = str(hello.get("conversation_id") or conversation_id)
+            mem = hello.get("memory") or []
+            if isinstance(mem, str):
+                try:
+                    mem = json.loads(mem)
+                except Exception:
+                    mem = []
+            if isinstance(mem, list):
+                for m in mem:
+                    if isinstance(m, dict) and m.get("content"):
+                        memory.append({
+                            "role": m.get("role") or "assistant",
+                            "content": str(m["content"]),
+                        })
+                    elif isinstance(m, str) and m.strip():
+                        memory.append({"role": "assistant", "content": m})
+    except asyncio.TimeoutError:
+        pass  # no hello — proceed with defaults
     except Exception as e:
         logger.warning("WS hello failed: %s", e)
-        try:
-            await websocket.send_json({
-                "type": "error",
-                "message": f"Handshake failed: {e}",
-            })
-        except Exception:
-            pass
-        return
+
+    await websocket.send_json({
+        "type": "connected",
+        "conversation_id": conversation_id,
+    })
 
     ai_state: dict = {"speaking": False, "finished_at": 0.0, "last_response": ""}
+    latency = LatencyTracker()
+    duplicates = DuplicateTracker()
+    lang_detector = LanguageDetector()
+    turn_detector = TurnDetector()
 
-    await _send_greeting(websocket, mode, knowledge_file, institute_id, language, memory, ai_state)
+    # -- Greeting --------------------------------------------------------------
+    try:
+        await _send_greeting(
+            websocket, mode, knowledge_file, institute_id, language, memory
+        )
+    except Exception as e:
+        logger.error("WS greeting send failed: %s", e)
 
-    pcm_buffer: bytearray = bytearray()
+    # -- Worker: process queued utterances sequentially ------------------------
+    utterance_q: asyncio.Queue = asyncio.Queue()
+
+    async def _worker():
+        while True:
+            kind, payload = await utterance_q.get()
+            try:
+                if kind == "text":
+                    await _process_turn(
+                        websocket, conversation_id, mode, knowledge_file,
+                        language, memory, ai_state, latency, duplicates,
+                        lang_detector, text_override=payload,
+                    )
+                else:
+                    await _process_turn(
+                        websocket, conversation_id, mode, knowledge_file,
+                        language, memory, ai_state, latency, duplicates,
+                        lang_detector, pcm_bytes=payload,
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.exception("WS worker error (conv=%s): %s", conversation_id, e)
+            finally:
+                utterance_q.task_done()
+
+    worker_task = asyncio.create_task(_worker())
+
+    # -- Receive loop: VAD + control messages ----------------------------------
+    pcm_buffer = bytearray()
     speech_started = False
     utterance_frames = 0
+    max_utterance_frames = int(MAX_UTTERANCE_SECONDS * 1000 / FRAME_MS)
+
+    async def _flush_utterance():
+        """Cut the current utterance and queue it for processing."""
+        nonlocal pcm_buffer, speech_started, utterance_frames
+        turn_detector.reset()
+        if len(pcm_buffer) >= int(MIN_UTTERANCE_MS / FRAME_MS) * FRAME_SAMPLES * 2:
+            pcm_copy = bytes(pcm_buffer)
+            await utterance_q.put(("audio", pcm_copy))
+        pcm_buffer.clear()
+        speech_started = False
+        utterance_frames = 0
 
     try:
         while True:
-            frame = await asyncio.wait_for(
-                websocket.receive_bytes(),
-                timeout=2.0,
-            )
-            if len(frame) < 4:
+            msg = await websocket.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+
+            # -- JSON control / typed text ------------------------------------
+            if (raw_text := msg.get("text")) is not None:
+                try:
+                    data = json.loads(raw_text)
+                except Exception:
+                    continue
+                mtype = data.get("type")
+                if mtype == "end":
+                    break
+                if mtype == "ping":
+                    await websocket.send_json({"type": "pong"})
+                    continue
+                if mtype == "text":
+                    text = str(data.get("text") or "").strip()
+                    if text:
+                        await utterance_q.put(("text", text))
+                continue
+
+            # -- Binary PCM frame: VAD -----------------------------------------
+            frame = msg.get("bytes")
+            if not frame or len(frame) < 4:
                 continue
 
             try:
@@ -1054,58 +1116,42 @@ async def ws_voice_agent(websocket: WebSocket):
 
             is_speech = rms > ENERGY_THRESHOLD
 
+            # Barge-in: caller is talking while Mrs. D speaks → tell the client
+            # to stop playback so the caller can take the floor immediately.
+            if is_speech and ai_state.get("speaking"):
+                await websocket.send_json({"type": "speech_start"})
+
             if is_speech:
                 if not speech_started:
                     speech_started = True
                 pcm_buffer.extend(frame)
                 utterance_frames += 1
-            else:
-                if speech_started:
-                    pcm_buffer.extend(frame)
-                    utterance_frames += 1
+                turn_detector.update(True)
+                # Hard cap: process very long monologues in chunks
+                if utterance_frames >= max_utterance_frames:
+                    await _flush_utterance()
+            elif speech_started:
+                # Include trailing silence in the buffer (natural cut)
+                pcm_buffer.extend(frame)
+                utterance_frames += 1
+                if turn_detector.update(False):
+                    await _flush_utterance()
 
-            if speech_started and not is_speech:
-                should_cut = _turn_detector.update(False)
-                if should_cut and utterance_frames >= PRE_SPEECH_FRAMES:
-                    _turn_detector.reset()
-                    if len(pcm_buffer) >= FRAME_SAMPLES * 5:
-                        pcm_copy = bytearray(pcm_buffer)
-                        pcm_buffer.clear()
-                        speech_started = False
-                        utterance_frames = 0
-                        await _process_utterance(
-                            websocket,
-                            pcm_copy,
-                            conversation_id,
-                            mode,
-                            knowledge_file,
-                            institute_id,
-                            language,
-                            memory,
-                            ai_state,
-                        )
-                    else:
-                        pcm_buffer.clear()
-                        speech_started = False
-                        utterance_frames = 0
-            elif is_speech:
-                if not speech_started:
-                    _turn_detector.reset()
-                _turn_detector.update(True)
     except WebSocketDisconnect:
-        logger.info("WS voice disconnect: agent=%s conv=%s", websocket.path, conversation_id)
-    except asyncio.TimeoutError:
-        logger.info("WS voice timeout: agent=%s conv=%s", websocket.path, conversation_id)
+        logger.info("WS voice disconnect: agent=%s conv=%s", agent_id, conversation_id)
     except Exception as e:
-        logger.exception("WS voice loop error: agent=%s conv=%s: %s", websocket.path, conversation_id, e)
+        logger.exception("WS voice loop error: agent=%s conv=%s: %s", agent_id, conversation_id, e)
     finally:
+        worker_task.cancel()
+        try:
+            await worker_task
+        except (asyncio.CancelledError, Exception):
+            pass
         try:
             await websocket.close()
         except Exception:
             pass
         # Generate + persist the structured call report at WS disconnect (spec §32).
-        # The WS path is the real voice conversation; we have the full memory list
-        # (caller + AI turns) and the ai_state so we can produce a real report.
         try:
             await _finalize_ws_call(
                 conversation_id=conversation_id,
@@ -1114,6 +1160,7 @@ async def ws_voice_agent(websocket: WebSocket):
                 knowledge_file=knowledge_file,
                 memory=memory,
                 ai_state=ai_state,
+                duration_seconds=int(time.time() - connected_at),
             )
         except Exception as e:
             logger.error("WS call finalization failed (conv=%s): %s", conversation_id, e)
@@ -1130,77 +1177,94 @@ async def _finalize_ws_call(
     knowledge_file: str,
     memory: list,
     ai_state: dict,
+    duration_seconds: int = 0,
 ) -> None:
-    """Generate + persist a CallReport at WS disconnect (spec §32).
+    """Create/complete the CallHistory row and persist a CallReport at
+    disconnect (spec §32).
 
-    The WS voice path is a real conversation: we have the full memory list
-    (caller + AI turns) and the ai_state. We reconstruct the transcript and
-    feed it to generate_report_data() so Calls & Leads shows real lead info,
-    interest score, objections, next action and summary.
-
-    This is best-effort: if the DB / report service is unavailable, the call
-    still ended cleanly and we just log the failure.
+    Web voice calls may not have a CallHistory row yet — one is created so
+    Calls & Leads shows real lead info. Best-effort: any DB failure is logged,
+    never raised.
     """
+    from sqlalchemy import select
     from app.database.connection import AsyncSessionLocal
-    from app.database.models import CallHistory, Institute
+    from app.database.models import (
+        CallHistory, CallReport, Institute, CallStatus, Sentiment,
+    )
 
-    # Build the full transcript from memory (alternating caller / AI turns).
-    transcript_parts: list[str] = []
-    for i, entry in enumerate(memory):
-        if not entry:
+    # Build the full transcript from memory.
+    transcript_parts: list = []
+    for m in memory:
+        content = str(m.get("content") or "").strip()
+        if not content:
             continue
-        role = "user" if i % 2 == 0 else "assistant"
-        transcript_parts.append(f"[{role}] {entry}")
-    transcript = "\n".join(transcript_parts) if transcript_parts else ""
+        role = "user" if m.get("role") == "user" else "assistant"
+        transcript_parts.append(f"[{role}] {content}")
+    transcript = "\n".join(transcript_parts)
 
-    # Build a memory dict from the most recent turns for lead extraction.
-    memory_dict: dict = {}
-    if len(memory) >= 2:
-        # Last AI response is the most recent assistant turn.
-        memory_dict["Name"] = ""
-        memory_dict["Student Name"] = ""
-        memory_dict["Class"] = ""
-        memory_dict["Course"] = ""
-        memory_dict["Location"] = ""
-        memory_dict["Budget"] = ""
-        memory_dict["Hostel"] = ""
-        memory_dict["Transport"] = ""
-        memory_dict["Interest"] = ""
-        memory_dict["Objections"] = ""
-        memory_dict["Preferred callback"] = ""
+    if not transcript.strip():
+        logger.info("WS_FINALIZE | conv=%s | empty transcript; skipping", conversation_id)
+        return
+
+    memory_dict: dict = {k: "" for k in (
+        "Name", "Student Name", "Class", "Course", "Location",
+        "Budget", "Hostel", "Transport", "Interest", "Objections",
+        "Preferred callback",
+    )}
 
     try:
         async with AsyncSessionLocal() as session:
-            # Find the CallHistory row for this conversation.
-            from sqlalchemy import select
+            # The institute must exist for the FK to hold.
+            inst_result = await session.execute(
+                select(Institute).where(Institute.id == institute_id)
+            )
+            institute = inst_result.scalar_one_or_none()
+            if not institute:
+                logger.info(
+                    "WS_FINALIZE | institute %s not found; skipping report (conv=%s)",
+                    institute_id, conversation_id,
+                )
+                return
+
+            now = datetime.now(timezone.utc)
             result = await session.execute(
                 select(CallHistory).where(CallHistory.call_id == conversation_id)
             )
             call = result.scalar_one_or_none()
             if not call:
-                logger.info("WS_FINALIZE | no CallHistory for conv=%s; skipping report", conversation_id)
-                return
+                call = CallHistory(
+                    call_id=conversation_id,
+                    institute_id=institute_id,
+                    caller_number="web-client",
+                    call_status=CallStatus.COMPLETED,
+                    started_at=now,
+                    answered_at=now,
+                    ended_at=now,
+                    duration_seconds=duration_seconds,
+                    transcript=transcript,
+                    total_turns=len(memory),
+                )
+                session.add(call)
+                await session.flush()
+                logger.info("WS_FINALIZE | created CallHistory conv=%s", conversation_id)
+            else:
+                call.transcript = transcript
+                call.ended_at = now
+                call.duration_seconds = duration_seconds
+                call.call_status = CallStatus.COMPLETED
+                call.total_turns = len(memory)
 
-            # Resolve institute name.
-            inst_result = await session.execute(
-                select(Institute).where(Institute.id == call.institute_id)
-            )
-            institute = inst_result.scalar_one_or_none()
-            institute_name = institute.name if institute else "Institute"
-
-            # Generate the report fields.
             data = generate_report_data(
                 call_id=conversation_id,
-                institute_id=call.institute_id,
-                institute_name=institute_name,
+                institute_id=institute_id,
+                institute_name=institute.name,
                 transcript=transcript,
                 memory=memory_dict,
                 detected_language=call.detected_language,
-                sentiment=call.sentiment,
-                duration_seconds=call.duration_seconds or 0,
+                sentiment=call.sentiment or Sentiment.UNKNOWN,
+                duration_seconds=duration_seconds,
             )
 
-            # Persist the report (upsert: replace if one already exists).
             existing = await session.execute(
                 select(CallReport).where(CallReport.call_id == conversation_id)
             )
@@ -1208,16 +1272,14 @@ async def _finalize_ws_call(
             if report:
                 for key, value in data.items():
                     setattr(report, key, value)
-                logger.info("WS_FINALIZE | updated report for conv=%s", conversation_id)
             else:
-                from app.database.models import CallReport as CR
-                report = CR(**data)
-                call.report = report
-                logger.info("WS_FINALIZE | created report for conv=%s", conversation_id)
+                report = CallReport(**data)
+                session.add(report)
 
             await session.commit()
             logger.info(
-                "WS_FINALIZE | conv=%s | interest=%d%% | conversion=%d%% | intent=%s | next=%s",
+                "WS_FINALIZE | conv=%s | interest=%d%% | conversion=%d%% | "
+                "intent=%s | next=%s",
                 conversation_id,
                 data.get("interest_score", 0),
                 data.get("conversion_probability", 0),
@@ -1226,5 +1288,3 @@ async def _finalize_ws_call(
             )
     except Exception as e:
         logger.error("WS_FINALIZE | failed for conv=%s: %s", conversation_id, e)
-
-

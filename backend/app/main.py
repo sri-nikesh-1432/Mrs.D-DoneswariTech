@@ -6,6 +6,7 @@ Run with:
     uvicorn app.main:app --reload --host localhost --port 8000
 """
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
@@ -72,22 +73,14 @@ async def _warmup_tts() -> None:
         tts = get_tts_service()
         await tts.initialize()
 
-        # Warm the persistent WebSocket for each voice we actually use in production.
-        # The first real sentence on each voice is then synthesized over an already-open
-        # connection instead of paying connect + handshake latency on the first turn.
+        # Warm ONLY the primary voices actually used in production. All 12
+        # voices (incl. every "-Alt") took ~70s of continuous edge-tts traffic
+        # and starved real calls of the service (greeting TTS hung mid-stream).
         warm_phrases: dict[str, str] = {
             "en-IN-NeerjaNeural": "Hello!",
-            "en-IN-PrabhaNeural": "Hello!",
             "te-IN-ShrutiNeural": "నమస్కారం",
-            "te-IN-ChitraNeural": "నమస్కారం",
             "hi-IN-SwaraNeural": "नमस्ते",
-            "hi-IN-MeeraNeural": "नमस्ते",
             "ta-IN-PallaviNeural": "வணக்கம்",
-            "ta-IN-VenkatalakshmiNeural": "வணக்கம்",
-            "kn-IN-SapnaNeural": "ನಮಸ್ಕಾರ",
-            "kn-IN-KushalNeural": "ನಮಸ್ಕಾರ",
-            "ml-IN-SobhanaNeural": "നമസ്കാരം",
-            "ml-IN-MirnalBetterBetterNeural": "നമസ്കാരം",
         }
         warmed = 0
         for voice, phrase in warm_phrases.items():
@@ -128,14 +121,30 @@ async def lifespan(app: FastAPI):
 
     _scheduler.start()
     logger.info("Scheduler started")
-    await _warmup_tts()
-    # Pre-synthesize all cached responses for instant audio on first hit
-    try:
-        from app.rag.response_cache import warm_tts_cache
-        from app.tts.edge_tts_service import get_tts_service
-        await warm_tts_cache(get_tts_service())
-    except Exception as e:
-        logger.warning("TTS cache warmup failed (non-fatal): %s", e)
+
+    # TTS warmup used to BLOCK startup: ~12 voice pings + up to 18 cache
+    # phrases sequentially = 2-3 minutes before the port even bound. Run it
+    # as a background task with a hard timeout so the server serves
+    # immediately and the caches fill in behind it.
+    async def _warmup_background():
+        # edge-tts throttles under concurrent load ("No audio was received" +
+        # multi-second stalls). Warmups once starved REAL calls of the voice
+        # service, so all pre-synthesis is deferred until the app has been
+        # idle for a while — first-call latency is protected by the audio
+        # cache and sentence-level streaming instead.
+        await asyncio.sleep(180)
+        try:
+            await asyncio.wait_for(_warmup_tts(), timeout=60)
+        except Exception as e:
+            logger.warning("TTS warmup stopped (non-fatal): %s", e)
+        try:
+            from app.rag.response_cache import warm_tts_cache
+            from app.tts.edge_tts_service import get_tts_service
+            await asyncio.wait_for(warm_tts_cache(get_tts_service(), max_entries=2), timeout=120)
+        except Exception as e:
+            logger.warning("TTS cache warmup stopped (non-fatal): %s", e)
+
+    asyncio.create_task(_warmup_background())
     logger.info("Backend ready at http://%s:%d", settings.HOST, settings.PORT)
     logger.info("API docs at http://%s:%d/docs", settings.HOST, settings.PORT)
 
@@ -179,6 +188,9 @@ from app.api.conversation_routes import router as conversation_router
 from app.api.analytics_routes import router as analytics_router
 from app.api.telephony_routes import router as telephony_router
 from app.voice.voice_ws import router as voice_ws_router
+from app.api.onboard_routes import router as onboard_router
+from app.api.agent_routes import router as agent_router
+from app.api.calls_routes import router as calls_router
 
 app.include_router(knowledge_router)
 app.include_router(receptionist_router)
@@ -186,6 +198,9 @@ app.include_router(conversation_router)
 app.include_router(analytics_router)
 app.include_router(telephony_router)
 app.include_router(voice_ws_router)
+app.include_router(onboard_router)
+app.include_router(agent_router)
+app.include_router(calls_router)
 
 
 @app.get("/", tags=["Root"])

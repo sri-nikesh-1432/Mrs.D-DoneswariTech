@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     
     # AI / Groq
     GROQ_API_KEY: str = Field(default="", env="GROQ_API_KEY")
-    GROQ_MODEL: str = Field(default="llama-3.3-70b-versatile", env="GROQ_MODEL")
+    GROQ_MODEL: str = Field(default="llama-3.1-8b-instant", env="GROQ_MODEL")
     # Whisper model for the real-time VAD → MediaRecorder → STT pipeline.
     # whisper-large-v3-turbo auto-detects Telugu/Hindi/Tamil/Kannada/Malayalam
     # so ANY voice the VAD catches is transcribed in the right language.
@@ -38,10 +38,7 @@ class Settings(BaseSettings):
     # (Groq's free tier caps tokens per DAY per model — a 429 on one model
     # must not end the call; the next model keeps Mrs. D talking).
     GROQ_FALLBACK_MODELS: list = Field(
-        # Only models VALID on this tier (verified via models.list). A dead
-        # model in the chain would raise a 400 that kills the call — never
-        # worse than the 429 it exists to recover from.
-        default=["openai/gpt-oss-20b", "qwen/qwen3.6-27b"],
+        default=["llama-3.3-70b-versatile", "llama3-8b-8192", "gemma2-9b-it"],
         env="GROQ_FALLBACK_MODELS",
     )
     
