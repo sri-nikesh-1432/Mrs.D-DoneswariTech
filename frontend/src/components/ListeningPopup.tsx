@@ -1,45 +1,77 @@
 import React from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import VoiceWaveform from "./VoiceWaveform";
+import type { VoiceState } from "../types";
 
-interface Props {
-  amplitude?: number; // 0..1
-  lang?: string;
+interface ListeningPopupProps {
+  visible: boolean;
+  state: VoiceState;
+  amplitude?: number;
+  partialText?: string;
 }
 
-export default function ListeningPopup({ amplitude = 0, lang = "English" }: Props) {
-  const count = 12;
-  // Oscillate bars even without mic amplitude so the popup feels alive
-  const bars = React.useMemo(() => {
-    return Array.from({ length: count }, (_, i) => {
-      const phase = (i / count) * Math.PI * 2;
-      const base = 0.35 + 0.25 * Math.sin(phase + Date.now() / 400);
-      const amp = Math.min(1, Math.max(0.15, base + (amplitude || 0) * 0.4));
-      return amp;
-    });
-  }, [amplitude]);
+const STATE_LABEL: Partial<Record<VoiceState, string>> = {
+  listening:  "Listening...",
+  thinking:   "Thinking...",
+  speaking:   "Speaking...",
+  connecting: "Connecting...",
+  greeting:   "Greeting...",
+  calling:    "Calling...",
+  connected:  "Connected",
+};
 
-  const label = lang === "Telugu" ? "వింటోంది..." :
-                lang === "Hindi" ? "सुन रहा है..." :
-                lang === "Tamil" ? "கேட்கிறது..." :
-                lang === "Kannada" ? "ಕೇಳುತ್ತಿದೆ..." :
-                lang === "Malayalam" ? "കേൾക്കുന്നു..." :
-                "Listening...";
+export default function ListeningPopup({ visible, state, amplitude = 0, partialText }: ListeningPopupProps) {
+  const label = STATE_LABEL[state] ?? "Listening...";
+  const isListening = state === "listening";
 
   return (
-    <div className="fixed top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 pointer-events-none">
-      <div className="glass-card-static px-6 py-4 flex items-center gap-4 shadow-xl">
-        <div className="flex items-end gap-[3px] h-10 w-12">
-          {bars.map((h, i) => (
-            <div
-              key={i}
-              className="wave-bar ai"
-              style={{ height: `${Math.max(6, h * 36)}px` }}
-            />
-          ))}
-        </div>
-        <span className="text-sm font-medium text-neutral-700 bg-neutral-100 px-3 py-1 rounded-full">
-          {label}
-        </span>
-      </div>
-    </div>
+    <AnimatePresence>
+      {visible && (
+        <motion.div
+          initial={{ opacity: 0, y: 20, scale: 0.95 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 16, scale: 0.95 }}
+          transition={{ duration: 0.25, ease: "easeOut" }}
+          className="fixed bottom-32 left-1/2 -translate-x-1/2 z-50 pointer-events-none"
+          style={{ minWidth: 280 }}
+        >
+          <div
+            className="glass rounded-2xl px-6 pt-4 pb-3 shadow-lg flex flex-col items-center gap-2"
+            style={{
+              border: "1px solid rgba(186,230,253,0.7)",
+              background: "rgba(255,255,255,0.88)",
+            }}
+          >
+            {/* Status dot + label */}
+            <div className="flex items-center gap-2">
+              <motion.div
+                className="w-2.5 h-2.5 rounded-full bg-sky-400"
+                animate={{ opacity: [1, 0.3, 1], scale: [1, 1.3, 1] }}
+                transition={{ duration: 0.9, repeat: Infinity }}
+              />
+              <span className="text-sm font-semibold text-sky-600 tracking-wide">{label}</span>
+            </div>
+
+            {/* Waveform */}
+            <div className="w-full" style={{ height: 40 }}>
+              <VoiceWaveform
+                state={state}
+                amplitude={amplitude}
+                barCount={28}
+                color="#0ea5e9"
+                height={40}
+              />
+            </div>
+
+            {/* Partial transcript */}
+            {partialText && (
+              <p className="text-xs text-gray-500 text-center max-w-xs truncate">
+                {partialText}
+              </p>
+            )}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

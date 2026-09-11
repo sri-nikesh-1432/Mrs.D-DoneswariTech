@@ -1,75 +1,80 @@
 import React from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import Onboarding from "./pages/Onboarding";
 import Agent from "./pages/Agent";
 import Calls from "./pages/Calls";
 import Settings from "./pages/Settings";
 
-function App() {
+const PageWrap = ({ children }: { children: React.ReactNode }) => (
+  <motion.div
+    initial={{ opacity: 0 }}
+    animate={{ opacity: 1 }}
+    exit={{ opacity: 0 }}
+    transition={{ duration: 0.25 }}
+    className="h-screen w-full"
+  >
+    {children}
+  </motion.div>
+);
+
+export default function App() {
   const location = useLocation();
 
   return (
-    <div className="h-screen w-full relative overflow-hidden bg-neutral-50">
-      <AnimatePresence mode="wait">
-        <Routes location={location} key={location.pathname}>
-          <Route path="/" element={<Navigate to="/onboarding" replace />} />
-          <Route
-            path="/onboarding"
-            element={
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.3 }}
-              >
-                <Onboarding />
-              </motion.div>
-            }
-          />
-          <Route
-            path="/agent/:agentId"
-            element={
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.3 }}
-              >
-                <Agent />
-              </motion.div>
-            }
-          />
-          <Route
-            path="/calls"
-            element={
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.3 }}
-              >
-                <Calls />
-              </motion.div>
-            }
-          />
-          <Route
-            path="/settings"
-            element={
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.3 }}
-              >
-                <Settings />
-              </motion.div>
-            }
-          />
-        </Routes>
-      </AnimatePresence>
-    </div>
+    <AnimatePresence mode="wait">
+      <Routes location={location} key={location.pathname}>
+        {/* Default redirect */}
+        <Route path="/" element={<Navigate to="/onboarding" replace />} />
+
+        {/* Onboarding */}
+        <Route
+          path="/onboarding"
+          element={
+            <PageWrap>
+              <Onboarding />
+            </PageWrap>
+          }
+        />
+
+        {/* Main agent screen — primary experience */}
+        <Route
+          path="/agent/:agentId"
+          element={
+            <PageWrap>
+              <Agent />
+            </PageWrap>
+          }
+        />
+        {/* Fallback without ID */}
+        <Route
+          path="/agent"
+          element={<Navigate to="/agent/1" replace />}
+        />
+
+        {/* Calls & Leads */}
+        <Route
+          path="/calls"
+          element={
+            <PageWrap>
+              <Calls />
+            </PageWrap>
+          }
+        />
+
+        {/* Settings */}
+        <Route
+          path="/settings"
+          element={
+            <PageWrap>
+              <Settings />
+            </PageWrap>
+          }
+        />
+
+        {/* Catch-all */}
+        <Route path="*" element={<Navigate to="/onboarding" replace />} />
+      </Routes>
+    </AnimatePresence>
   );
 }
-
-export default App;

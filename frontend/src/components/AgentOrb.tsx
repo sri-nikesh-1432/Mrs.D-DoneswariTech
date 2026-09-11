@@ -1,113 +1,163 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
+import { motion } from "framer-motion";
+import type { VoiceState } from "../types";
 
-export type OrbState = "idle" | "connecting" | "listening" | "thinking" | "speaking" | "calling" | "connected" | "ended" | "error" | "greeting";
-
-interface Props {
-  state: OrbState;
+interface AgentOrbProps {
+  state: VoiceState;
+  amplitude?: number;  // 0..1 from mic analyser
+  size?: number;       // px, default 200
 }
 
-const STATE_LABELS: Record<OrbState, string> = {
-  idle: "Idle",
-  connecting: "Connecting...",
-  listening: "Listening...",
-  thinking: "Thinking...",
-  speaking: "Speaking",
-  calling: "Calling...",
-  connected: "Connected",
-  ended: "Call ended",
-  error: "Error",
-  greeting: "Greeting...",
+const STATE_COLORS: Record<VoiceState, { from: string; to: string; glow: string }> = {
+  idle:       { from: "#bae6fd", to: "#7dd3fc", glow: "rgba(125,211,252,0.3)" },
+  connecting: { from: "#7dd3fc", to: "#38bdf8", glow: "rgba(56,189,248,0.35)" },
+  listening:  { from: "#38bdf8", to: "#0ea5e9", glow: "rgba(14,165,233,0.5)" },
+  thinking:   { from: "#0ea5e9", to: "#0284c7", glow: "rgba(2,132,199,0.45)" },
+  speaking:   { from: "#0ea5e9", to: "#38bdf8", glow: "rgba(14,165,233,0.55)" },
+  calling:    { from: "#34d399", to: "#10b981", glow: "rgba(16,185,129,0.4)" },
+  connected:  { from: "#34d399", to: "#059669", glow: "rgba(5,150,105,0.4)" },
+  ended:      { from: "#94a3b8", to: "#64748b", glow: "rgba(100,116,139,0.3)" },
+  error:      { from: "#fca5a5", to: "#ef4444", glow: "rgba(239,68,68,0.35)" },
+  greeting:   { from: "#a5b4fc", to: "#6366f1", glow: "rgba(99,102,241,0.4)" },
 };
 
-export default function AgentOrb({ state }: Props) {
-  const cls = {
-    idle: "bg-gradient-to-br from-neutral-100 to-neutral-50 border-neutral-200",
-    connecting: "bg-gradient-to-br from-neutral-100 via-neutral-50 to-neutral-100 border-neutral-300",
-    listening: "bg-gradient-to-br from-neutral-100 via-neutral-50 to-neutral-100 border-neutral-400",
-    thinking: "bg-gradient-to-br from-neutral-100 via-neutral-50 to-neutral-100 border-neutral-300",
-    speaking: "bg-gradient-to-br from-neutral-100 via-neutral-50 to-neutral-100 border-neutral-500 shadow-neutral-200",
-    calling: "bg-gradient-to-br from-amber-100 to-orange-50 border-amber-400",
-    connected: "bg-gradient-to-br from-green-100 to-emerald-50 border-green-400",
-    ended: "bg-gradient-to-br from-gray-100 to-gray-50 border-gray-300",
-    error: "bg-gradient-to-br from-red-100 to-rose-50 border-red-300",
-  greeting: "bg-gradient-to-br from-neutral-100 to-neutral-50 border-neutral-300",
-  }[state];
+export default function AgentOrb({ state, amplitude = 0, size = 200 }: AgentOrbProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animRef = useRef<number>(0);
+  const phaseRef = useRef(0);
+
+  const colors = STATE_COLORS[state] ?? STATE_COLORS.idle;
+
+  // Draw organic blob waveform when speaking/listening
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rawCtx = canvas.getContext("2d");
+    if (!rawCtx) return;
+    const ctx: CanvasRenderingContext2D = rawCtx;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = size * dpr;
+    canvas.height = size * dpr;
+    canvas.style.width = `${size}px`;
+    canvas.style.height = `${size}px`;
+    ctx.scale(dpr, dpr);
+
+    const cx = size / 2;
+    const cy = size / 2;
+    const baseR = size * 0.38;
+
+    function draw() {
+      ctx.clearRect(0, 0, size, size);
+
+      const isActive = state === "listening" || state === "speaking";
+      const pts = 64;
+      const waveAmp = isActive ? baseR * 0.18 * (0.3 + amplitude * 0.7) : baseR * 0.04;
+      const freq = state === "listening" ? 5 : state === "speaking" ? 7 : 3;
+
+      phaseRef.current += state === "idle" ? 0.008 : state === "thinking" ? 0.04 : 0.03;
+      const phase = phaseRef.current;
+
+      // Build gradient
+      const grad = ctx.createRadialGradient(cx - size * 0.08, cy - size * 0.08, 0, cx, cy, size * 0.5);
+      grad.addColorStop(0, colors.from + "ff");
+      grad.addColorStop(0.6, colors.to + "ee");
+      grad.addColorStop(1,   colors.to + "44");
+
+      ctx.beginPath();
+      for (let i = 0; i <= pts; i++) {
+        const angle = (i / pts) * Math.PI * 2;
+        const noise1 = Math.sin(angle * freq + phase) * waveAmp;
+        const noise2 = Math.sin(angle * (freq + 2) + phase * 1.3) * waveAmp * 0.5;
+        const r = baseR + noise1 + noise2;
+        const x = cx + Math.cos(angle) * r;
+        const y = cy + Math.sin(angle) * r;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+
+      // Glow
+      ctx.shadowColor = colors.glow;
+      ctx.shadowBlur = state === "idle" ? 20 : 36;
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Inner highlight
+      const hl = ctx.createRadialGradient(cx - size * 0.1, cy - size * 0.1, 0, cx, cy, baseR * 0.6);
+      hl.addColorStop(0, "rgba(255,255,255,0.45)");
+      hl.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.beginPath();
+      ctx.arc(cx, cy, baseR * 0.95, 0, Math.PI * 2);
+      ctx.fillStyle = hl;
+      ctx.fill();
+
+      animRef.current = requestAnimationFrame(draw);
+    }
+
+    draw();
+    return () => cancelAnimationFrame(animRef.current);
+  }, [state, amplitude, size, colors]);
 
   return (
-    <div className="flex flex-col items-center gap-3 select-none">
-      <div className="relative w-48 h-48 sm:w-56 sm:h-56">
-        {/* Ripple rings */}
-        <div className={`absolute inset-0 rounded-full border-2 ${state === "calling" ? "border-amber-300 animate-ping opacity-30" : "border-transparent"} opacity-0 transition-opacity duration-500`} />
-        {/* Orb core */}
-        <div
-          className={`orb-core ${cls} transition-all duration-500 ease-out ${
-            state === "listening" ? "scale-105" : ""
-          } ${state === "speaking" ? "scale-110" : ""} ${
-            state === "thinking" ? "animate-pulse" : ""
-          }`}
-        >
-          {/* Inner icon */}
-          <div className="flex items-center justify-center w-full h-full">
-            {state === "idle" && (
-              <svg className="w-12 h-12 text-neutral-400/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            )}
-            {state === "listening" && (
-              <svg className="w-14 h-14 text-neutral-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round">
-                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
-                <path d="M12 19v2" strokeWidth={2} />
-              </svg>
-            )}
-            {state === "thinking" && (
-              <svg className="w-12 h-12 text-neutral-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 0 1-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 0 1 4.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3v5.714a2.25 2.25 0 0 1-.659 1.591L14.25 21" />
-              </svg>
-            )}
-            {state === "speaking" && (
-              <svg className="w-14 h-14 text-neutral-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round">
-                <path d="M12 1a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z" />
-                <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
-                <path d="M12 19v2" strokeWidth={2} />
-              </svg>
-            )}
-            {state === "calling" && (
-              <svg className="w-14 h-14 text-amber-500 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-              </svg>
-            )}
-            {state === "connected" && (
-              <svg className="w-14 h-14 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-              </svg>
-            )}
-            {state === "ended" && (
-              <svg className="w-12 h-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-              </svg>
-            )}
-          </div>
-        </div>
-        {/* Ambient glow based on state */}
-        <div className="absolute inset-0 rounded-full opacity-30 blur-xl" style={{
-          background: state === "speaking" ? "radial-gradient(circle, rgba(24,24,27,0.35), transparent 70%)" :
-                        state === "listening" ? "radial-gradient(circle, rgba(24,24,27,0.25), transparent 70%)" :
-                        state === "thinking" ? "radial-gradient(circle, rgba(24,24,27,0.25), transparent 70%)" :
-                        state === "calling" ? "radial-gradient(circle, rgba(217,119,6,0.25), transparent 70%)" :
-                        state === "connected" ? "radial-gradient(circle, rgba(22,163,74,0.25), transparent 70%)" :
-                        "radial-gradient(circle, rgba(24,24,27,0.12), transparent 70%)"
-        }} />
+    <motion.div
+      className="relative flex items-center justify-center"
+      style={{ width: size, height: size }}
+      animate={{
+        scale: state === "listening" ? [1, 1.04, 1] : state === "speaking" ? [1, 1.02, 1] : 1,
+      }}
+      transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+    >
+      {/* Outer pulse rings when calling/connecting */}
+      {(state === "calling" || state === "connecting") && (
+        <>
+          {[0, 0.5, 1].map((delay) => (
+            <motion.div
+              key={delay}
+              className="absolute rounded-full border"
+              style={{
+                width: size + 20,
+                height: size + 20,
+                borderColor: colors.to + "50",
+              }}
+              animate={{ scale: [1, 1.6], opacity: [0.6, 0] }}
+              transition={{ duration: 1.8, repeat: Infinity, delay, ease: "easeOut" }}
+            />
+          ))}
+        </>
+      )}
+
+      {/* Thinking ring spinner */}
+      {state === "thinking" && (
+        <motion.div
+          className="absolute rounded-full"
+          style={{
+            width: size + 12,
+            height: size + 12,
+            background: `conic-gradient(${colors.from}, ${colors.to}, transparent)`,
+          }}
+          animate={{ rotate: 360 }}
+          transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+        />
+      )}
+
+      {/* Canvas orb */}
+      <canvas ref={canvasRef} className="rounded-full relative z-10" />
+
+      {/* Mrs.D initial / status icon at center */}
+      <div
+        className="absolute z-20 select-none font-bold text-white/90 tracking-wider"
+        style={{ fontSize: size * 0.22, textShadow: "0 2px 8px rgba(0,0,0,0.2)" }}
+      >
+        {state === "thinking" ? (
+          <motion.span animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 0.8, repeat: Infinity }}>
+            ···
+          </motion.span>
+        ) : (
+          "M"
+        )}
       </div>
-      <span className={`text-sm font-medium text-neutral-700 ${
-        state === "speaking" ? "text-neutral-600" :
-        state === "listening" ? "text-neutral-500" :
-        state === "thinking" ? "text-neutral-500" :
-        state === "calling" ? "text-amber-600" :
-        state === "connected" ? "text-green-600" : ""
-      }`}>
-        {STATE_LABELS[state]}
-      </span>
-    </div>
+    </motion.div>
   );
 }

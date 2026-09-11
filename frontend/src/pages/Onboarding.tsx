@@ -1,242 +1,423 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { onboard } from "../services/api";
+import { Upload, FileText, X, Check, ChevronRight, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { onboard } from "../services/api";
 
-const STEPS = [
-  { key: "reading", label: "Reading your document..." },
+// ─── Training steps (user-friendly labels only) ─────────────────
+const TRAINING_STEPS = [
+  { key: "reading",     label: "Reading your document..."      },
   { key: "understanding", label: "Understanding your information..." },
-  { key: "organizing", label: "Organizing knowledge..." },
-  { key: "building", label: "Building your AI agent..." },
-  { key: "preparing", label: "Preparing voice conversations..." },
-  { key: "ready", label: "Your AI agent is ready." },
+  { key: "organizing", label: "Organizing knowledge..."        },
+  { key: "building",   label: "Building your AI agent..."      },
+  { key: "preparing",  label: "Preparing voice conversations..." },
+  { key: "ready",      label: "Your AI agent is ready! 🎉"     },
 ];
 
 export default function Onboarding() {
   const navigate = useNavigate();
+
+  // ─── Form state ────────────────────────────────────────────────
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [agentName, setAgentName] = useState("Mrs.D");
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [agentCreated, setAgentCreated] = useState(false);
-  const [trainingStep, setTrainingStep] = useState(0);
+
+  // ─── Process state ─────────────────────────────────────────────
+  const [phase, setPhase] = useState<"form" | "uploading" | "training" | "done">("form");
+  const [uploadPct, setUploadPct] = useState(0);
+  const [trainStep, setTrainStep] = useState(0);
   const [error, setError] = useState("");
+  const [agentId, setAgentId] = useState<string | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const trainingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const trainTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const kickoff = () => {
+  // ─── File handling ─────────────────────────────────────────────
+  const handleFile = (f: File) => {
+    if (f.type !== "application/pdf") { setError("Please upload a PDF file."); return; }
+    if (f.size > 20 * 1024 * 1024) { setError("File must be under 20 MB."); return; }
+    setFile(f);
     setError("");
-    setTrainingStep(0);
-    setAgentCreated(false);
-    if (trainingRef.current) clearInterval(trainingRef.current);
-    trainingRef.current = setInterval(() => {
-      setTrainingStep((s) => {
-        if (s >= STEPS.length - 1) {
-          if (trainingRef.current) clearInterval(trainingRef.current);
-          return s;
-        }
-        return s + 1;
-      });
-    }, 1100);
   };
 
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const f = e.dataTransfer.files[0];
+    if (f) handleFile(f);
+  }, []);
+
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setDragging(true); };
+  const handleDragLeave = () => setDragging(false);
+
+  // ─── Submit ────────────────────────────────────────────────────
   const handleCreate = async () => {
-    if (!name.trim() || !phone.trim() || !agentName.trim() || !file) {
-      setError("Please fill in all fields and upload a PDF.");
-      return;
-    }
-    setUploading(true);
+    if (!name.trim())       { setError("Please enter your name."); return; }
+    if (!phone.trim())      { setError("Please enter your phone number."); return; }
+    if (!agentName.trim())  { setError("Please enter an agent name."); return; }
+    if (!file)              { setError("Please upload a PDF knowledge base."); return; }
+
+    setError("");
+    setPhase("uploading");
+    setUploadPct(0);
+
     try {
-      // 1. Create institute + 2. upload/process PDF in one shot.
       const result = await onboard(
-        {
-          name: name.trim(),
-          phone_number: phone.trim(),
-          language: "en",
-          voice: "en-IN-NeerjaNeural",
-        },
-        file
+        { name: name.trim(), phone_number: phone.trim(), agent_name: agentName.trim(), language: "en" },
+        file,
+        (pct) => setUploadPct(pct)
       );
-      setUploading(false);
-      kickoff();
-      // After training animation completes, route to the Agent page with the
-      // real institute_id so the WS connects to the correct tenant.
-      setAgentCreated(true);
-      // Store the route target so "Open Mrs.D" navigates with the real id.
-      sessionStorage.setItem("mrsd_onboarding_institute_id", result.institute_id);
-    } catch (e: any) {
-      setUploading(false);
-      setError(e?.message || "Something went wrong. Try again.");
+
+      // Store agent id for navigation
+      const id = String(result.id ?? result.agent_name ?? "1");
+      setAgentId(id);
+
+      // Transition to animated training steps
+      setPhase("training");
+      setTrainStep(0);
+      let step = 0;
+      trainTimerRef.current = setInterval(() => {
+        step += 1;
+        setTrainStep(step);
+        if (step >= TRAINING_STEPS.length - 1) {
+          clearInterval(trainTimerRef.current!);
+          setPhase("done");
+        }
+      }, 1200);
+    } catch (err: unknown) {
+      setPhase("form");
+      const msg = (err as { response?: { data?: { detail?: string } }; message?: string })
+        ?.response?.data?.detail ?? (err as { message?: string })?.message ?? "Something went wrong.";
+      setError(msg);
     }
   };
 
-  const fileName = file ? `${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)` : null;
+  const goToAgent = () => {
+    navigate(`/agent/${agentId ?? "1"}`);
+  };
+
+  // ─── Render helpers ────────────────────────────────────────────
+  const isTraining = phase === "training" || phase === "uploading";
+  const isDone = phase === "done";
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-neutral-50 via-white to-neutral-100 px-6 py-10 flex flex-col items-center justify-center">
-      <div className="w-full max-w-xl">
-        {/* Logo */}
-        <div className="flex items-center gap-3 mb-2">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-neutral-800 to-neutral-900 flex items-center justify-center shadow-md">
-            <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <span className="text-2xl font-display text-neutral-900 tracking-tight">Mrs.D</span>
-        </div>
-        <p className="text-sm text-neutral-600 font-medium mb-8">AI Voice Receptionist</p>
+    <div
+      className="min-h-screen flex items-center justify-center relative overflow-hidden"
+      style={{ background: "linear-gradient(160deg, #f0f9ff 0%, #e0f2fe 50%, #f0f9ff 100%)" }}
+    >
+      {/* Background decoration */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute -top-32 -left-32 w-96 h-96 rounded-full opacity-20"
+          style={{ background: "radial-gradient(circle, #7dd3fc, transparent)" }} />
+        <div className="absolute -bottom-32 -right-32 w-96 h-96 rounded-full opacity-20"
+          style={{ background: "radial-gradient(circle, #38bdf8, transparent)" }} />
+        <div className="absolute top-1/3 right-1/4 w-64 h-64 rounded-full opacity-10"
+          style={{ background: "radial-gradient(circle, #0ea5e9, transparent)" }} />
+      </div>
 
-        <AnimatePresence mode="wait">
-          {!agentCreated ? (
-            <motion.div
-              key="form"
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              className="glass-card p-8 space-y-6"
-            >
-              <div>
-                <h1 className="text-3xl font-display text-neutral-900">Create your AI calling agent</h1>
-                <p className="text-sm text-neutral-600 mt-2">Train your AI agent with your own business knowledge and let it handle calls like a real counsellor.</p>
+      <AnimatePresence mode="wait">
+        {/* ── FORM ─────────────────────────────────────────────────── */}
+        {phase === "form" && (
+          <motion.div
+            key="form"
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4 }}
+            className="w-full max-w-md mx-4"
+          >
+            {/* Header */}
+            <div className="text-center mb-8">
+              {/* Logo */}
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4 shadow-md"
+                style={{ background: "linear-gradient(135deg, #38bdf8, #0284c7)" }}>
+                <span className="text-white font-bold text-2xl">M</span>
               </div>
+              <h1 className="text-2xl font-bold text-gray-800 mb-1">Create your AI Calling Agent</h1>
+              <p className="text-sm text-gray-500 max-w-xs mx-auto">
+                Train your AI agent with your business knowledge and let it handle calls like a real counsellor.
+              </p>
+            </div>
 
-              {error && <div className="bg-red-50 text-red-700 text-sm px-4 py-3 rounded-xl border border-red-200">{error}</div>}
+            {/* Card */}
+            <div
+              className="rounded-3xl p-6 shadow-lg"
+              style={{
+                background: "rgba(255,255,255,0.85)",
+                backdropFilter: "blur(24px)",
+                border: "1px solid rgba(186,230,253,0.6)",
+              }}
+            >
+              <div className="space-y-4">
+                {/* Name */}
+                <InputField
+                  label="Your Name"
+                  type="text"
+                  placeholder="e.g. Priya Sharma"
+                  value={name}
+                  onChange={setName}
+                />
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="sm:col-span-2">
-                  <label className="text-sm font-medium text-neutral-800 mb-1.5 block">Your Name</label>
-                  <input
-                    className="glass-input"
-                    placeholder="e.g. Mr. Sharma"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="text-sm font-medium text-neutral-800 mb-1.5 block">Phone Number</label>
-                  <input
-                    className="glass-input"
-                    type="tel"
-                    placeholder="+91 98765 43210"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="text-sm font-medium text-neutral-800 mb-1.5 block">Agent Name</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      className="glass-input"
-                      placeholder="e.g. Mrs.D"
-                      value={agentName}
-                      onChange={(e) => setAgentName(e.target.value)}
-                    />
-                    <span className="text-xs text-neutral-500">It's permanently associated with your account.</span>
-                  </div>
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="text-sm font-medium text-neutral-800 mb-1.5 block">Knowledge Base</label>
+                {/* Phone */}
+                <InputField
+                  label="Phone Number"
+                  type="tel"
+                  placeholder="+91 98765 43210"
+                  value={phone}
+                  onChange={setPhone}
+                />
+
+                {/* Agent Name */}
+                <InputField
+                  label="Agent Name"
+                  type="text"
+                  placeholder="e.g. Mrs.D"
+                  value={agentName}
+                  onChange={setAgentName}
+                  hint="This will be your AI agent's identity"
+                />
+
+                {/* PDF Upload */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">
+                    Knowledge Base (PDF)
+                  </label>
                   <div
-                    className={`drop-zone ${dragging ? "border-neutral-500 bg-neutral-50" : ""}`}
-                    onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-                    onDragLeave={() => setDragging(false)}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      setDragging(false);
-                      const f = e.dataTransfer.files[0];
-                      if (f && f.type === "application/pdf") setFile(f);
-                    }}
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={() => !file && fileInputRef.current?.click()}
+                    onDrop={handleDrop}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    className={`
+                      relative rounded-2xl border-2 border-dashed transition-all duration-200 cursor-pointer
+                      ${dragging ? "border-sky-400 bg-sky-50" : file ? "border-sky-300 bg-sky-50/50" : "border-sky-200 hover:border-sky-300 hover:bg-sky-50/50"}
+                    `}
+                    style={{ minHeight: 120 }}
                   >
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept=".pdf"
-                      className="hidden"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f && f.type === "application/pdf") setFile(f);
-                      }}
-                    />
-                    {fileName ? (
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium text-neutral-800 truncate max-w-full">{fileName}</p>
+                    {file ? (
+                      <div className="p-4 flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-sky-100 flex items-center justify-center flex-shrink-0">
+                          <FileText size={18} className="text-sky-500" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-700 truncate">{file.name}</p>
+                          <p className="text-xs text-gray-400">{(file.size / 1024).toFixed(0)} KB</p>
+                        </div>
                         <button
-                          type="button"
-                          className="text-xs text-neutral-500 hover:text-neutral-700 underline"
                           onClick={(e) => { e.stopPropagation(); setFile(null); }}
+                          className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center hover:bg-red-50 hover:text-red-500 transition-colors"
                         >
-                          Remove
+                          <X size={12} />
                         </button>
                       </div>
                     ) : (
-                      <div>
-                        <p className="text-sm text-neutral-600">Upload your institution or business information</p>
-                        <p className="text-xs text-neutral-400 mt-1 font-medium">PDF</p>
+                      <div className="flex flex-col items-center justify-center py-8 gap-2 select-none">
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${dragging ? "bg-sky-200" : "bg-sky-100"}`}>
+                          <Upload size={18} className="text-sky-500" />
+                        </div>
+                        <div className="text-center">
+                          <p className="text-sm font-medium text-gray-600">
+                            {dragging ? "Drop it here!" : "Drag & drop or click to upload"}
+                          </p>
+                          <p className="text-xs text-gray-400">PDF only · Max 20 MB</p>
+                        </div>
                       </div>
                     )}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".pdf,application/pdf"
+                      className="hidden"
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+                    />
                   </div>
                 </div>
-              </div>
 
-              <button
-                className="btn-glow w-full text-base"
-                onClick={handleCreate}
-                disabled={uploading}
-              >
-                {uploading ? "Creating agent…" : "Create My AI Agent"}
-              </button>
-            </motion.div>
-          ) : (
-            <motion.div
-              key="training"
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              className="glass-card p-10 text-center"
-            >
-              <div className="w-20 h-20 rounded-full bg-neutral-100 mx-auto mb-5 flex items-center justify-center">
-                <div className="w-10 h-10 rounded-full border-2 border-neutral-400 border-t-transparent animate-spin" />
-              </div>
-              <h2 className="text-2xl font-display text-neutral-900">{STEPS[trainingStep].label}</h2>
-              <div className="mt-6 space-y-2">
-                {STEPS.map((s, i) => (
-                  <div
-                    key={s.key}
-                    className={`step-item flex items-center gap-2 text-sm ${i === trainingStep ? "text-neutral-800 font-medium" : "text-neutral-400"}`}
+                {/* Error */}
+                {error && (
+                  <motion.p
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="text-xs text-red-500 text-center"
                   >
-                    <div className={`w-5 h-5 rounded-full flex-shrink-0 ${i === trainingStep ? "bg-neutral-500" : "bg-neutral-100"}`} />
-                    {s.label}
-                  </div>
-                ))}
-              </div>
-              {trainingStep === STEPS.length - 1 && (
-                <motion.div
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="mt-6"
+                    {error}
+                  </motion.p>
+                )}
+
+                {/* Submit */}
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={handleCreate}
+                  className="w-full h-12 rounded-2xl text-white font-semibold text-sm flex items-center justify-center gap-2 transition-shadow shadow-md hover:shadow-lg"
+                  style={{ background: "linear-gradient(135deg, #38bdf8, #0284c7)" }}
                 >
-                  <button
-                    className="btn-glow px-8 py-3"
-                    onClick={() => {
-                      const id = sessionStorage.getItem("mrsd_onboarding_institute_id") || "1";
-                      setAgentCreated(false);
-                      setTrainingStep(0);
-                      sessionStorage.removeItem("mrsd_onboarding_institute_id");
-                      navigate(`/agent/${id}`);
-                    }}
+                  Create My AI Agent
+                  <ChevronRight size={16} />
+                </motion.button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* ── UPLOADING ────────────────────────────────────────────── */}
+        {phase === "uploading" && (
+          <motion.div
+            key="uploading"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="text-center px-4"
+          >
+            <div className="w-20 h-20 rounded-3xl mx-auto mb-6 flex items-center justify-center shadow-lg"
+              style={{ background: "linear-gradient(135deg, #38bdf8, #0284c7)" }}>
+              <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.2, repeat: Infinity, ease: "linear" }}>
+                <Loader2 size={32} className="text-white" />
+              </motion.div>
+            </div>
+            <h2 className="text-xl font-bold text-gray-800 mb-2">Uploading your document...</h2>
+            <div className="w-64 h-2 bg-sky-100 rounded-full mx-auto overflow-hidden">
+              <motion.div
+                className="h-full bg-sky-400 rounded-full"
+                initial={{ width: 0 }}
+                animate={{ width: `${uploadPct}%` }}
+                transition={{ duration: 0.3 }}
+              />
+            </div>
+            <p className="text-xs text-gray-400 mt-2">{uploadPct}%</p>
+          </motion.div>
+        )}
+
+        {/* ── TRAINING ─────────────────────────────────────────────── */}
+        {phase === "training" && (
+          <motion.div
+            key="training"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="text-center px-4 max-w-sm w-full"
+          >
+            {/* Animated orb */}
+            <div className="relative w-28 h-28 mx-auto mb-8">
+              {[0, 0.4, 0.8].map((delay) => (
+                <motion.div
+                  key={delay}
+                  className="absolute inset-0 rounded-full"
+                  style={{ border: "2px solid rgba(56,189,248,0.4)" }}
+                  animate={{ scale: [1, 1.8], opacity: [0.6, 0] }}
+                  transition={{ duration: 2, repeat: Infinity, delay, ease: "easeOut" }}
+                />
+              ))}
+              <div className="absolute inset-0 rounded-full flex items-center justify-center shadow-lg"
+                style={{ background: "linear-gradient(135deg, #38bdf8, #0284c7)" }}>
+                <span className="text-white font-bold text-3xl">M</span>
+              </div>
+            </div>
+
+            <h2 className="text-xl font-bold text-gray-800 mb-6">Building your AI agent</h2>
+
+            {/* Steps */}
+            <div className="space-y-2 text-left">
+              {TRAINING_STEPS.map((step, idx) => {
+                const done = idx < trainStep;
+                const active = idx === trainStep;
+                return (
+                  <motion.div
+                    key={step.key}
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: idx <= trainStep ? 1 : 0.3, x: 0 }}
+                    transition={{ delay: idx * 0.05 }}
+                    className="flex items-center gap-3 px-4 py-2.5 rounded-xl"
+                    style={{ background: active ? "rgba(224,242,254,0.8)" : "transparent" }}
                   >
-                    Open Mrs.D
-                  </button>
-                </motion.div>
-              )}
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-xs
+                      ${done ? "bg-emerald-400" : active ? "bg-sky-400" : "bg-gray-200"}`}>
+                      {done
+                        ? <Check size={11} className="text-white" />
+                        : active
+                        ? <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}>
+                            <Loader2 size={11} className="text-white" />
+                          </motion.div>
+                        : <span className="text-gray-400">·</span>
+                      }
+                    </div>
+                    <span className={`text-sm ${active ? "text-sky-700 font-semibold" : done ? "text-gray-400" : "text-gray-300"}`}>
+                      {step.label}
+                    </span>
+                  </motion.div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+
+        {/* ── DONE ─────────────────────────────────────────────────── */}
+        {isDone && (
+          <motion.div
+            key="done"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="text-center px-4"
+          >
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ type: "spring", stiffness: 280, damping: 18 }}
+              className="w-24 h-24 rounded-3xl mx-auto mb-6 flex items-center justify-center shadow-xl"
+              style={{ background: "linear-gradient(135deg, #34d399, #059669)" }}
+            >
+              <Check size={40} className="text-white" strokeWidth={3} />
             </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">
+              {agentName} is ready! 🎉
+            </h2>
+            <p className="text-sm text-gray-500 mb-8 max-w-xs mx-auto">
+              Your AI agent has been trained on your knowledge base. Start testing it now.
+            </p>
+
+            <motion.button
+              whileHover={{ scale: 1.04 }}
+              whileTap={{ scale: 0.97 }}
+              onClick={goToAgent}
+              className="px-8 py-3.5 rounded-2xl text-white font-semibold text-sm shadow-lg flex items-center gap-2 mx-auto"
+              style={{ background: "linear-gradient(135deg, #38bdf8, #0284c7)" }}
+            >
+              Open {agentName}
+              <ChevronRight size={16} />
+            </motion.button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ─── Reusable input field ──────────────────────────────────────────
+function InputField({
+  label, type, placeholder, value, onChange, hint,
+}: {
+  label: string; type: string; placeholder: string;
+  value: string; onChange: (v: string) => void; hint?: string;
+}) {
+  return (
+    <div>
+      <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">
+        {label}
+      </label>
+      <input
+        type={type}
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="
+          w-full h-11 px-4 rounded-xl text-sm text-gray-700 placeholder-gray-400 outline-none
+          border border-sky-200 bg-white/80 transition-all
+          focus:border-sky-400 focus:ring-2 focus:ring-sky-100
+        "
+      />
+      {hint && <p className="text-[10px] text-gray-400 mt-1 ml-1">{hint}</p>}
     </div>
   );
 }

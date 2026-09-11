@@ -1,217 +1,142 @@
-const BASE_URL = "/api";
+import axios from "axios";
+import type {
+  OnboardPayload,
+  AgentProfile,
+  CallRecord,
+  CallStats,
+  AgentSettings,
+  TrainingJob,
+  AnalyticPoint,
+} from "../types";
 
-async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE_URL}${url}`, {
-    headers: { "Content-Type": "application/json", ...options?.headers },
-    ...options,
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || `HTTP ${res.status}`);
-  }
-  return res.json();
-}
+const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
-// ── Health ─────────────────────────────────────────────────────
-export async function healthCheck() {
-  return request<{ status: string; version: string }>("/");
-}
+const api = axios.create({ baseURL: BASE, timeout: 30_000 });
 
-// ── Knowledge ───────────────────────────────────────────────────
-export async function uploadKnowledge(file: File, instituteId?: number): Promise<{
-  message: string;
-  knowledge_id: number;
-  institute_id: number;
-  institute_name: string;
-  status: string;
-}> {
-  const form = new FormData();
-  form.append("file", file);
-  if (instituteId) {
-    form.append("institute_id", instituteId.toString());
-  }
-  const res = await fetch(`${BASE_URL}/knowledge/upload`, {
-    method: "POST",
-    body: form,
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Upload failed");
-  }
-  return res.json();
-}
-
-export async function getKnowledgeStatus(instituteId: number) {
-  return request<{
-    institute_id: number;
-    status: string;
-    knowledge_id?: number;
-    document_name?: string;
-    chunks_count?: number;
-    error_message?: string;
-  }>(`/knowledge/status/${instituteId}`);
-}
-
-// ── Receptionist (Institute, Calls, Analytics) ─────────────────
-export async function createInstitute(data: {
-  name: string;
-  phone_number: string;
-  language?: string;
-  voice?: string;
-  greeting_message?: string;
-}) {
-  return request<{
-    institute_id: string;
-    id: number;
-    name: string;
-    phone_number: string;
-    status: string;
-  }>("/receptionist/institute", {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
-}
-
-/**
- * Initiate a complete onboarding flow: create institute, upload PDF, wait for
- * knowledge to become READY, then return the real institute_id so the Agent
- * page can connect to the correct tenant. The PDF processing is synchronous
- * in the current backend, so this returns once the knowledge is marked READY.
- */
+// ─── Onboarding ───────────────────────────────────────────────────
 export async function onboard(
-  profile: { name: string; phone_number: string; language?: string; voice?: string },
-  file: File
-): Promise<{
-  institute_id: string;
-  institute_name: string;
-  knowledge_id: number;
-  status: string;
-}> {
-  // 1. Create institute.
-  const institute = await createInstitute({
-    name: profile.name,
-    phone_number: profile.phone_number,
-    language: profile.language || "en",
-    voice: profile.voice || "en-IN-NeerjaNeural",
+  payload: OnboardPayload,
+  pdfFile: File,
+  onUploadProgress?: (pct: number) => void
+): Promise<AgentProfile> {
+  const fd = new FormData();
+  fd.append("name", payload.name);
+  fd.append("phone_number", payload.phone_number);
+  fd.append("agent_name", payload.agent_name);
+  fd.append("language", payload.language ?? "en");
+  fd.append("voice", payload.voice ?? "en-IN-NeerjaNeural");
+  fd.append("file", pdfFile);
+
+  const res = await api.post<AgentProfile>("/api/onboard", fd, {
+    headers: { "Content-Type": "multipart/form-data" },
+    onUploadProgress: (e) => {
+      if (onUploadProgress && e.total) {
+        onUploadProgress(Math.round((e.loaded * 100) / e.total));
+      }
+    },
   });
-
-  // 2. Upload + process the PDF. The backend processes synchronously and
-  //    returns once the knowledge row is READY.
-  const knowledge = await uploadKnowledge(file, institute.id);
-
-  return {
-    institute_id: institute.institute_id,
-    institute_name: knowledge.institute_name,
-    knowledge_id: knowledge.knowledge_id,
-    status: knowledge.status,
-  };
+  return res.data;
 }
 
-export async function getInstitute(instituteId: string) {
-  return request<any>(`/receptionist/institute/${instituteId}`);
+// ─── Training Status Polling ──────────────────────────────────────
+export async function getTrainingStatus(instituteId: string | number): Promise<TrainingJob> {
+  const res = await api.get<TrainingJob>(`/api/knowledge/status/${instituteId}`);
+  return res.data;
 }
 
-export async function getInstituteStatus(instituteId: string) {
-  return request<any>(`/receptionist/institute/${instituteId}/status`);
+// ─── Institute / Agent ────────────────────────────────────────────
+export async function getInstitute(instituteId: string | number): Promise<AgentProfile> {
+  const res = await api.get<AgentProfile>(`/api/knowledge/status/${instituteId}`);
+  // Fallback: try the receptionist route shape
+  return res.data;
 }
 
-export async function getCallHistory(instituteId: string, limit: number = 50, offset: number = 0) {
-  return request<any>(`/receptionist/institute/${instituteId}/calls?limit=${limit}&offset=${offset}`);
+export async function publishAgent(instituteId: string | number): Promise<{ version: string }> {
+  const res = await api.post<{ version: string }>(`/api/agents/${instituteId}/publish`);
+  return res.data;
 }
 
-export async function getCallDetails(callId: string) {
-  return request<any>(`/receptionist/call/${callId}`);
+export async function getAgentSettings(instituteId: string | number): Promise<AgentSettings> {
+  const res = await api.get<AgentSettings>(`/api/agents/${instituteId}/settings`);
+  return res.data;
 }
 
-export async function getSimulatorCalls(instituteId: number) {
-  return request<{ calls: any[] }>(`/conversation/calls/${instituteId}`);
+export async function updateAgentSettings(
+  instituteId: string | number,
+  settings: Partial<AgentSettings>
+): Promise<AgentSettings> {
+  const res = await api.patch<AgentSettings>(`/api/agents/${instituteId}/settings`, settings);
+  return res.data;
 }
 
-export async function saveSimulatorCall(data: {
-  call_id: string;
-  institute_id: number;
-  duration: number;
-  language: string;
-  status: string;
-  transcript: Array<{ speaker: string; text: string }>;
-}) {
-  const qs = new URLSearchParams({
-    call_id: data.call_id,
-    institute_id: String(data.institute_id),
-    duration: String(data.duration),
-    language: data.language,
-    status: data.status,
+export async function uploadNewKnowledge(
+  instituteId: string | number,
+  pdfFile: File,
+  onUploadProgress?: (pct: number) => void
+): Promise<TrainingJob> {
+  const fd = new FormData();
+  fd.append("file", pdfFile);
+
+  const res = await api.post<TrainingJob>(`/api/knowledge/upload/${instituteId}`, fd, {
+    headers: { "Content-Type": "multipart/form-data" },
+    onUploadProgress: (e) => {
+      if (onUploadProgress && e.total) {
+        onUploadProgress(Math.round((e.loaded * 100) / e.total));
+      }
+    },
   });
-  const res = await fetch(`${BASE_URL}/conversation/calls/save?${qs}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ transcript: data.transcript }),
+  return res.data;
+}
+
+// ─── Calls ────────────────────────────────────────────────────────
+export async function getCalls(instituteId: string | number): Promise<CallRecord[]> {
+  const res = await api.get<CallRecord[]>(`/api/calls?institute_id=${instituteId}`);
+  return res.data;
+}
+
+export async function getCallStats(instituteId: string | number): Promise<CallStats> {
+  const res = await api.get<CallStats>(`/api/analytics/stats?institute_id=${instituteId}`);
+  return res.data;
+}
+
+export async function getCallDetail(callId: string | number): Promise<CallRecord> {
+  const res = await api.get<CallRecord>(`/api/calls/${callId}`);
+  return res.data;
+}
+
+export async function getCallReport(callId: string | number): Promise<CallRecord> {
+  const res = await api.get<CallRecord>(`/api/calls/${callId}/report`);
+  return res.data;
+}
+
+// ─── Analytics ────────────────────────────────────────────────────
+export async function getAnalytics(instituteId: string | number): Promise<AnalyticPoint[]> {
+  const res = await api.get<AnalyticPoint[]>(`/api/analytics/trend?institute_id=${instituteId}`);
+  return res.data;
+}
+
+// ─── Test Call (outbound) ─────────────────────────────────────────
+export async function initiateTestCall(
+  instituteId: string | number,
+  phoneNumber: string
+): Promise<{ call_id: string; status: string }> {
+  const res = await api.post<{ call_id: string; status: string }>("/api/calls/outbound", {
+    institute_id: instituteId,
+    phone_number: phoneNumber,
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Failed to save call");
-  }
-  return res.json();
+  return res.data;
 }
 
-export async function getAnalytics(instituteId: string) {
-  return request<any>(`/receptionist/institute/${instituteId}/analytics`);
-}
-
-export async function getLiveStatus(instituteId: string) {
-  return request<any>(`/receptionist/institute/${instituteId}/live-status`);
-}
-
-// ── Telephony (spec §58 §59) ───────────────────────────────────────────────
-export async function initiateOutboundCall(
-  phoneNumber: string,
-  instituteId: number
-): Promise<{
-  call_sid: string;
-  to: string;
-  from: string;
-  status: string;
-  institute_id: number;
-  institute_name: string;
-  started_at: string;
-}> {
-  const form = new FormData();
-  form.append("phone_number", phoneNumber);
-  form.append("institute_id", String(instituteId));
-  const res = await fetch("/api/telephony/outbound", {
-    method: "POST",
-    body: form,
+// ─── Text chat (fallback to REST) ────────────────────────────────
+export async function sendTextMessage(
+  instituteId: string | number,
+  message: string,
+  sessionId?: string
+): Promise<{ response: string; memory?: Record<string, string> }> {
+  const res = await api.post(`/api/chat`, {
+    institute_id: instituteId,
+    message,
+    session_id: sessionId,
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Outbound call failed.");
-  }
-  return res.json();
-}
-
-export async function getCallStatus(callSid: string): Promise<any> {
-  const res = await fetch(`/api/receptionist/call/${callSid}`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Call not found.");
-  }
-  return res.json();
-}
-
-export async function getCallWithReport(callId: string): Promise<any> {
-  const res = await fetch(`/api/telephony/calls/${callId}`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Call not found.");
-  }
-  return res.json();
-}
-
-export async function listCalls(instituteId: number, limit = 50): Promise<any> {
-  const res = await fetch(`/api/receptionist/institute/${instituteId}/calls?limit=${limit}`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Failed to load calls.");
-  }
-  return res.json();
+  return res.data;
 }
