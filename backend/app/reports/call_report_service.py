@@ -78,11 +78,31 @@ def _lead_intent_from_transcript(transcript: str) -> str:
 
 
 def _questions_from_transcript(transcript: str) -> list[str]:
-    """Extract distinct questions asked by the caller (heuristic)."""
+    """Extract distinct questions asked by the CALLER (heuristic).
+
+    The transcript is line-formatted as ``[user] ...`` / ``[assistant] ...``;
+    only caller lines count as questions (the agent's own prompts are not
+    caller questions), and role tags are stripped so summaries stay clean.
+    """
     if not transcript:
         return []
+    caller_lines: list[str] = []
+    for line in transcript.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.lower().startswith("[user]"):
+            caller_lines.append(stripped[6:].strip())
+        elif not stripped.startswith("["):
+            # Unstructured transcript: keep the line as-is.
+            caller_lines.append(stripped)
     # A question mark usually = a caller question in an admissions call.
-    questions = [q.strip() for q in transcript.split("?") if q.strip()]
+    questions: list[str] = []
+    for line in caller_lines:
+        for q in line.split("?"):
+            q = q.strip()
+            if q:
+                questions.append(q + "?")
     # Deduplicate by lower-case normalized form.
     seen: set[str] = set()
     out: list[str] = []
@@ -94,7 +114,7 @@ def _questions_from_transcript(transcript: str) -> list[str]:
         out.append(q)
         if len(out) >= 12:
             break
-    return out or []
+    return out
 
 
 def _extract_lead_fields(

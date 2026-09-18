@@ -90,11 +90,32 @@ class RawSSMLSynth:
         )
 
     # -- frame reader ------------------------------------------------------
+    # A silently-dead (half-open) websocket blocks the frame iterator forever
+    # — that hung every greeting/turn until the service restarted. Every
+    # network read below runs under a hard timeout so a stale connection
+    # raises instead of stalling a live call.
+    RECV_TIMEOUT = 15.0   # per-frame ceiling (frames normally arrive <1s apart)
+    TURN_TIMEOUT = 30.0   # whole-synthesis ceiling
+
     async def _receive_audio(self) -> bytes:
         """Read frames until turn.end; return concatenated MP3 audio bytes."""
         audio = bytearray()
         audio_was_received = False
-        async for received in self._ws:  # type: ignore[union-attr]
+
+        async def _next_frame():
+            # aiohttp's async iterator has no per-recv timeout of its own.
+            # StopAsyncIteration (stream closed) is normalized to None so the
+            # "No audio received" contract below still holds.
+            anext_fn = self._ws.__anext__
+            try:
+                return await asyncio.wait_for(anext_fn(), timeout=self.RECV_TIMEOUT)
+            except StopAsyncIteration:
+                return None
+
+        while True:
+            received = await _next_frame()
+            if received is None:
+                break
             if received.type == aiohttp.WSMsgType.TEXT:
                 encoded = received.data.encode("utf-8")
                 parameters, _ = get_headers_and_data(
@@ -129,7 +150,6 @@ class RawSSMLSynth:
         if not audio_was_received:
             raise RuntimeError("No audio received")
         return bytes(audio)
-
     # -- public API --------------------------------------------------------
     async def synthesize(self, ssml: str) -> bytes:
         """Send one raw SSML fragment; return MP3 audio bytes.
@@ -140,28 +160,39 @@ class RawSSMLSynth:
             if self._ws is None or self._ws.closed:
                 await self._connect()
             try:
-                await self._ws.send_str(
-                    ssml_headers_plus_data(
-                        connect_id(), date_to_string(), ssml
-                    )
+                await asyncio.wait_for(
+                    self._ws.send_str(
+                        ssml_headers_plus_data(
+                            connect_id(), date_to_string(), ssml
+                        )
+                    ),
+                    timeout=self.RECV_TIMEOUT,
                 )
-                return await self._receive_audio()
+                return await asyncio.wait_for(
+                    self._receive_audio(), timeout=self.TURN_TIMEOUT
+                )
             except (
+                asyncio.TimeoutError,
                 aiohttp.ClientResponseError,
                 aiohttp.ClientError,
                 ConnectionError,
                 RuntimeError,
             ):
-                # Connection likely stale -> reconnect once and retry.
+                # Connection likely stale/timed out -> reconnect once, retry once.
                 await self._close_ws()
                 await self._connect()
                 try:
-                    await self._ws.send_str(
-                        ssml_headers_plus_data(
-                            connect_id(), date_to_string(), ssml
-                        )
+                    await asyncio.wait_for(
+                        self._ws.send_str(
+                            ssml_headers_plus_data(
+                                connect_id(), date_to_string(), ssml
+                            )
+                        ),
+                        timeout=self.RECV_TIMEOUT,
                     )
-                    return await self._receive_audio()
+                    return await asyncio.wait_for(
+                        self._receive_audio(), timeout=self.TURN_TIMEOUT
+                    )
                 except Exception:
                     await self._close_ws()
                     raise

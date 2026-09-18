@@ -1,27 +1,31 @@
 """
 RAG Retriever — Given a query, retrieves the most relevant knowledge chunks.
-Optimized for fast response times.
+Enforces strict multi-tenant agent isolation so Agent A never accesses Agent B data.
 """
 
 from typing import List, Dict, Optional
-from functools import lru_cache
 import hashlib
 from app.rag.embeddings import generate_embedding
-from app.rag.vector_store import vector_store
+from app.rag.vector_store import vector_store_manager, vector_store
 from app.config.settings import settings
 from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Simple cache for recent queries (max 128 entries)
+# Cache for recent queries per agent
 _query_cache = {}
-_cache_max_size = 128
+_cache_max_size = 256
 
 
-def _get_cache_key(query: str, top_k: int, min_score: float) -> str:
-    """Generate cache key for query parameters."""
-    key = f"{query}:{top_k}:{min_score}"
+def _get_cache_key(query: str, top_k: int, min_score: float, agent_id: int) -> str:
+    key = f"{query.strip().lower()}:{top_k}:{min_score}:{agent_id}"
     return hashlib.md5(key.encode()).hexdigest()
+
+
+def is_knowledge_ready(agent_id: int = 1) -> bool:
+    """Check if the specific agent's knowledge base is ready."""
+    store = vector_store_manager.get_store(agent_id)
+    return store.is_ready
 
 
 async def retrieve_context(
@@ -29,82 +33,51 @@ async def retrieve_context(
     top_k: int = None,
     min_score: float = 0.15,
     institute_id: Optional[int] = None,
+    agent_id: Optional[int] = None,
 ) -> List[Dict]:
     """
-    Retrieve the most relevant knowledge chunks for a query with knowledge base isolation (spec §17).
-    
-    Args:
-        query: The question or query text
-        top_k: Number of chunks to retrieve
-        min_score: Minimum similarity score threshold.
-            Calibrated for all-MiniLM-L6-v2 (cosine sims for relevant matches
-            typically fall between 0.15 and 0.55 — a 0.3 cutoff silently drops
-            relevant chunks, e.g. "What time does the hostel close?" ≈ 0.29).
-        institute_id: Optional institute ID for knowledge base isolation.
-            If provided, only retrieves chunks from this institution's knowledge base.
-        
-    Returns:
-        List of relevant chunks with text, source, and score
+    Retrieve the most relevant knowledge chunks strictly isolated to this agent.
     """
-    if not vector_store.is_ready:
-        logger.warning("Vector store not ready")
+    target_agent_id = agent_id or institute_id or 1
+    store = vector_store_manager.get_store(target_agent_id)
+
+    if not store.is_ready:
+        logger.warning("Vector store not ready for agent %d", target_agent_id)
         return []
 
-    # Set default top_k
     if top_k is None:
         top_k = settings.TOP_K_RESULTS
 
-    # Check cache (include institute_id in cache key for isolation)
-    cache_key = _get_cache_key(query, top_k, min_score) + f":{institute_id or 'global'}"
+    cache_key = _get_cache_key(query, top_k, min_score, target_agent_id)
     if cache_key in _query_cache:
-        logger.debug(f"Cache hit for query: {query[:50]}...")
         return _query_cache[cache_key]
 
     try:
-        # Generate query embedding
         query_embedding = generate_embedding(query)
-
-        # Search vector store
-        results = vector_store.search(query_embedding, top_k=top_k)
+        results = store.search(query_embedding, top_k=top_k)
 
         # Filter by minimum score
         filtered = [r for r in results if r["score"] >= min_score]
-        
-        # Knowledge base isolation: filter by institute_id if provided (spec §17)
-        if institute_id is not None:
-            filtered = [r for r in filtered if r.get("institute_id") == institute_id]
-            logger.info(f"Knowledge base isolation: filtered to institute_id={institute_id}, {len(filtered)} chunks remain")
 
-        # Cache results
         if len(_query_cache) >= _cache_max_size:
             _query_cache.pop(next(iter(_query_cache)))
         _query_cache[cache_key] = filtered
 
-        logger.info(f"Retrieved {len(filtered)} chunks for query (min_score={min_score})")
-        
+        logger.info("Agent %d retrieved %d chunks for query: %s", target_agent_id, len(filtered), query[:40])
         return filtered
 
     except Exception as e:
-        logger.error(f"Retrieval failed: {e}")
-        raise
+        logger.error("Agent %d retrieval failed: %s", target_agent_id, e)
+        return []
 
 
-def format_context_for_prompt(retrieved_chunks: List[Dict]) -> str:
-    """
-    Format retrieved chunks into a context string for the LLM prompt.
-    """
-    if not retrieved_chunks:
+def format_context_for_prompt(chunks: List[Dict]) -> str:
+    """Format retrieved chunks into clean text for system context injection."""
+    if not chunks:
         return ""
-
-    context_parts = []
-    for i, chunk in enumerate(retrieved_chunks, 1):
-        source = chunk.get("source", "Unknown")
-        text = chunk["text"]
-        context_parts.append(f"[Source: {source}]\n{text}")
-
-    return "\n\n---\n\n".join(context_parts)
-
-
-def is_knowledge_ready() -> bool:
-    """Check if the vector store is ready for queries."""
-    return vector_store.is_ready
+    parts = []
+    for i, c in enumerate(chunks):
+        text = c.get("text", "").strip()
+        if text:
+            parts.append(f"[Fact {i+1}]: {text}")
+    return "\n\n".join(parts)

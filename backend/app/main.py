@@ -162,7 +162,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Mrs. D — AI Voice Receptionist Platform",
+    title="Doneswari AI Telecaller Platform",
     description="AI-powered voice receptionist for incoming calls.",
     version="2.0.0",
     lifespan=lifespan,
@@ -182,6 +182,7 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
 
 # ── Import and include routers ────────────────────────────────────────────────
+from app.api.auth_routes import router as auth_router
 from app.api import knowledge_router
 from app.api.receptionist_routes import router as receptionist_router
 from app.api.conversation_routes import router as conversation_router
@@ -190,8 +191,11 @@ from app.api.telephony_routes import router as telephony_router
 from app.voice.voice_ws import router as voice_ws_router
 from app.api.onboard_routes import router as onboard_router
 from app.api.agent_routes import router as agent_router
+from app.api.student_routes import router as student_router
+from app.api.campaign_routes import router as campaign_router
 from app.api.calls_routes import router as calls_router
 
+app.include_router(auth_router)
 app.include_router(knowledge_router)
 app.include_router(receptionist_router)
 app.include_router(conversation_router)
@@ -200,6 +204,8 @@ app.include_router(telephony_router)
 app.include_router(voice_ws_router)
 app.include_router(onboard_router)
 app.include_router(agent_router)
+app.include_router(student_router)
+app.include_router(campaign_router)
 app.include_router(calls_router)
 
 
@@ -207,7 +213,7 @@ app.include_router(calls_router)
 async def root():
     return {
         "agent": "Mrs. D",
-        "platform": "AI Voice Receptionist Platform",
+        "platform": "Doneswari AI Telecaller SaaS Platform",
         "status": "running",
         "version": "2.0.0",
         "docs": "/docs",

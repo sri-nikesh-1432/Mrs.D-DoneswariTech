@@ -235,7 +235,9 @@ class EdgeTTSService:
             return
 
         voice_to_use = self._pick_voice(text, language=language, voice=voice)
-        sem = asyncio.Semaphore(4)
+        # edge-tts is a shared public service that throttles under load —
+        # 4 parallel sentences produced "No audio was received" errors.
+        sem = asyncio.Semaphore(2)
 
         async def _synth(index: int, sentence: str):
             async with sem:
@@ -471,11 +473,21 @@ class EdgeTTSService:
             communicate = edge_tts.Communicate(
                 spoken, voice, rate=rate, pitch=pitch, volume=volume
             )
-            chunks = [
-                c["data"] async for c in communicate.stream()
-                if c["type"] == "audio"
-            ]
-            return b"".join(chunks) or None
+
+            async def _collect() -> bytes:
+                chunks = [
+                    c["data"] async for c in communicate.stream()
+                    if c["type"] == "audio"
+                ]
+                return b"".join(chunks)
+
+            # Hard ceiling: a throttled edge-tts call must never stall a live
+            # voice turn (a hung sentence previously blocked the whole reply).
+            audio = await asyncio.wait_for(_collect(), timeout=20.0)
+            return audio or None
+        except asyncio.TimeoutError:
+            logger.error("Plain TTS timed out after 20s (voice=%s)", voice)
+            return None
         except Exception as e:
             logger.error("Plain TTS failed: %s", e)
             return None

@@ -1,6 +1,6 @@
 """
 Document Processor — Extract and clean text from uploaded files.
-Supports: PDF, DOCX, TXT, CSV
+Supports: PDF, DOCX, TXT, CSV, XLSX, XLS
 """
 
 import os
@@ -13,7 +13,7 @@ from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".csv"}
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".csv", ".xlsx", ".xls"}
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
@@ -46,6 +46,8 @@ async def extract_text(file_path: str, filename: str) -> str:
             text = _extract_txt(file_path)
         elif ext == ".csv":
             text = _extract_csv(file_path)
+        elif ext in {".xlsx", ".xls"}:
+            text = _extract_excel(file_path)
         else:
             raise ValueError(f"Unsupported file type: {ext}")
 
@@ -79,7 +81,6 @@ def _extract_docx(file_path: str) -> str:
     for para in doc.paragraphs:
         if para.text.strip():
             text_parts.append(para.text)
-    # Also extract tables
     for table in doc.tables:
         for row in table.rows:
             row_text = " | ".join(cell.text for cell in row.cells)
@@ -98,34 +99,35 @@ def _extract_csv(file_path: str) -> str:
     """Extract text from CSV file using pandas."""
     df = pd.read_csv(file_path)
     text_parts = []
-    # Add column headers
     text_parts.append(" | ".join(str(col) for col in df.columns))
-    # Add rows
     for _, row in df.iterrows():
         text_parts.append(" | ".join(str(val) for val in row))
     return "\n".join(text_parts)
 
 
+def _extract_excel(file_path: str) -> str:
+    """Extract text from Excel file (XLSX / XLS) using pandas."""
+    xls = pd.ExcelFile(file_path)
+    text_parts = []
+    for sheet_name in xls.sheet_names:
+        df = pd.read_excel(xls, sheet_name=sheet_name)
+        text_parts.append(f"--- Sheet: {sheet_name} ---")
+        for _, row in df.iterrows():
+            row_items = [f"{col}: {val}" for col, val in row.items() if pd.notna(val)]
+            if row_items:
+                text_parts.append(" | ".join(row_items))
+    return "\n".join(text_parts)
+
+
 def clean_text(text: str) -> str:
-    """
-    Clean extracted text by removing artifacts.
-    """
-    # Remove null bytes
+    """Clean extracted text by removing artifacts."""
     text = text.replace("\x00", "")
-    # Normalize line endings
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    # Remove excessive blank lines (keep max 2)
     text = re.sub(r"\n{3,}", "\n\n", text)
-    # Remove headers/footers (page numbers)
     text = re.sub(r"\n\s*\d+\s*\n", "\n", text)
-    # Remove URLs
     text = re.sub(r"https?://\S+", "", text)
-    # Normalize Unicode
     import unicodedata
     text = unicodedata.normalize("NFKC", text)
-    # Strip leading/trailing whitespace per line
     lines = [line.strip() for line in text.split("\n")]
     text = "\n".join(lines)
-    # Remove empty lines at start/end
-    text = text.strip()
-    return text
+    return text.strip()

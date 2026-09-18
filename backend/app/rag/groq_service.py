@@ -83,6 +83,9 @@ async def stream_chat_fast(
     lang: str = "English",
     conversation_history: Optional[List[Dict]] = None,
     context: Optional[str] = None,
+    agent_name: str = "Aadhya",
+    company_name: str = "Doneswari",
+    instructions: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """
     ULTRA-FAST streaming for <700ms voice turns.
@@ -96,12 +99,14 @@ async def stream_chat_fast(
     """
     # ── System prompt (kept tiny for speed) ──────────────────────────────────
     system = (
-        f"You are Mrs.D, a warm admissions counsellor on a live phone call. "
+        f"You are {agent_name}, a professional human-like telecaller from {company_name} on a live phone call. "
         f"Reply in {lang}. "
-        f"Give a SHORT, natural answer — 1-2 sentences max. "
-        f"Use ONLY the knowledge context below. "
-        f"Never hallucinate. If info is missing, say 'I don't have that detail — please contact the campus directly.'"
+        f"Speak naturally and concisely in 1-2 sentences max. Ask only ONE question at a time. "
+        f"Strict Anti-Hallucination: Use ONLY the verified knowledge context below. Never guess or invent fees, dates, or eligibility. "
+        f"Fallback: If information is not in the knowledge, say 'I don't have the exact information available right now. I can help with what I have, or arrange for a counsellor to provide the exact details.'"
     )
+    if instructions and instructions.strip():
+        system += f"\nSpecial Instructions: {instructions.strip()[:200]}"
 
     if context and context.strip():
         # Hard cap at 800 chars — enough for 4 RAG chunks, keeps prompt small

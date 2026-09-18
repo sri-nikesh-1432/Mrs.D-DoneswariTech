@@ -61,15 +61,15 @@ class Settings(BaseSettings):
     )
     
     # Directory Paths
-    BASE_DIR: Path = Field(default=Path(__file__).parent.parent.parent)
-    UPLOADS_DIR: Path = Field(default=Path("uploads"))
-    KNOWLEDGE_DIR: Path = Field(default=Path("uploads/knowledge"))
-    STUDENTS_DIR: Path = Field(default=Path("uploads/students"))
-    VECTOR_DB_DIR: Path = Field(default=Path("uploads/vector_db"))
-    REPORTS_DIR: Path = Field(default=Path("generated_reports"))
-    LOGS_DIR: Path = Field(default=Path("logs"))
-    STATIC_DIR: Path = Field(default=Path("static"))
-    AUDIO_DIR: Path = Field(default=Path("static/audio"))
+    BASE_DIR: Path = Field(default=Path(__file__).parent.parent.parent.resolve())
+    UPLOADS_DIR: Path = Field(default_factory=lambda: (Path(__file__).parent.parent.parent / "uploads").resolve())
+    KNOWLEDGE_DIR: Path = Field(default_factory=lambda: (Path(__file__).parent.parent.parent / "uploads" / "knowledge").resolve())
+    STUDENTS_DIR: Path = Field(default_factory=lambda: (Path(__file__).parent.parent.parent / "uploads" / "students").resolve())
+    VECTOR_DB_DIR: Path = Field(default_factory=lambda: (Path(__file__).parent.parent.parent / "uploads" / "vector_db").resolve())
+    REPORTS_DIR: Path = Field(default_factory=lambda: (Path(__file__).parent.parent.parent / "generated_reports").resolve())
+    LOGS_DIR: Path = Field(default_factory=lambda: (Path(__file__).parent.parent.parent / "logs").resolve())
+    STATIC_DIR: Path = Field(default_factory=lambda: (Path(__file__).parent.parent.parent / "static").resolve())
+    AUDIO_DIR: Path = Field(default_factory=lambda: (Path(__file__).parent.parent.parent / "static" / "audio").resolve())
     
 # Voice — warm, professional Telugu Indian female neural voice (Mrs. D).
     # te-IN-ShrutiNeural is the Telugu female voice. Rate +10% ≈ 1.1x for a
@@ -121,8 +121,7 @@ class Settings(BaseSettings):
             self.AUDIO_DIR,
         ]
         for directory in dirs:
-            full_path = self.BASE_DIR / directory
-            full_path.mkdir(parents=True, exist_ok=True)
+            directory.mkdir(parents=True, exist_ok=True)
 
 
 settings = Settings()

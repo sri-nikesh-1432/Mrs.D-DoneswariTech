@@ -120,3 +120,33 @@ async def warm_tts_cache(tts_service, max_entries: int = 2) -> None:
             logger.debug("TTS warm-phrase failed: %s", e)
     if warmed:
         logger.info("TTS cache warmed: %d phrases", warmed)
+
+
+# ─── Backward-compatibility shims ────────────────────────────────────────────
+# conversation_routes.py uses the old synchronous API names.
+
+def find_cached_response(query: str, language: str = "English", institute_id: int = 1) -> Optional[str]:
+    """Synchronous wrapper for legacy callers (conversation_routes.py)."""
+    key = _make_key(query, institute_id)
+    entry = _CACHE.get(key)
+    if entry is None:
+        return None
+    now = time.monotonic()
+    if now - entry.ts > _TTL_SECONDS:
+        del _CACHE[key]
+        return None
+    entry.hits += 1
+    entry.ts = now
+    return entry.text
+
+
+def get_cached_audio(text: str, language: str = "English") -> Optional[bytes]:
+    """Legacy stub — audio caching is handled by edge-tts internally."""
+    return None
+
+
+def cache_response_sync(query: str, response: str, language: str = "English", institute_id: int = 1) -> None:
+    """Synchronous cache write for legacy callers."""
+    key = _make_key(query, institute_id)
+    _evict_if_needed()
+    _CACHE[key] = _CacheEntry(response)
