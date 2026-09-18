@@ -13,6 +13,8 @@ const statusConfig: Record<AgentStatus, { label: string; dot: string; text: stri
   published: { label: "Live",     dot: "bg-emerald-500", text: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200" },
   ready:     { label: "Ready",    dot: "bg-sky-500",     text: "text-sky-700",     bg: "bg-sky-50 border-sky-200" },
   training:  { label: "Training", dot: "bg-amber-500",   text: "text-amber-700",   bg: "bg-amber-50 border-amber-200" },
+  processing:{ label: "Training", dot: "bg-amber-500",   text: "text-amber-700",   bg: "bg-amber-50 border-amber-200" },
+  testing:   { label: "Testing",  dot: "bg-violet-500",  text: "text-violet-700",  bg: "bg-violet-50 border-violet-200" },
   draft:     { label: "Draft",    dot: "bg-gray-400",    text: "text-gray-600",    bg: "bg-gray-50 border-gray-200" },
   paused:    { label: "Paused",   dot: "bg-gray-400",    text: "text-gray-600",    bg: "bg-gray-50 border-gray-200" },
 };

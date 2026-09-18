@@ -235,6 +235,69 @@ async def get_student_detail_analytics(
     }
 
 
+# ── Full Call History with Latency Audit ─────────────────────────────────────
+
+@router.get("/api/agents/{agent_id}/calls")
+async def get_agent_call_history(
+    agent_id: int,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_database),
+):
+    """
+    Full call history for an agent with per-component latency metrics
+    (STT, Retrieval, LLM, TTS) for observability and auditing.
+    """
+    agent = await session.get(Institute, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    result = await session.execute(
+        select(CallHistory)
+        .where(CallHistory.institute_id == agent_id)
+        .order_by(CallHistory.started_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    calls = result.scalars().all()
+
+    total = (await session.execute(
+        select(func.count(CallHistory.id)).where(CallHistory.institute_id == agent_id)
+    )).scalar() or 0
+
+    return {
+        "total": total,
+        "calls": [
+            {
+                "id": c.id,
+                "call_id": c.call_id,
+                "student_id": c.student_id,
+                "caller_name": c.caller_name,
+                "caller_number": c.caller_number,
+                "call_status": c.call_status,
+                "started_at": c.started_at.isoformat() if c.started_at else None,
+                "ended_at": c.ended_at.isoformat() if c.ended_at else None,
+                "duration_seconds": c.duration_seconds,
+                "interest_level": c.interest_level,
+                "outcome": c.outcome,
+                "callback_requested": c.callback_requested,
+                "summary": c.summary,
+                "questions_asked": c.questions_asked or [],
+                "objections": c.objections or [],
+                "latency": {
+                    "stt_ms": c.avg_stt_time_ms,
+                    "retrieval_ms": c.avg_retrieval_time_ms,
+                    "llm_ms": c.avg_llm_response_time_ms,
+                    "tts_ms": c.avg_tts_time_ms,
+                    "total_ms": c.total_latency_ms,
+                },
+                "total_turns": c.total_turns,
+            }
+            for c in calls
+        ],
+    }
+
+
 # ── Backward Compatibility Endpoints ─────────────────────────────────────────
 
 @router.get("/api/analytics/stats")

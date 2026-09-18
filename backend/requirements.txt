@@ -62,6 +62,7 @@ matplotlib>=3.9.0
 
 # Validation
 phonenumbers>=8.13.0
+email-validator>=2.1.0
 
 # Logging
 structlog>=24.2.0
