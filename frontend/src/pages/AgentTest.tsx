@@ -32,6 +32,7 @@ export default function AgentTest() {
   const [agentName, setAgentName] = useState("Aadhya");
   const [publishing, setPublishing] = useState(false);
   const [toast, setToast] = useState("");
+  const [lastLatency, setLastLatency] = useState<number | null>(null);
 
   const transcriptRef = useRef<HTMLDivElement>(null);
   const sessionIdRef = useRef(`session_${Date.now()}`);
@@ -74,7 +75,11 @@ export default function AgentTest() {
           setMessages((prev) => [...prev, { role: "assistant", content: t, timestamp: now() }]);
         }
       },
-      onError: (msg) => console.warn("[VoiceWS]", msg),
+      onError: (msg) => {
+        console.warn("[VoiceWS]", msg);
+        setToast(msg);
+        setTimeout(() => setToast(""), 4000);
+      },
     });
   }, [agentId]);
 

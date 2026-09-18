@@ -140,6 +140,27 @@ def _is_echo(text: str, last_ai_text: str) -> bool:
     return False
 
 
+# Audio response cache: first-sentence MP3 (base64) keyed like the text
+# cache, so repeat questions skip TTS synthesis entirely (~0ms first audio).
+_AUDIO_CACHE: dict = {}
+_AUDIO_CACHE_MAX = 200
+
+
+def _audio_key(query: str, institute_id: int) -> str:
+    normalized = " ".join(query.lower().split())[:120]
+    return f"{institute_id}:{normalized}"
+
+
+def _audio_cache_get(key: str) -> Optional[str]:
+    return _AUDIO_CACHE.get(key)
+
+
+def _audio_cache_put(key: str, audio_b64: str) -> None:
+    if len(_AUDIO_CACHE) >= _AUDIO_CACHE_MAX:
+        _AUDIO_CACHE.pop(next(iter(_AUDIO_CACHE)), None)
+    _AUDIO_CACHE[key] = audio_b64
+
+
 class DuplicateTracker:
     """Track processed utterances to prevent duplicate processing (per session)."""
 
@@ -359,6 +380,14 @@ def _natural_pause_ms(sentence: str) -> int:
 
 _SENT_BOUNDARY = _re.compile(r"[.!?](?=\s|$|\n)|\n")
 
+# First-chunk boundary: break aggressively (sentence end, comma, colon or
+# dash) so TTS starts on a SHORT first unit. Short first synth ≈ 300ms vs
+# ≈ 600ms for a full sentence — the biggest TTFA lever.
+_FIRST_CLAUSE_BOUNDARY = _re.compile(r"[.!?:;](?=\s|$)|,\s|\s[-–—]\s|\n")
+# Fallback cap: if no punctuation arrives, cut the first chunk at ~40 chars
+# (at a word boundary) so the first synth is never long.
+_FIRST_CHUNK_MAX_CHARS = 40
+
 
 def _pop_complete_sentences(buffer: str):
     """Return (complete_sentences, remainder) from a streaming buffer."""
@@ -513,42 +542,45 @@ async def _send_greeting(
     institute_id: int,
     language: str,
     memory: list,
+    persona: Optional[dict] = None,
 ):
-    """Send the initial greeting over WebSocket (streams sentence audio)."""
+    """Send the initial greeting over WebSocket (streams sentence audio).
+
+    Persona is resolved from the agent DB row so the greeting uses the
+    agent's OWN name, company, greeting script and TTS voice — never the
+    hardcoded Mrs. D default.
+    """
+    persona = persona or {}
+    agent_name = persona.get("agent_name") or "Aadhya"
+    company_name = persona.get("company_name") or "Doneswari"
+    voice = persona.get("voice")
     try:
         turn_start = time.time()
-        logger.info("WS_GREETING | stage=start mode=%s file=%s", mode, knowledge_file)
+        logger.info("WS_GREETING | stage=start mode=%s agent=%d persona=%s", mode, institute_id, agent_name)
 
-        if mode == "test":
+        # Prefer the agent's configured greeting script — zero LLM latency.
+        ai_response = (persona.get("greeting_message") or "").strip()
+
+        if not ai_response and mode == "test":
             retriever = get_json_retriever(knowledge_file)
             ai_response = retriever.get_greeting(language=language)
             logger.info("WS_GREETING | stage=json_greeting len=%d", len(ai_response or ""))
-        else:
-            retrieved_chunks = await retrieve_context(
-                "institute name college school", top_k=5, min_score=0.1
-            )
-            context_text = format_context_for_prompt(retrieved_chunks)
-            institute_name = "the institute"
-            if context_text:
-                for pattern in [
-                    r'(?:institute|college|school|university)[\s]+(?:name|is|called|:)\s*([A-Z][A-Za-z\s]+)',
-                    r'([A-Z][A-Za-z\s]+(?:College|Institute|School|University))',
-                ]:
-                    m = _re.search(pattern, context_text, _re.IGNORECASE)
-                    if m:
-                        institute_name = m.group(1).strip()
-                        break
-            opener = random.choice(GREETING_OPENERS)
-            greeting_prompt = (
-                f"You are Mrs. D, a warm admissions counsellor speaking on a live call.\n"
-                f"You are representing {institute_name}.\n\n"
-                f"Start your reply with a natural opener that sounds like you work at {institute_name} "
-                f"and are calling a prospective parent (keep it in {language}, adapt phrasing naturally):\n"
-                f"{opener}\n\n"
-                f"Then briefly invite the caller to ask about admissions, courses, fees, hostel or "
-                f"scholarships. Keep the whole greeting to 2-3 sentences and sound like a real person."
-            )
+
+        if not ai_response and mode != "test":
+            # Fall back to a short LLM-personalised greeting grounded in the
+            # agent's knowledge base (bounded to keep TTFA low).
             try:
+                retrieved_chunks = await retrieve_context(
+                    "institute name college school courses", top_k=5, min_score=0.1,
+                    agent_id=institute_id,
+                )
+                context_text = format_context_for_prompt(retrieved_chunks)
+                greeting_prompt = (
+                    f"You are {agent_name}, a warm admissions counsellor calling on behalf of {company_name}. "
+                    f"In {language}, greet the caller warmly in ONE short sentence, introduce yourself as "
+                    f"{agent_name} from {company_name}, and ask how you can help with admissions. "
+                    f"Maximum 2 sentences. Sound like a real person on a phone call."
+                )
                 ai_response = await generate_response(
                     conversation_history=[],
                     context=context_text or "",
@@ -556,18 +588,19 @@ async def _send_greeting(
                 )
             except Exception as e:
                 logger.warning("Greeting LLM failed, using fallback: %s", e)
-                ai_response = (
-                    f"Hi! I'm Mrs. D, AI Admission Counsellor of {institute_name}. "
-                    f"How may I help you today?"
-                )
+
+        if not ai_response:
+            ai_response = (
+                f"Hi! I'm {agent_name} from {company_name}. "
+                f"How may I help you today?"
+            )
 
         memory.append({"role": "assistant", "content": ai_response})
 
         sentence_idx = 0
         tts = get_tts_service()
-        logger.info("WS_GREETING | stage=tts_stream_begin voice_lang=%s", language)
-        async for chunk in tts.stream_sentences(ai_response, language=language):
-            logger.info("WS_GREETING | stage=tts_chunk idx=%s audio=%s", chunk.get("index"), bool(chunk.get("audio_data")))
+        logger.info("WS_GREETING | stage=tts_stream_begin agent=%s voice=%s", agent_name, voice or "auto")
+        async for chunk in tts.stream_sentences(ai_response, language=language, voice=voice):
             if chunk.get("audio_data"):
                 await websocket.send_json({
                     "type": "sentence",
@@ -584,14 +617,14 @@ async def _send_greeting(
             "debug_info": {
                 "total_time_ms": round(total_ms),
                 "sentence_count": sentence_idx,
+                "agent_name": agent_name,
             },
         })
 
     except Exception as e:
         logger.error("WS greeting failed: %s", e)
         fallback = (
-            "Hello! I'm Mrs. D, your AI admissions counsellor. "
-            "How can I help you today?"
+            f"Hello! I'm {agent_name} from {company_name}. How can I help you today?"
         )
         memory.append({"role": "assistant", "content": fallback})
         try:
@@ -627,12 +660,20 @@ async def _process_turn(
     lang_detector: LanguageDetector,
     pcm_bytes: Optional[bytes] = None,
     text_override: Optional[str] = None,
+    institute_id: int = 1,
+    persona: Optional[dict] = None,
 ):
     """Process one turn end-to-end and stream sentences back over the WS.
 
     Either `pcm_bytes` (raw PCM16 mono @16 kHz) or `text_override` (typed
-    input that skips STT) must be provided.
+    input that skips STT) must be provided. `persona` carries the agent's
+    name/company/instructions/voice so replies speak as THAT agent, and
+    RAG retrieval is bound to that agent's isolated FAISS store.
     """
+    persona = persona or {}
+    agent_name = persona.get("agent_name") or "Aadhya"
+    company_name = persona.get("company_name") or "Doneswari"
+    agent_voice = persona.get("voice")
     try:
         latency.reset()
         latency.start_turn()
@@ -734,7 +775,7 @@ async def _process_turn(
                     retriever = get_json_retriever(knowledge_file)
                     return retriever.retrieve_context(llm_input, top_k=4) or ""
                 else:
-                    chunks = await retrieve_context(llm_input, top_k=4)
+                    chunks = await retrieve_context(llm_input, top_k=4, agent_id=institute_id)
                     return format_context_for_prompt(chunks) or ""
             except Exception as e:
                 logger.warning("RAG retrieval failed (conv=%s): %s", conversation_id, e)
@@ -763,6 +804,7 @@ async def _process_turn(
         async def _llm_streamer():
             nonlocal ai_parts, llm_error
             buf = ""
+            first_chunk_sent = False
             latency.start_llm()
             try:
                 # Wait for RAG with a tight deadline so we don't hold up LLM
@@ -770,7 +812,7 @@ async def _process_turn(
                 # empty context and append it on the next turn.
                 try:
                     context_text = await asyncio.wait_for(
-                        asyncio.shield(rag_future), timeout=0.12
+                        asyncio.shield(rag_future), timeout=0.2
                     )
                 except asyncio.TimeoutError:
                     context_text = ""
@@ -782,10 +824,34 @@ async def _process_turn(
                     lang=detected_lang,
                     conversation_history=history_list,
                     context=context_text,
+                    agent_name=agent_name,
+                    company_name=company_name,
+                    instructions=persona.get("instructions"),
                 ):
                     if not ai_parts:
                         latency.mark_llm_first_token()
                     buf += delta
+
+                    # First chunk: emit at the first clause boundary (or a
+                    # ~40-char word boundary) so TTS synthesis starts on a
+                    # SHORT unit — the single biggest TTFA lever.
+                    if not first_chunk_sent:
+                        m = _FIRST_CLAUSE_BOUNDARY.search(buf)
+                        cut = m.end() if m else None
+                        if cut is None and len(buf) >= _FIRST_CHUNK_MAX_CHARS:
+                            head = buf[:_FIRST_CHUNK_MAX_CHARS]
+                            sp = head.rfind(" ")
+                            if sp > 10:
+                                cut = sp
+                        if cut:
+                            clause = buf[:cut].strip().rstrip(",")
+                            buf = buf[cut:]
+                            if clause:
+                                first_chunk_sent = True
+                                idx = len(ai_parts)
+                                ai_parts.append(clause)
+                                await sentence_q.put(("sentence", idx, clause))
+
                     sentences, buf = _pop_complete_sentences(buf)
                     for s in sentences:
                         idx = len(ai_parts)
@@ -811,22 +877,37 @@ async def _process_turn(
 
         if cached_text:
             logger.info("Cache HIT for: %.40s", llm_input)
-            # Synthesize the cached response (already a finished string)
+            ak = _audio_key(llm_input, institute_id)
+            cached_audio = _audio_cache_get(ak)
             latency.start_tts()
-            async for chunk in tts.stream_sentences(cached_text, language=detected_lang):
-                audio = chunk.get("audio_data")
-                if not audio:
-                    continue
+            if cached_audio:
+                # Instant playback: text AND audio were both cached
                 latency.mark_tts_first_audio()
                 await websocket.send_json({
                     "type": "sentence",
-                    "index": sentence_count,
-                    "text": chunk["text"],
-                    "audio_data": audio,
+                    "index": 0,
+                    "text": cached_text,
+                    "audio_data": cached_audio,
                 })
-                if sentence_count == 0:
-                    first_sentence_text = chunk["text"]
-                sentence_count += 1
+                sentence_count = 1
+                first_sentence_text = cached_text
+            else:
+                # Synthesize the cached response (already a finished string)
+                async for chunk in tts.stream_sentences(cached_text, language=detected_lang, voice=agent_voice):
+                    audio = chunk.get("audio_data")
+                    if not audio:
+                        continue
+                    latency.mark_tts_first_audio()
+                    await websocket.send_json({
+                        "type": "sentence",
+                        "index": sentence_count,
+                        "text": chunk["text"],
+                        "audio_data": audio,
+                    })
+                    if sentence_count == 0:
+                        first_sentence_text = chunk["text"]
+                        _audio_cache_put(ak, audio)
+                    sentence_count += 1
             latency.end_tts()
             ai_response = cached_text
             # Cancel the still-pending RAG future
@@ -854,7 +935,7 @@ async def _process_turn(
 
                     # Synthesize this sentence immediately (do NOT await — it
                     # runs concurrently with the LLM still streaming later sentences)
-                    async for chunk in tts.stream_sentences(payload, language=detected_lang):
+                    async for chunk in tts.stream_sentences(payload, language=detected_lang, voice=agent_voice):
                         audio = chunk.get("audio_data")
                         if not audio:
                             continue
@@ -867,6 +948,8 @@ async def _process_turn(
                         })
                         if sentence_count == 0 and not first_sentence_text:
                             first_sentence_text = chunk["text"]
+                            # Cache the first-sentence audio for instant repeat playback
+                            _audio_cache_put(_audio_key(llm_input, institute_id), audio)
                         sentence_count += 1
             finally:
                 if not llm_task.done():
@@ -877,13 +960,14 @@ async def _process_turn(
                     pass
                 latency.end_tts()
 
-            ai_response = "".join(ai_parts).strip()
+            ai_response = " ".join(p.strip() for p in ai_parts if p.strip())
 
             # Cache the response for next time
             if ai_response and len(ai_response) < 400:
                 asyncio.create_task(cache_response(llm_input, institute_id, ai_response))
 
-        ai_response = "".join(ai_parts).strip()
+        if not cached_text:
+            ai_response = " ".join(p.strip() for p in ai_parts if p.strip())
 
         # Graceful spoken fallback so the call never goes silent.
         if not ai_response:
@@ -896,7 +980,7 @@ async def _process_turn(
                 if detected_lang == "Telugu"
                 else "Sorry, could you say that again?"
             )
-            async for chunk in tts.stream_sentences(ai_response, language=detected_lang):
+            async for chunk in tts.stream_sentences(ai_response, language=detected_lang, voice=agent_voice):
                 if chunk.get("audio_data"):
                     await websocket.send_json({
                         "type": "sentence",
@@ -1025,10 +1109,43 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
     lang_detector = LanguageDetector()
     turn_detector = TurnDetector()
 
+    # -- Resolve the agent persona from the DB (name, company, voice, ...) -----
+    persona: dict = {
+        "agent_name": "Aadhya",
+        "company_name": "Doneswari",
+        "greeting_message": None,
+        "instructions": None,
+        "voice": None,
+    }
+    try:
+        db_agent_id = int(agent_id) if str(agent_id).isdigit() else institute_id
+        from app.database.connection import AsyncSessionLocal
+        from app.database.models import Institute
+        async with AsyncSessionLocal() as session:
+            agent_row = await session.get(Institute, db_agent_id)
+            if agent_row:
+                institute_id = agent_row.id
+                persona = {
+                    "agent_name": agent_row.agent_name or agent_row.name or "Aadhya",
+                    "company_name": agent_row.name or "Doneswari",
+                    "greeting_message": agent_row.greeting_message,
+                    "instructions": agent_row.instructions,
+                    "voice": agent_row.voice or None,
+                }
+                logger.info(
+                    "WS persona resolved: agent=%s company=%s voice=%s",
+                    persona["agent_name"], persona["company_name"], persona["voice"],
+                )
+            else:
+                logger.warning("WS agent %s not found; using default persona", agent_id)
+    except Exception as e:
+        logger.warning("WS persona resolution failed: %s", e)
+
     # -- Greeting --------------------------------------------------------------
     try:
         await _send_greeting(
-            websocket, mode, knowledge_file, institute_id, language, memory
+            websocket, mode, knowledge_file, institute_id, language, memory,
+            persona=persona,
         )
     except Exception as e:
         logger.error("WS greeting send failed: %s", e)
@@ -1045,12 +1162,14 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
                         websocket, conversation_id, mode, knowledge_file,
                         language, memory, ai_state, latency, duplicates,
                         lang_detector, text_override=payload,
+                        institute_id=institute_id, persona=persona,
                     )
                 else:
                     await _process_turn(
                         websocket, conversation_id, mode, knowledge_file,
                         language, memory, ai_state, latency, duplicates,
                         lang_detector, pcm_bytes=payload,
+                        institute_id=institute_id, persona=persona,
                     )
             except asyncio.CancelledError:
                 raise

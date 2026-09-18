@@ -25,18 +25,34 @@ def _model_chain() -> list:
     for m in models:
         if m and m not in seen:
             seen.append(m)
-    return seen or ["allam-2-7b", "openai/gpt-oss-20b"]
+    return seen or ["openai/gpt-oss-20b", "openai/gpt-oss-120b"]
+
+
+def _is_gpt_oss(model: str) -> bool:
+    return "gpt-oss" in (model or "")
 
 
 def _is_rate_limit(e: Exception) -> bool:
-    """True for Groq 429 (per-model token cap) or 404 (model not found) —
-    errors worth retrying on a different model. Connection errors are retried
-    on the same request; auth/validation errors must surface immediately."""
+    """True for errors worth retrying on a different model — Groq 429 (per-model
+    token cap), 404 (unknown model), or 400 model_decommissioned/not_found.
+    Connection errors are retried on the same request; auth/validation errors
+    must surface immediately."""
     status = getattr(e, "status_code", None)
     if status in (429, 404):
         return True
     name = type(e).__name__.lower()
-    return "ratelimit" in name or "429" in str(e)[:60] or "404" in str(e)[:60] or "model_not_found" in str(e)[:200]
+    head = str(e)[:250].lower()
+    if "ratelimit" in name or "429" in str(e)[:60] or "404" in str(e)[:60]:
+        return True
+    return (
+        "model_not_found" in head
+        or "model_decommissioned" in head
+        or "decommissioned" in head
+        or "does not exist" in head
+        or "did not emit" in head
+        or "emit any content" in head
+        or "no content" in head
+    )
 
 
 async def _create_with_fallback(
@@ -56,6 +72,13 @@ async def _create_with_fallback(
     last_exc = None
     for idx, model in enumerate(chain):
         try:
+            kwargs = {}
+            if _is_gpt_oss(model):
+                # gpt-oss spends tokens on hidden reasoning before answering.
+                # Low effort keeps TTFT fast and guarantees visible content
+                # within the token budget (reasoning appears in a separate
+                # field and is never spoken).
+                kwargs["extra_body"] = {"reasoning_effort": "low"}
             return await client.chat.completions.create(
                 model=model,
                 messages=messages,
@@ -63,6 +86,7 @@ async def _create_with_fallback(
                 max_tokens=max_tokens,
                 stream=stream,
                 stop=stop,
+                **kwargs,
             )
         except Exception as e:
             last_exc = e
@@ -102,32 +126,38 @@ async def stream_chat_fast(
         f"You are {agent_name}, a professional human-like telecaller from {company_name} on a live phone call. "
         f"Reply in {lang}. "
         f"Speak naturally and concisely in 1-2 sentences max. Ask only ONE question at a time. "
-        f"Strict Anti-Hallucination: Use ONLY the verified knowledge context below. Never guess or invent fees, dates, or eligibility. "
-        f"Fallback: If information is not in the knowledge, say 'I don't have the exact information available right now. I can help with what I have, or arrange for a counsellor to provide the exact details.'"
+        f"CRITICAL for low latency: your FIRST sentence must be the direct answer in 12 words or fewer; "
+        f"optionally add ONE short follow-up question as the second sentence. "
+        f"Strict Anti-Hallucination: The KNOWLEDGE section below is authoritative and contains the institute's real details. "
+        f"If the knowledge mentions the asked topic — even partially — you MUST answer from it. Never claim information is missing when it is present. "
+        f"Never guess or invent fees, dates, or eligibility. "
+        f"Only if the knowledge truly lacks the topic, say 'I don't have the exact information available right now. I can help with what I have, or arrange for a counsellor to provide the exact details.'"
     )
     if instructions and instructions.strip():
         system += f"\nSpecial Instructions: {instructions.strip()[:200]}"
 
     if context and context.strip():
-        # Hard cap at 800 chars — enough for 4 RAG chunks, keeps prompt small
-        system += f"\n\nKNOWLEDGE:\n{context.strip()[:800]}"
+        # Hard cap at 500 chars — keeps LLM prefill fast (TTFT) while still
+        # covering the top RAG facts for grounded answers
+        system += f"\n\nKNOWLEDGE:\n{context.strip()[:500]}"
 
     # ── Message list: system + last 3 turns + user ───────────────────────────
     messages: List[Dict] = [{"role": "system", "content": system}]
 
     if conversation_history:
-        for turn in conversation_history[-6:]:          # last 3 exchanges (6 msgs)
+        for turn in conversation_history[-4:]:          # last 2 exchanges (4 msgs)
             role = "user" if turn.get("role") == "user" else "assistant"
-            content = str(turn.get("content", ""))[:120]  # hard truncate per turn
+            content = str(turn.get("content", ""))[:100]  # hard truncate per turn
             if content.strip():
                 messages.append({"role": role, "content": content})
 
     messages.append({"role": "user", "content": query})
 
     try:
-        # max_tokens=180 → 1-2 crisp sentences, fast to generate on 8b-instant
+        # max_tokens=180 → 1-2 crisp sentences; low temperature → consistent
+        # grounding behaviour (never randomly refuses answerable questions)
         stream = await _create_with_fallback(
-            messages, temperature=0.25, max_tokens=180, stream=True
+            messages, temperature=0.15, max_tokens=180, stream=True
         )
         async for chunk in stream:
             if not chunk.choices:

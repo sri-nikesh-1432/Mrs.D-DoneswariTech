@@ -297,14 +297,13 @@ async def upload_agent_knowledge(
         # 2. Chunk text
         knowledge.status = KnowledgeStatus.CHUNKING
         await session.commit()
-        chunks = chunk_text(raw_text, source=file.filename)
+        chunks = chunk_text(raw_text, source_document=file.filename)
         knowledge.chunks_count = len(chunks)
 
-        # 3. Generate embeddings
+        # 3. Generate embeddings (pass chunk dicts — embeddings reads c["text"])
         knowledge.status = KnowledgeStatus.EMBEDDING
         await session.commit()
-        chunk_texts = [c["text"] for c in chunks]
-        embeddings = generate_embeddings(chunk_texts)
+        embeddings = generate_embeddings(chunks)
 
         # 4. Save to agent-isolated vector store
         vector_store_manager.save_store(agent.id, chunks, embeddings)
@@ -314,6 +313,11 @@ async def upload_agent_knowledge(
         knowledge.processing_completed_at = datetime.now(timezone.utc)
         agent.status = AgentStatus.READY.value
         await session.commit()
+
+        # Reload ORM state after the heavy sync embedding work so attribute
+        # access below never triggers implicit lazy IO outside the greenlet.
+        await session.refresh(agent)
+        await session.refresh(knowledge)
 
         logger.info("Agent %d knowledge processed successfully: %d chunks", agent.id, len(chunks))
 
@@ -327,10 +331,13 @@ async def upload_agent_knowledge(
 
     except Exception as e:
         logger.error("Agent %d document processing failed: %s", agent.id, e)
-        knowledge.status = KnowledgeStatus.ERROR
-        knowledge.error_message = str(e)
-        agent.status = AgentStatus.DRAFT.value
-        await session.commit()
+        try:
+            knowledge.status = KnowledgeStatus.ERROR
+            knowledge.error_message = str(e)
+            agent.status = AgentStatus.DRAFT.value
+            await session.commit()
+        except Exception as db_err:
+            logger.error("Failed to persist error state: %s", db_err)
         raise HTTPException(status_code=500, detail=f"Document processing error: {e}")
 
 

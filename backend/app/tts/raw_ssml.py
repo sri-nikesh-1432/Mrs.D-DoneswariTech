@@ -38,12 +38,19 @@ class RawSSMLSynth:
 
     The socket stays open across fragments (speech.config is sent once), and is
     transparently reconnected if the server drops it or a request fails.
+
+    A background keepalive task sends an empty speech.config every 15s so the
+    socket never goes stale — without it the first synthesis after an idle gap
+    pays a full reconnect (~400-600ms extra TTFA).
     """
+
+    KEEPALIVE_INTERVAL = 15
 
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
         self._session: Optional[aiohttp.ClientSession] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
+        self._keepalive_task: Optional[asyncio.Task] = None
 
     # -- connection lifecycle ----------------------------------------------
     async def _close_ws(self) -> None:
@@ -88,6 +95,32 @@ class RawSSMLSynth:
             '{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},'
             '"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}\r\n'
         )
+        self._ensure_keepalive()
+
+    # -- keepalive -----------------------------------------------------------
+    def _ensure_keepalive(self) -> None:
+        """Start (or restart) the background ping loop that keeps the Edge
+        socket hot. A stale socket costs a full reconnect on the next turn."""
+        if self._keepalive_task is not None and not self._keepalive_task.done():
+            return
+        self._keepalive_task = asyncio.create_task(self._keepalive_loop())
+
+    async def _keepalive_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.KEEPALIVE_INTERVAL)
+            if self._ws is None or self._ws.closed:
+                continue
+            try:
+                await self._ws.send_str(
+                    f"X-Timestamp:{date_to_string()}\r\n"
+                    "Content-Type:application/json; charset=utf-8\r\n"
+                    "Path:speech.config\r\n\r\n"
+                    "{}\r\n"
+                )
+            except Exception:
+                # Socket died between turns — close it so the next synthesize()
+                # reconnects cleanly instead of timing out on a dead socket.
+                await self._close_ws()
 
     # -- frame reader ------------------------------------------------------
     # A silently-dead (half-open) websocket blocks the frame iterator forever
@@ -220,5 +253,7 @@ async def close_raw_synth() -> None:
     """Close the shared synthesizer (call on app shutdown)."""
     global _raw_synth
     if _raw_synth is not None:
+        if _raw_synth._keepalive_task is not None:
+            _raw_synth._keepalive_task.cancel()
         await _raw_synth.close()
         _raw_synth = None

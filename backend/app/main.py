@@ -78,9 +78,6 @@ async def _warmup_tts() -> None:
         # and starved real calls of the service (greeting TTS hung mid-stream).
         warm_phrases: dict[str, str] = {
             "en-IN-NeerjaNeural": "Hello!",
-            "te-IN-ShrutiNeural": "నమస్కారం",
-            "hi-IN-SwaraNeural": "नमस्ते",
-            "ta-IN-PallaviNeural": "வணக்கம்",
         }
         warmed = 0
         for voice, phrase in warm_phrases.items():
@@ -97,6 +94,68 @@ async def _warmup_tts() -> None:
             logger.warning("TTS warmup produced no audio on any voice")
     except Exception as e:
         logger.warning("TTS warmup failed (non-fatal): %s", e)
+
+COMMON_QUESTIONS = [
+    "What is the fee?",
+    "Do you provide hostel facility?",
+    "What courses do you offer?",
+    "What is the admission process?",
+]
+
+
+async def _preload_common_questions() -> None:
+    """Answer the common questions once against the READY knowledge base and
+    cache both the text and the first-sentence audio. Repeat callers get
+    near-zero-latency replies for exactly the questions they ask most."""
+    from sqlalchemy import select
+    from app.database.connection import AsyncSessionLocal
+    from app.database.models import Knowledge, KnowledgeStatus
+    from app.rag.retriever import retrieve_context, format_context_for_prompt
+    from app.rag.groq_service import stream_chat_fast
+    from app.rag.response_cache import cache_response
+    from app.tts.edge_tts_service import get_tts_service
+    from app.voice.voice_ws import _audio_key, _audio_cache_put
+
+    async with AsyncSessionLocal() as session:
+        row = (
+            await session.execute(
+                select(Knowledge)
+                .where(Knowledge.status == KnowledgeStatus.READY)
+                .order_by(Knowledge.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    if not row:
+        logger.info("Common-question preload skipped: no READY knowledge base")
+        return
+
+    agent_id = row.institute_id
+    tts = get_tts_service()
+    preloaded = 0
+    for q in COMMON_QUESTIONS:
+        try:
+            chunks = await retrieve_context(q, top_k=4, agent_id=agent_id)
+            context = format_context_for_prompt(chunks)
+            parts: list[str] = []
+            async for delta in stream_chat_fast(q, context=context):
+                parts.append(delta)
+            answer = " ".join("".join(parts).split())
+            if not answer:
+                continue
+            await cache_response(q, agent_id, answer)
+            # Cache the first-sentence audio for instant playback
+            first_sentence = answer.split(". ")[0]
+            if not first_sentence.endswith("."):
+                first_sentence += "."
+            audio = await tts.synthesize(first_sentence, language="English")
+            if audio:
+                import base64 as _b64
+                _audio_cache_put(_audio_key(q, agent_id), _b64.b64encode(audio).decode("utf-8"))
+            preloaded += 1
+        except Exception as e:
+            logger.debug("Preload failed for %r: %s", q, e)
+    logger.info("Common questions preloaded for agent %d: %d/%d", agent_id, preloaded, len(COMMON_QUESTIONS))
+
 
 def _ensure_directories() -> None:
     """Create all required runtime directories."""
@@ -129,20 +188,39 @@ async def lifespan(app: FastAPI):
     async def _warmup_background():
         # edge-tts throttles under concurrent load ("No audio was received" +
         # multi-second stalls). Warmups once starved REAL calls of the voice
-        # service, so all pre-synthesis is deferred until the app has been
-        # idle for a while — first-call latency is protected by the audio
-        # cache and sentence-level streaming instead.
-        await asyncio.sleep(180)
+        # service, so pre-synthesis stays minimal here — but the persistent
+        # raw-SSML socket MUST connect at startup, otherwise the first live
+        # turn pays the full TLS+WS handshake (~1.5s) and blows the <700ms
+        # TTFA budget. Warm the primary English voice immediately.
         try:
-            await asyncio.wait_for(_warmup_tts(), timeout=60)
+            await asyncio.wait_for(_warmup_tts(), timeout=45)
         except Exception as e:
             logger.warning("TTS warmup stopped (non-fatal): %s", e)
+        # Warm the SentenceTransformer embedding model OFF the event loop.
+        # Loading it lazily on the first voice turn blocks the whole loop for
+        # ~10s (websocket pings time out and clients disconnect).
+        try:
+            await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    None, lambda: __import__("app.rag.embeddings", fromlist=["_get_model"])._get_model()
+                ),
+                timeout=120,
+            )
+            logger.info("Embedding model warmed up")
+        except Exception as e:
+            logger.warning("Embedding warmup stopped (non-fatal): %s", e)
         try:
             from app.rag.response_cache import warm_tts_cache
             from app.tts.edge_tts_service import get_tts_service
-            await asyncio.wait_for(warm_tts_cache(get_tts_service(), max_entries=2), timeout=120)
+            await asyncio.wait_for(warm_tts_cache(get_tts_service(), max_entries=2), timeout=60)
         except Exception as e:
             logger.warning("TTS cache warmup stopped (non-fatal): %s", e)
+        # Preload the most common admissions questions (text + first-sentence
+        # audio) so the highest-traffic questions answer in <100ms TTFA.
+        try:
+            await asyncio.wait_for(_preload_common_questions(), timeout=240)
+        except Exception as e:
+            logger.warning("Common-question preload stopped (non-fatal): %s", e)
 
     asyncio.create_task(_warmup_background())
     logger.info("Backend ready at http://%s:%d", settings.HOST, settings.PORT)

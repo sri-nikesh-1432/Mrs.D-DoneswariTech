@@ -1,4 +1,20 @@
-import type { VoiceState, ConversationMessage, CallerMemory, WSMessage } from "../types";
+/**
+ * Real-time voice WebSocket client.
+ *
+ * Audio path (matches the server protocol):
+ *   OUT: raw PCM16 mono @16 kHz frames (20ms) for server-side VAD + Whisper STT
+ *   IN:  JSON messages carrying base64 MP3 sentence audio + control events
+ *
+ * Playback is an ordered queue: sentences are decoded ahead of time and
+ * played back-to-back with a natural gap. Barge-in (`speech_start` from the
+ * server) stops playback instantly so the caller can take the floor.
+ */
+
+const BASE_WS = import.meta.env.VITE_WS_URL ?? "ws://localhost:8000";
+
+const SAMPLE_RATE = 16000;
+const FRAME_MS = 20; // match server FRAME_MS
+const FRAME_SAMPLES = (SAMPLE_RATE * FRAME_MS) / 1000; // 320 samples
 
 export type VoiceWSState =
   | "disconnected"
@@ -16,48 +32,69 @@ interface VoiceWSCallbacks {
   onTranscriptFinal?: (text: string) => void;
   onAgentPartial?: (text: string) => void;
   onAgentFinal?: (text: string) => void;
-  onAudioChunk?: (chunk: ArrayBuffer) => void;
-  onMemoryUpdate?: (memory: Partial<CallerMemory>) => void;
-  onCallStarted?: () => void;
-  onCallEnded?: (report: unknown) => void;
-  onLeadScoreUpdate?: (score: { interest: number; conversion: number; intent: string }) => void;
   onError?: (msg: string) => void;
   onAmplitude?: (amplitude: number) => void;
+  onSpeakingChange?: (speaking: boolean) => void;
+  // Legacy hooks kept for old pages; no-ops in the current protocol
+  onMemoryUpdate?: (memory: Record<string, unknown>) => void;
+  onLeadScoreUpdate?: (score: { interest: number; conversion: number; intent: string }) => void;
+  onCallEnded?: (report: unknown) => void;
 }
-
-const BASE_WS = import.meta.env.VITE_WS_URL ?? "ws://localhost:8000";
 
 class VoiceWebSocket {
   private ws: WebSocket | null = null;
-  private instituteId: string | null = null;
+  private agentId: string | null = null;
   private callbacks: VoiceWSCallbacks = {};
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private intentionalClose = false;
+
+  // Mic capture
   private audioCtx: AudioContext | null = null;
-  private analyser: AnalyserNode | null = null;
   private micStream: MediaStream | null = null;
-  private mediaRecorder: MediaRecorder | null = null;
+  private processor: ScriptProcessorNode | null = null;
+  private sourceNode: MediaStreamAudioSourceNode | null = null;
   private amplitudeFrame: number | null = null;
+  private analyser: AnalyserNode | null = null;
+  private micActive = false;
+
+  // Playback queue
+  private playCtx: AudioContext | null = null;
+  private playQueue: Array<{ text: string; buffer: AudioBuffer }> = [];
+  private currentSource: AudioBufferSourceNode | null = null;
+  private playing = false;
+  private playbackDone = true;
+
+  // Transcript assembly
+  private agentTextBuffer = "";
+
   private state: VoiceWSState = "disconnected";
-  private currentBlobQueue: Blob[] = [];
 
   // ─── Connect ──────────────────────────────────────────────────
-  connect(instituteId: string, callbacks: VoiceWSCallbacks): this {
+  connect(agentId: string, callbacks: VoiceWSCallbacks): this {
     this.disconnect();
-    this.instituteId = instituteId;
+    this.intentionalClose = false;
+    this.agentId = agentId;
     this.callbacks = callbacks;
     this._setState("connecting");
-    this.ws = new WebSocket(`${BASE_WS}/ws/voice/${instituteId}`);
+
+    this.ws = new WebSocket(`${BASE_WS}/ws/voice/${agentId}`);
     this.ws.binaryType = "arraybuffer";
 
     this.ws.onopen = () => {
       this._setState("connected");
-      this.ws?.send(JSON.stringify({ type: "hello", institute_id: instituteId }));
+      this.ws?.send(JSON.stringify({
+        type: "hello",
+        mode: "live",                 // live = agent's own FAISS knowledge
+        institute_id: Number(agentId) || 1,
+        conversation_id: `web_${Date.now()}`,
+      }));
     };
 
     this.ws.onmessage = (ev) => this._handleMessage(ev);
     this.ws.onerror = () => this._setState("error");
     this.ws.onclose = (ev) => {
-      if (ev.code !== 1000 && this.state !== "error") {
+      this._stopPlayback();
+      if (ev.code !== 1000 && !this.intentionalClose && this.state !== "error") {
         this._scheduleReconnect();
       } else {
         this._setState("disconnected");
@@ -69,67 +106,96 @@ class VoiceWebSocket {
 
   // ─── Disconnect ───────────────────────────────────────────────
   disconnect(): void {
+    this.intentionalClose = true;
     this._clearReconnect();
     this._stopMic();
+    this._stopPlayback();
     if (this.ws) {
+      try { this.ws.send(JSON.stringify({ type: "end" })); } catch { /* closing */ }
       this.ws.onclose = null;
-      this.ws.close(1000);
+      try { this.ws.close(1000); } catch { /* already closed */ }
       this.ws = null;
     }
     this._setState("disconnected");
   }
 
-  // ─── Mic Control ─────────────────────────────────────────────
+  // ─── Mic Control (streams PCM16 frames to server) ─────────────
   async startMic(): Promise<void> {
-    if (this.micStream) return;
+    if (this.micActive) return;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.callbacks.onError?.("Not connected");
+      return;
+    }
     try {
       this.micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true },
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,   // prevents the agent hearing itself
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
       });
 
-      // Amplitude tracking
-      this.audioCtx = new AudioContext({ sampleRate: 16000 });
+      // Shared AudioContext for capture (16 kHz target)
+      this.audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+      this.sourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
+
+      // Amplitude meter for the visualizer
       this.analyser = this.audioCtx.createAnalyser();
       this.analyser.fftSize = 256;
-      const src = this.audioCtx.createMediaStreamSource(this.micStream);
-      src.connect(this.analyser);
+      this.sourceNode.connect(this.analyser);
       this._trackAmplitude();
 
-      // MediaRecorder → WebSocket
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : "audio/webm";
-
-      this.mediaRecorder = new MediaRecorder(this.micStream, { mimeType, audioBitsPerSecond: 16000 });
-      this.mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0 && this.ws?.readyState === WebSocket.OPEN) {
-          this.ws.send(e.data);
+      // PCM16 frame capture via ScriptProcessor (widely supported, low latency)
+      this.processor = this.audioCtx.createScriptProcessor(FRAME_SAMPLES, 1, 1);
+      this.processor.onaudioprocess = (e) => {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        const f32 = e.inputBuffer.getChannelData(0);
+        // Convert float32 [-1,1] → int16
+        const pcm = new Int16Array(f32.length);
+        for (let i = 0; i < f32.length; i++) {
+          const s = Math.max(-1, Math.min(1, f32[i]));
+          pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
         }
+        this.ws.send(pcm.buffer);
       };
-      this.mediaRecorder.start(100); // 100ms chunks for low latency
-      this._setState("listening");
-    } catch (err) {
+      // Required on some browsers to keep the processor alive
+      const silentGain = this.audioCtx.createGain();
+      silentGain.gain.value = 0;
+      this.sourceNode.connect(this.processor);
+      this.processor.connect(silentGain);
+      silentGain.connect(this.audioCtx.destination);
+
+      this.micActive = true;
+      if (this.state === "connected") this._setState("listening");
+    } catch {
       this.callbacks.onError?.("Microphone access denied.");
       this._setState("error");
     }
   }
 
   stopMic(): void {
+    // Keep the socket; just stop capturing
     this._stopMic();
-    if (this.state === "listening") this._setState("processing");
+    if (this.state === "listening") this._setState("connected");
   }
 
   private _stopMic(): void {
+    this.micActive = false;
     if (this.amplitudeFrame) {
       cancelAnimationFrame(this.amplitudeFrame);
       this.amplitudeFrame = null;
     }
-    this.mediaRecorder?.stop();
-    this.mediaRecorder = null;
+    try { this.processor?.disconnect(); } catch { /* noop */ }
+    try { this.sourceNode?.disconnect(); } catch { /* noop */ }
+    this.processor = null;
+    this.sourceNode = null;
+    this.analyser = null;
     this.micStream?.getTracks().forEach((t) => t.stop());
     this.micStream = null;
-    this.analyser = null;
-    this.audioCtx?.close();
+    if (this.audioCtx && this.audioCtx.state !== "closed") {
+      this.audioCtx.close().catch(() => { /* noop */ });
+    }
     this.audioCtx = null;
   }
 
@@ -137,7 +203,8 @@ class VoiceWebSocket {
     if (!this.analyser) return;
     const buf = new Uint8Array(this.analyser.frequencyBinCount);
     const tick = () => {
-      this.analyser?.getByteFrequencyData(buf);
+      if (!this.analyser) return;
+      this.analyser.getByteFrequencyData(buf);
       const avg = buf.reduce((s, v) => s + v, 0) / buf.length;
       this.callbacks.onAmplitude?.(avg / 128);
       this.amplitudeFrame = requestAnimationFrame(tick);
@@ -145,81 +212,160 @@ class VoiceWebSocket {
     this.amplitudeFrame = requestAnimationFrame(tick);
   }
 
-  // ─── Send text message ────────────────────────────────────────
+  // ─── Send typed text (skips STT) ──────────────────────────────
   sendText(text: string): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: "text_message", text }));
+      this.ws.send(JSON.stringify({ type: "text", text }));
       this._setState("processing");
     }
   }
 
-  // ─── Interrupt TTS playback ───────────────────────────────────
+  // ─── Interrupt playback (local barge-in) ──────────────────────
   interrupt(): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: "interrupt" }));
-    }
+    this._stopPlayback();
   }
 
   // ─── Message handler ──────────────────────────────────────────
   private _handleMessage(ev: MessageEvent): void {
-    if (ev.data instanceof ArrayBuffer) {
-      this.callbacks.onAudioChunk?.(ev.data);
+    if (ev.data instanceof ArrayBuffer) return; // audio comes base64 in JSON
+
+    let msg: { type?: string; [k: string]: unknown };
+    try { msg = JSON.parse(ev.data as string); } catch { return; }
+
+    switch (msg.type) {
+      case "connected":
+        // Greeting arrives right after as `sentence` messages
+        this._setState("greeting");
+        break;
+
+      case "sentence": {
+        const text = String(msg.text ?? "");
+        const audioB64 = msg.audio_data as string | null;
+        this.agentTextBuffer += (this.agentTextBuffer ? " " : "") + text;
+        this.callbacks.onAgentPartial?.(text);
+        if (audioB64) {
+          this._enqueueAudio(text, audioB64);
+        } else {
+          // No audio for this sentence — show text immediately
+          this.callbacks.onAgentFinal?.(text);
+        }
+        break;
+      }
+
+      case "turn_done": {
+        const full = String(msg.ai_response ?? "");
+        if (full) {
+          this.callbacks.onAgentFinal?.(full);
+        }
+        this.agentTextBuffer = "";
+        const debug = (msg.debug_info ?? {}) as Record<string, unknown>;
+        console.info(
+          "[VoiceWS] turn latency",
+          `ttfa=${debug.ttfa_ms ?? "?"}ms total=${debug.total_turn_ms ?? debug.total_time_ms ?? "?"}ms`,
+        );
+        if (this.state !== "disconnected") this._setState("listening");
+        break;
+      }
+
+      case "transcript": {
+        const text = String(msg.text ?? "");
+        if (text) {
+          this.callbacks.onTranscriptPartial?.(text);
+          this.callbacks.onTranscriptFinal?.(text);
+        }
+        this._setState("processing");
+        break;
+      }
+
+      case "processing":
+        this._setState("processing");
+        break;
+
+      case "speech_start":
+        // Barge-in: caller started talking over the agent → cut audio now
+        this._stopPlayback();
+        break;
+
+      case "error":
+        this.callbacks.onError?.(String((msg as { message?: string }).message ?? "Voice error"));
+        break;
+
+      case "pong":
+      default:
+        break;
+    }
+  }
+
+  // ─── Audio playback queue ─────────────────────────────────────
+  private async _enqueueAudio(text: string, audioB64: string): Promise<void> {
+    try {
+      if (!this.playCtx) this.playCtx = new AudioContext();
+      if (this.playCtx.state === "suspended") await this.playCtx.resume();
+
+      const raw = atob(audioB64);
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+
+      const buffer = await this.playCtx.decodeAudioData(bytes.buffer);
+      this.playQueue.push({ text, buffer });
+      this._setState("speaking");
+      this.callbacks.onSpeakingChange?.(true);
+      if (!this.playing) this._playNext();
+    } catch (e) {
+      console.warn("[VoiceWS] audio decode failed", e);
+      this.callbacks.onAgentFinal?.(text);
+    }
+  }
+
+  private _playNext(): void {
+    const item = this.playQueue.shift();
+    if (!item) {
+      this.playing = false;
+      this.playbackDone = true;
+      this.callbacks.onSpeakingChange?.(false);
+      if (this.state === "speaking") this._setState(this.micActive ? "listening" : "connected");
       return;
     }
 
-    let msg: WSMessage;
-    try { msg = JSON.parse(ev.data as string); }
-    catch { return; }
+    this.playing = true;
+    this.playbackDone = false;
 
-    switch (msg.type) {
-      case "agent_state": {
-        const map: Record<string, VoiceWSState> = {
-          idle: "connected",
-          greeting: "greeting",
-          listening: "listening",
-          processing: "processing",
-          speaking: "speaking",
-        };
-        const raw = (msg.data as { state: string }).state ?? "connected";
-        this._setState(map[raw] ?? "connected");
-        break;
+    if (!this.playCtx) {
+      this.playing = false;
+      return;
+    }
+    const source = this.playCtx.createBufferSource();
+    source.buffer = item.buffer;
+    source.connect(this.playCtx.destination);
+    source.onended = () => {
+      this.currentSource = null;
+      if (this.intentionalClose) return;
+      // Natural inter-sentence breath (~250ms), skipped when barged in
+      setTimeout(() => { if (!this.intentionalClose) this._playNext(); }, 250);
+    };
+    this.currentSource = source;
+    source.start();
+  }
+
+  private _stopPlayback(): void {
+    this.playQueue = [];
+    if (this.currentSource) {
+      try { this.currentSource.stop(); } catch { /* already stopped */ }
+      this.currentSource = null;
+    }
+    if (this.playing || !this.playbackDone) {
+      this.playing = false;
+      this.playbackDone = true;
+      this.callbacks.onSpeakingChange?.(false);
+      if (this.state === "speaking" || this.state === "greeting") {
+        this._setState(this.micActive ? "listening" : "connected");
       }
-      case "transcript_partial":
-        this.callbacks.onTranscriptPartial?.((msg.data as { text: string }).text);
-        break;
-      case "transcript_final":
-        this.callbacks.onTranscriptFinal?.((msg.data as { text: string }).text);
-        break;
-      case "agent_response_partial":
-        this.callbacks.onAgentPartial?.((msg.data as { text: string }).text);
-        this._setState("speaking");
-        break;
-      case "agent_response_final":
-        this.callbacks.onAgentFinal?.((msg.data as { text: string }).text);
-        break;
-      case "memory_update":
-        this.callbacks.onMemoryUpdate?.(msg.data as Partial<CallerMemory>);
-        break;
-      case "call_started":
-        this.callbacks.onCallStarted?.();
-        break;
-      case "call_ended":
-        this.callbacks.onCallEnded?.(msg.data);
-        this._setState("disconnected");
-        break;
-      case "lead_score_update":
-        this.callbacks.onLeadScoreUpdate?.(
-          msg.data as { interest: number; conversion: number; intent: string }
-        );
-        break;
-      case "error":
-        this.callbacks.onError?.((msg.data as { message: string }).message ?? "Unknown error");
-        break;
     }
   }
 
   // ─── Helpers ─────────────────────────────────────────────────
   private _setState(s: VoiceWSState): void {
+    if (this.state === s) return;
     this.state = s;
     this.callbacks.onStateChange?.(s);
   }
@@ -227,8 +373,8 @@ class VoiceWebSocket {
   private _scheduleReconnect(): void {
     this._clearReconnect();
     this.reconnectTimer = setTimeout(() => {
-      if (this.instituteId) {
-        this.connect(this.instituteId, this.callbacks);
+      if (this.agentId && !this.intentionalClose) {
+        this.connect(this.agentId, this.callbacks);
       }
     }, 3000);
   }
