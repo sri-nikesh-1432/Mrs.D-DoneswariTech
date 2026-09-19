@@ -521,17 +521,19 @@ async def _transcribe_pcm(pcm_float: np.ndarray) -> dict:
 # WebSocket greeting
 # ---------------------------------------------------------------------------
 
+# Legacy greeting variety templates. {agent_name} is filled from the agent's
+# DB persona at call time — NEVER a hardcoded organization identity (spec §45).
 GREETING_OPENERS: list[str] = [
-    "Hi, thanks for taking my call. I'm Mrs. D, and I wanted to quickly check in with you today.",
-    "Hello there! This is Mrs. D — do you have a minute for a quick chat?",
-    "Hey, I hope I'm not catching you at a bad time. I'm Mrs. D, and I just wanted to speak with you briefly.",
-    "Hi, good to reach you. I'm Mrs. D — I'll keep this short, I promise.",
-    "Hello! This is Mrs. D. If you've got a moment, I'd love to tell you a little about what we offer.",
-    "Hi, this is Mrs. D. Am I speaking with the right person?",
-    "Hello, thanks for picking up. I'm Mrs. D — I'll be brief, I promise.",
-    "Hi there! Mrs. D here. If now's not a good time, I can try another day.",
-    "Hello! This is Mrs. D. I was just calling to share something that might interest you.",
-    "Hi, I hope I'm not disturbing you. I'm Mrs. D — got a minute?",
+    "Hi, thanks for taking my call. I'm {agent_name}, and I wanted to quickly check in with you today.",
+    "Hello there! This is {agent_name} — do you have a minute for a quick chat?",
+    "Hey, I hope I'm not catching you at a bad time. I'm {agent_name}, and I just wanted to speak with you briefly.",
+    "Hi, good to reach you. I'm {agent_name} — I'll keep this short, I promise.",
+    "Hello! This is {agent_name}. If you've got a moment, I'd love to tell you a little about what we offer.",
+    "Hi, this is {agent_name}. Am I speaking with the right person?",
+    "Hello, thanks for picking up. I'm {agent_name} — I'll be brief, I promise.",
+    "Hi there! {agent_name} here. If now's not a good time, I can try another day.",
+    "Hello! This is {agent_name}. I was just calling to share something that might interest you.",
+    "Hi, I hope I'm not disturbing you. I'm {agent_name} — got a minute?",
 ]
 
 
@@ -1003,6 +1005,21 @@ async def _process_turn(
         metrics["first_sentence_text"] = first_sentence_text[:120]
         metrics["llm_error"] = llm_error
         metrics["detected_language"] = detected_lang
+
+        # Persist REAL per-turn latency (spec: 700ms KPI) — measured values
+        # only. ttfa_ms is the measured speech_end → first-audio gap.
+        ai_state["turn_count"] = ai_state.get("turn_count", 0) + 1
+        if metrics.get("ttfa_ms") is not None:
+            from app.rag.latency_recorder import record_turn_latency
+            asyncio.create_task(record_turn_latency(
+                call_id=conversation_id,
+                agent_id=institute_id,
+                turn_index=ai_state["turn_count"],
+                metrics=dict(metrics),
+                source="web",
+                language=detected_lang,
+            ))
+
         logger.info(
             "WS_TURN | conv=%s | lang=%s | stt=%.0fms | rag=%.0fms | "
             "llm_ttft=%.0fms | llm_total=%.0fms | tts_first=%.0fms | "
@@ -1152,25 +1169,45 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
 
     # -- Worker: process queued utterances sequentially ------------------------
     utterance_q: asyncio.Queue = asyncio.Queue()
+    current_turn_task: dict = {"task": None}
+
+    def _cancel_current_turn(reason: str) -> None:
+        """Barge-in: hard-cancel the in-flight turn (spec §35 §LATENCY spec).
+
+        Cancelling the turn task tears down the LLM stream and pending TTS
+        synthesis server-side — the old response must NOT keep generating or
+        keep playing. The client simultaneously stops playback via the
+        speech_start message.
+        """
+        t = current_turn_task.get("task")
+        if t and not t.done():
+            t.cancel()
+            logger.info("BARGE_IN | conv=%s turn cancelled (%s)", conversation_id, reason)
+        current_turn_task["task"] = None
 
     async def _worker():
         while True:
             kind, payload = await utterance_q.get()
             try:
                 if kind == "text":
-                    await _process_turn(
+                    coro = _process_turn(
                         websocket, conversation_id, mode, knowledge_file,
                         language, memory, ai_state, latency, duplicates,
                         lang_detector, text_override=payload,
                         institute_id=institute_id, persona=persona,
                     )
                 else:
-                    await _process_turn(
+                    coro = _process_turn(
                         websocket, conversation_id, mode, knowledge_file,
                         language, memory, ai_state, latency, duplicates,
                         lang_detector, pcm_bytes=payload,
                         institute_id=institute_id, persona=persona,
                     )
+                current_turn_task["task"] = asyncio.create_task(coro)
+                try:
+                    await current_turn_task["task"]
+                except asyncio.CancelledError:
+                    logger.info("WS turn cancelled by barge-in (conv=%s)", conversation_id)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -1235,10 +1272,16 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
 
             is_speech = rms > ENERGY_THRESHOLD
 
-            # Barge-in: caller is talking while Mrs. D speaks → tell the client
-            # to stop playback so the caller can take the floor immediately.
+            # Barge-in: caller is talking while the agent speaks → cancel the
+            # in-flight turn SERVER-SIDE (LLM + TTS stop generating) and tell
+            # the client to stop playback so the caller can take the floor.
             if is_speech and ai_state.get("speaking"):
-                await websocket.send_json({"type": "speech_start"})
+                _cancel_current_turn("speech while agent speaking")
+                ai_state["speaking"] = False
+                try:
+                    await websocket.send_json({"type": "speech_start"})
+                except Exception:
+                    pass
 
             if is_speech:
                 if not speech_started:

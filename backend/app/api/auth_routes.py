@@ -76,6 +76,30 @@ async def get_current_user(
     return user
 
 
+async def require_ownership(
+    user: Optional[User],
+    agent: Optional[Institute],
+) -> Institute:
+    """
+    Strict tenant-isolation gate (spec §17 §63).
+
+    Raises 401 when unauthenticated and 404 (never 403 — do not leak
+    existence) when the agent does not belong to the authenticated user's
+    workspace. Every agent-scoped route MUST call this before returning data.
+    """
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if agent.user_id is not None and agent.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return agent
+
+
 async def get_or_create_default_workspace(user_id: int, session: AsyncSession, company_name: str = "My Organization") -> Workspace:
     """Ensure every user has at least one isolated workspace."""
     result = await session.execute(
@@ -172,23 +196,15 @@ async def get_me(
     authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
-    """Get current user context. Defaults to demo account if unauthenticated."""
+    """Get current user context. Requires authentication (spec §49 §55) —
+    unauthenticated callers get 401, never a fabricated demo account."""
     user = await get_current_user_optional(authorization, session)
     if not user:
-        # Provide demo context so public/unauthenticated UI preview still works gracefully
-        return {
-            "authenticated": False,
-            "user": {
-                "id": 1,
-                "email": "demo@doneswari.ai",
-                "full_name": "Demo User",
-                "company_name": "Doneswari Technologies",
-            },
-            "workspace": {
-                "id": 1,
-                "name": "Doneswari AI Workspace",
-            }
-        }
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     workspace = await get_or_create_default_workspace(
         user.id, session, user.company_name or user.full_name

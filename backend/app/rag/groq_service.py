@@ -11,7 +11,11 @@ from groq import AsyncGroq
 from app.config.settings import settings
 from app.logs.logger import get_logger
 from app.rag.retriever import retrieve_context, format_context_for_prompt, is_knowledge_ready
-from app.rag.prompt_builder import build_prompt, SYSTEM_PROMPT
+from app.rag.prompt_builder import build_prompt  # noqa: F401 (re-exported for legacy importers)
+from app.rag.prompt_builder import build_dynamic_system_prompt, FEW_SHOT_EXAMPLES
+
+# Legacy name kept importable: older modules import SYSTEM_PROMPT from here.
+SYSTEM_PROMPT = build_dynamic_system_prompt()
 
 logger = get_logger(__name__)
 
@@ -221,10 +225,15 @@ async def chat(
     conversation_history: Optional[List[Dict]] = None,
     use_rag: bool = True,
     provided_context: Optional[str] = None,
+    agent_id: Optional[int] = None,
+    agent_name: Optional[str] = None,
+    company_name: Optional[str] = None,
+    agent_instructions: Optional[str] = None,
+    language_hint: Optional[str] = None,
 ) -> Dict:
     """
     Send a query to Groq with RAG context and conversation history.
-    
+
     Args:
         query: The student's message
         student_info: Dict with student details
@@ -232,7 +241,10 @@ async def chat(
         use_rag: Whether to retrieve context from knowledge base
         provided_context: Pre-retrieved context (e.g. Testing Console JSON
             knowledge). When set, this is used INSTEAD of re-querying FAISS.
-        
+        agent_id: Agent whose isolated knowledge store to search (spec §9).
+        agent_name/company_name/agent_instructions/language_hint: dynamic
+            persona (spec §44 §45) — never hardcoded organization facts.
+
     Returns:
         Dict with answer, sources, chunk_ids, scores, and confidence
     """
@@ -245,14 +257,19 @@ async def chat(
     
     try:
         # Use caller-provided context if supplied (JSON retriever, /insert,
-        # or pre-retrieved FAISS chunks) — otherwise retrieve from FAISS.
+        # or pre-retrieved FAISS chunks) — otherwise retrieve from the
+        # AGENT-SCOPED store (spec §9: never a global unrestricted search).
         context = ""
         if provided_context:
             context = provided_context
             logger.info("Using caller-provided context (%d chars)", len(context))
-        elif use_rag and is_knowledge_ready():
+        elif use_rag and (agent_id is None or is_knowledge_ready(agent_id)):
             logger.info("Retrieving context from knowledge base...")
-            retrieved = await retrieve_context(query)
+            retrieved = await retrieve_context(
+                query,
+                conversation_history=conversation_history,
+                agent_id=agent_id,
+            )
             retrieved_chunks = retrieved
             context = format_context_for_prompt(retrieved)
             logger.info(f"Retrieved {len(retrieved)} chunks for query")
@@ -260,9 +277,18 @@ async def chat(
         else:
             logger.warning("RAG disabled or knowledge base not ready")
 
-        # Build prompt
+        # Build prompt (dynamic persona — agent params, spec §44)
         logger.info("Building prompt...")
-        messages = build_prompt(query, context, student_info, conversation_history)
+        messages = build_prompt(
+            query,
+            context,
+            student_info,
+            conversation_history,
+            agent_name=agent_name or "the admissions assistant",
+            company_name=company_name or "the organization",
+            instructions=agent_instructions,
+            language_hint=language_hint or "English",
+        )
         logger.info(f"Prompt built with {len(messages)} messages")
 
         # Get Groq response (auto model-fallback on 429 rate limits)

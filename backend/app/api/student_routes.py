@@ -8,13 +8,14 @@ import os
 import re
 from typing import Optional, List, Dict
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Header
 from pydantic import BaseModel
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.connection import get_database
 from app.database.models import Student, Institute, CallHistory
+from app.api.auth_routes import get_current_user_optional, require_ownership
 from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
@@ -70,19 +71,29 @@ class StudentBatchImportRequest(BaseModel):
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
+async def _owned_agent(
+    agent_id: int,
+    authorization,
+    session: AsyncSession,
+) -> Institute:
+    """Tenant-isolation gate for all student routes (spec §17)."""
+    user = await get_current_user_optional(authorization, session)
+    agent = await session.get(Institute, agent_id)
+    return await require_ownership(user, agent)
+
+
 @router.post("/api/agents/{agent_id}/students/validate")
 async def validate_students_file(
     agent_id: int,
     file: UploadFile = File(...),
+    authorization: str = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
     """
     Validate uploaded student CSV or Excel file.
     Returns preview with counts of valid, invalid, and duplicate entries before committing.
     """
-    agent = await session.get(Institute, agent_id)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    agent = await _owned_agent(agent_id, authorization, session)
 
     content_bytes = await file.read()
     ext = os.path.splitext(file.filename)[1].lower()
@@ -177,12 +188,11 @@ async def validate_students_file(
 async def import_validated_students(
     agent_id: int,
     body: StudentBatchImportRequest,
+    authorization: str = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
     """Commit pre-validated student list to database."""
-    agent = await session.get(Institute, agent_id)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    agent = await _owned_agent(agent_id, authorization, session)
 
     imported_count = 0
     for item in body.students:
@@ -218,12 +228,11 @@ async def import_validated_students(
 async def add_student_manually(
     agent_id: int,
     body: StudentCreateRequest,
+    authorization: str = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
     """Add a student contact manually."""
-    agent = await session.get(Institute, agent_id)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    agent = await _owned_agent(agent_id, authorization, session)
 
     name = _clean_name(body.name)
     if not name:
@@ -275,9 +284,11 @@ async def list_students(
     interest_level: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
+    authorization: str = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
-    """List students with search and filter capabilities."""
+    """List students with search and filter capabilities (tenant-isolated)."""
+    await _owned_agent(agent_id, authorization, session)
     query = select(Student).where(Student.agent_id == agent_id)
 
     if call_status and call_status.lower() != "all":
@@ -326,9 +337,11 @@ async def list_students(
 async def delete_student(
     agent_id: int,
     student_id: int,
+    authorization: str = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
-    """Delete a single student contact."""
+    """Delete a single student contact (tenant-isolated)."""
+    await _owned_agent(agent_id, authorization, session)
     student = await session.get(Student, student_id)
     if not student or student.agent_id != agent_id:
         raise HTTPException(status_code=404, detail="Student not found")
@@ -345,9 +358,11 @@ async def delete_student(
 @router.delete("/api/agents/{agent_id}/students")
 async def clear_all_students(
     agent_id: int,
+    authorization: str = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
-    """Clear all students for an agent."""
+    """Clear all students for an agent (tenant-isolated)."""
+    await _owned_agent(agent_id, authorization, session)
     from sqlalchemy import delete
     await session.execute(delete(Student).where(Student.agent_id == agent_id))
     agent = await session.get(Institute, agent_id)

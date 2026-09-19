@@ -16,9 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.connection import get_database, AsyncSessionLocal
 from app.database.models import (
-    Institute, Knowledge, KnowledgeStatus, AgentStatus, User, Workspace, Student, CallHistory
+    Institute, Knowledge, KnowledgeStatus, AgentStatus, User, Workspace, Student, CallHistory,
+    KnowledgeChunk,
 )
-from app.api.auth_routes import get_current_user_optional, get_or_create_default_workspace
+from app.api.auth_routes import (
+    get_current_user_optional,
+    get_or_create_default_workspace,
+    require_ownership,
+)
 from app.rag.document_processor import validate_file, extract_text
 from app.rag.chunker import chunk_text
 from app.rag.embeddings import generate_embeddings
@@ -37,10 +42,13 @@ _publish_registry: dict = {}
 # ── Schemas ──────────────────────────────────────────────────────────────────
 
 class AgentCreateRequest(BaseModel):
-    name: str = "Aadhya"  # Agent name
-    company_name: str = "Doneswari Technologies"
-    phone_number: Optional[str] = "+91 98765 43210"
-    calling_purpose: Optional[str] = "Admissions and Student Enquiry"
+    # NO hardcoded defaults (spec §3 §45 §55): every workspace configures its
+    # own agent name and organization. The platform must not assume any
+    # particular customer or phone number.
+    name: str
+    company_name: str
+    phone_number: Optional[str] = None
+    calling_purpose: Optional[str] = None
     description: Optional[str] = None
     language: Optional[str] = "en"
     voice: Optional[str] = "en-IN-NeerjaNeural"
@@ -66,7 +74,7 @@ class AgentUpdateRequest(BaseModel):
 
 
 def _format_agent(inst: Institute, knowledge: Optional[Knowledge] = None) -> dict:
-    agent_name = inst.agent_name or inst.name or "Aadhya"
+    agent_name = inst.agent_name or inst.name or "Agent"
     return {
         "id": inst.id,
         "agent_id": inst.institute_id,
@@ -101,16 +109,25 @@ async def create_agent(
     authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
-    """Create a new AI telecaller agent."""
-    user = await get_current_user_optional(authorization, session)
-    user_id = user.id if user else None
-    workspace_id = None
-    if user:
-        ws = await get_or_create_default_workspace(user.id, session, body.company_name)
-        workspace_id = ws.id
+    """Create a new AI telecaller agent. Authentication REQUIRED (spec §3 §63):
+    every agent must be bound to a real user + workspace for tenant isolation."""
+    user = await require_ownership(user=await get_current_user_optional(authorization, session), agent=None) if False else await get_current_user_optional(authorization, session)
+    if not user:
+        from fastapi import status as _status
+        raise HTTPException(
+            status_code=_status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required — sign in to create agents.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user_id = user.id
+    ws = await get_or_create_default_workspace(user.id, session, body.company_name)
+    workspace_id = ws.id
 
     agent_uuid = f"agent_{uuid.uuid4().hex[:10]}"
-    greeting = body.greeting_message or f"Hi, this is {body.name} from {body.company_name}. Is this a good time for a quick conversation?"
+    greeting = body.greeting_message or (
+        f"Hi, this is {body.name} from {body.company_name}. "
+        "Is this a good time for a quick conversation?"
+    )
 
     agent = Institute(
         institute_id=agent_uuid,
@@ -142,30 +159,21 @@ async def list_agents(
 ):
     """List all agents for the current user/workspace, with sensible defaults."""
     user = await get_current_user_optional(authorization, session)
-    query = select(Institute).order_by(Institute.id.desc())
-    if user:
-        query = query.where((Institute.user_id == user.id) | (Institute.user_id == None))
+    if not user:
+        from fastapi import status as _status
+        raise HTTPException(
+            status_code=_status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    # STRICT tenant isolation (spec §17): a user sees ONLY their own agents.
+    query = select(Institute).where(Institute.user_id == user.id).order_by(Institute.id.desc())
 
     result = await session.execute(query)
     agents = result.scalars().all()
 
-    # If no agent exists, ensure default Aadhya agent exists
-    if not agents:
-        default_agent = Institute(
-            institute_id="agent_default",
-            name="Doneswari Technologies",
-            agent_name="Aadhya",
-            phone_number="+91 98765 43210",
-            calling_purpose="Admissions and Student Enquiry",
-            language="en",
-            voice="en-IN-NeerjaNeural",
-            greeting_message="Hi, this is Aadhya from Doneswari. Is this a good time for a quick conversation?",
-            status=AgentStatus.READY.value,
-        )
-        session.add(default_agent)
-        await session.commit()
-        await session.refresh(default_agent)
-        agents = [default_agent]
+    # NOTE (spec §55): no auto-created demo agent. A fresh tenant sees an
+    # empty agent list and must create their own agent — no fake data.
 
     response = []
     for ag in agents:
@@ -179,11 +187,15 @@ async def list_agents(
 
 
 @router.get("/api/agents/{agent_id}")
-async def get_agent(agent_id: int, session: AsyncSession = Depends(get_database)):
-    """Get single agent by numeric ID."""
+async def get_agent(
+    agent_id: int,
+    authorization: Optional[str] = Header(None),
+    session: AsyncSession = Depends(get_database),
+):
+    """Get single agent by numeric ID (tenant-isolated, spec §17)."""
+    user = await get_current_user_optional(authorization, session)
     agent = await session.get(Institute, agent_id)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    await require_ownership(user, agent)
 
     kq = await session.execute(
         select(Knowledge).where(Knowledge.institute_id == agent.id).order_by(Knowledge.id.desc()).limit(1)
@@ -196,12 +208,13 @@ async def get_agent(agent_id: int, session: AsyncSession = Depends(get_database)
 async def update_agent(
     agent_id: int,
     body: AgentUpdateRequest,
+    authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
-    """Update agent configuration."""
+    """Update agent configuration (tenant-isolated, spec §17)."""
+    user = await get_current_user_optional(authorization, session)
     agent = await session.get(Institute, agent_id)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    await require_ownership(user, agent)
 
     if body.agent_name is not None:
         agent.agent_name = body.agent_name
@@ -229,8 +242,11 @@ async def update_agent(
         agent.greeting_message = body.greeting_message
     if body.instructions is not None:
         agent.instructions = body.instructions
-    if body.status is not None:
-        agent.status = body.status
+
+    # NOTE (spec §15 §53): lifecycle status (DRAFT/READY/PUBLISHED/…) is NEVER
+    # settable through a generic config PATCH — it must flow through the
+    # validation gate (POST /save) or the publish/pause endpoints. A client
+    # clicking buttons can never fake an agent into being READY.
 
     await session.commit()
     await session.refresh(agent)
@@ -242,12 +258,245 @@ async def update_agent(
     return _format_agent(agent, k)
 
 
-# ── Knowledge Upload & Agent Training ────────────────────────────────────────
+# ── Save Changes: validation gate (spec §15) ─────────────────────────────
+
+@router.post("/api/agents/{agent_id}/save")
+async def save_agent_changes(
+    agent_id: int,
+    authorization: Optional[str] = Header(None),
+    session: AsyncSession = Depends(get_database),
+):
+    """
+    SAVE CHANGES — the readiness gate (spec §15).
+
+    Validates EVERYTHING before an agent may become READY:
+      * agent name exists
+      * knowledge document exists and finished ingestion
+      * vector index actually exists on disk/memory for THIS agent
+      * voice configuration exists
+      * greeting / configuration valid
+      * tenant ownership valid
+
+    Only after ALL checks pass does the agent transition to READY. On failure
+    it returns the exact reason (spec §54) — never a generic error.
+    """
+    user = await get_current_user_optional(authorization, session)
+    agent = await session.get(Institute, agent_id)
+    await require_ownership(user, agent)
+
+    problems: list[str] = []
+
+    # 1. Agent name exists.
+    if not (agent.agent_name or "").strip():
+        problems.append("Agent name is missing — set it in the configuration form.")
+
+    # 2. Organization name exists (used as the company the agent calls from).
+    if not (agent.name or "").strip():
+        problems.append("Organization name is missing.")
+
+    # 3. Knowledge document exists and completed ingestion.
+    kq = await session.execute(
+        select(Knowledge)
+        .where(Knowledge.institute_id == agent.id, Knowledge.is_active == True)  # noqa: E712
+        .order_by(Knowledge.id.desc())
+        .limit(1)
+    )
+    knowledge = kq.scalar_one_or_none()
+    if not knowledge:
+        problems.append("No knowledge document uploaded — the agent has nothing to answer from.")
+    elif knowledge.status == KnowledgeStatus.PROCESSING or knowledge.ingestion_stage not in (None, "ready"):
+        problems.append(
+            f"Knowledge processing is still in progress "
+            f"(stage: {knowledge.ingestion_stage or knowledge.status.value}). Wait for indexing to finish."
+        )
+    elif knowledge.status == KnowledgeStatus.ERROR:
+        problems.append(f"Knowledge ingestion failed: {knowledge.error_message or 'unknown error'} — re-upload the document.")
+    elif knowledge.status != KnowledgeStatus.READY:
+        problems.append(f"Knowledge is not indexed yet (status: {knowledge.status.value}).")
+
+    # 4. Vector index really exists for THIS agent (not just a DB flag).
+    store = vector_store_manager.get_store(agent.id)
+    if not store.is_ready or not store.chunks:
+        problems.append("Vector index is missing or empty — re-upload the knowledge document to rebuild it.")
+
+    # 5. Voice configuration exists.
+    if not (agent.voice or "").strip():
+        problems.append("Voice is not configured — pick a voice in settings.")
+
+    # 6. Greeting exists (fallback is auto-generated, so this cannot normally fail).
+    if not (agent.greeting_message or "").strip():
+        agent.greeting_message = (
+            f"Hi, this is {agent.agent_name or 'our agent'} from {agent.name or 'the organization'}. "
+            "Is this a good time for a quick conversation?"
+        )
+
+    if problems:
+        raise HTTPException(status_code=400, detail={
+            "message": "Cannot mark agent READY — validation failed.",
+            "errors": problems,
+            "status": agent.status,
+        })
+
+    agent.status = AgentStatus.READY.value
+    await session.commit()
+    await session.refresh(agent)
+
+    logger.info("Agent %d passed SAVE validation → READY (%d chunks indexed)", agent.id, len(store.chunks))
+    return {
+        "status": "ready",
+        "message": f"Agent {agent.agent_name} validated and marked READY — preview is now available.",
+        "chunks_indexed": len(store.chunks),
+        "knowledge_document": knowledge.document_name if knowledge else None,
+        "agent": _format_agent(agent, knowledge),
+    }
+
+
+# ── Knowledge ingestion status (spec §4 §8 §54) ──────────────────────────
+
+@router.get("/api/agents/{agent_id}/knowledge/status")
+async def get_knowledge_status(
+    agent_id: int,
+    authorization: Optional[str] = Header(None),
+    session: AsyncSession = Depends(get_database),
+):
+    """
+    Real ingestion status for the UI pipeline display:
+    Uploading → Extracting → Processing → Chunking → Embedding → Indexing → Ready.
+    Returns the actual stage, chunk count, and the real error when failed.
+    """
+    user = await get_current_user_optional(authorization, session)
+    agent = await session.get(Institute, agent_id)
+    await require_ownership(user, agent)
+
+    kq = await session.execute(
+        select(Knowledge)
+        .where(Knowledge.institute_id == agent_id, Knowledge.is_active == True)  # noqa: E712
+        .order_by(Knowledge.id.desc())
+        .limit(1)
+    )
+    k = kq.scalar_one_or_none()
+
+    store = vector_store_manager.get_store(agent_id)
+
+    if not k:
+        return {
+            "stage": "none",
+            "status": "no_document",
+            "chunks": 0,
+            "indexed": store.is_ready and len(store.chunks) > 0,
+            "message": "No knowledge document uploaded yet.",
+        }
+
+    stage_map = {
+        KnowledgeStatus.WAITING: "waiting",
+        KnowledgeStatus.PROCESSING: "extracting",
+        KnowledgeStatus.CHUNKING: "chunking",
+        KnowledgeStatus.EMBEDDING: "embedding",
+        KnowledgeStatus.READY: "ready",
+        KnowledgeStatus.ERROR: "error",
+    }
+    stage = k.ingestion_stage or stage_map.get(k.status, "unknown")
+
+    resp = {
+        "stage": stage,
+        "status": k.status.value,
+        "document_name": k.document_name,
+        "document_version": k.document_version,
+        "chunks": k.chunks_count or (len(store.chunks) if store.is_ready else 0),
+        "indexed": bool(store.is_ready and store.chunks),
+        "error": k.error_message or k.ingestion_error,
+        "processing_started_at": k.processing_started_at.isoformat() if k.processing_started_at else None,
+        "processing_completed_at": k.processing_completed_at.isoformat() if k.processing_completed_at else None,
+    }
+    if k.status == KnowledgeStatus.READY and resp["indexed"]:
+        resp["message"] = f"Indexed — {resp['chunks']} chunks ready for retrieval."
+    elif k.status == KnowledgeStatus.ERROR:
+        resp["message"] = f"Ingestion failed: {resp['error']}"
+    else:
+        resp["message"] = f"Knowledge processing in progress (stage: {stage})."
+    return resp
+
+
+# ── Knowledge Validation (spec §48) ────────────────────────────────────
+
+@router.post("/api/agents/{agent_id}/validate-knowledge")
+async def validate_agent_knowledge(
+    agent_id: int,
+    authorization: Optional[str] = Header(None),
+    session: AsyncSession = Depends(get_database),
+):
+    """
+    REAL knowledge validation (spec §48): after indexing, run retrieval
+    smoke tests derived from the agent's OWN chunks. Each test must retrieve
+    its source chunk — training never silently reports success.
+    """
+    import random as _random
+
+    user = await get_current_user_optional(authorization, session)
+    agent = await session.get(Institute, agent_id)
+    await require_ownership(user, agent)
+
+    store = vector_store_manager.get_store(agent_id)
+    if not store.is_ready or not store.chunks:
+        raise HTTPException(status_code=400, detail="No indexed knowledge to validate — upload a document first.")
+
+    from app.rag.retriever import retrieve_context
+
+    chunks = store.chunks
+    sample = chunks[:6] if len(chunks) <= 6 else _random.Random(42).sample(chunks, 6)
+
+    tests = []
+    passed = 0
+    for c in sample:
+        text = (c.get("text") or "").strip()
+        if len(text) < 40:
+            continue
+        first_sentence = text.split(".")[0][:120]
+        keywords = " ".join([w for w in text.split() if len(w) > 5][:6])
+        for q in (first_sentence, keywords):
+            if not q:
+                continue
+            try:
+                hits = await retrieve_context(q, top_k=3, min_score=0.0, agent_id=agent_id)
+                ok = any(h.get("text", "")[:60] == text[:60] for h in hits)
+                tests.append({
+                    "question": q[:100],
+                    "retrieved": bool(hits),
+                    "source_found": ok,
+                    "top_score": round(hits[0].get("score", 0), 3) if hits else 0,
+                })
+                if ok:
+                    passed += 1
+            except Exception as e:
+                tests.append({"question": q[:100], "retrieved": False, "source_found": False, "error": str(e)[:120]})
+
+    total = len(tests)
+    if total == 0:
+        raise HTTPException(status_code=400, detail="Chunks too small to validate — document may be empty or malformed.")
+
+    need = max(1, int(total * 0.5))
+    return {
+        "validated": passed >= need,
+        "pass_rate": round(passed / total * 100, 1),
+        "tests_passed": passed,
+        "tests_total": total,
+        "chunks_sampled": len(sample),
+        "tests": tests,
+        "message": (
+            f"Knowledge validation passed: {passed}/{total} retrieval tests found their source chunk."
+            if passed >= need
+            else f"Knowledge validation WEAK: only {passed}/{total} tests retrieved their source — consider a cleaner/structured document."
+        ),
+    }
+
+
+# ── Knowledge Upload & Agent Training ────────────────────────────────────
 
 @router.post("/api/agents/{agent_id}/documents")
 async def upload_agent_knowledge(
     agent_id: int,
     file: UploadFile = File(...),
+    authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
     """
@@ -255,9 +504,9 @@ async def upload_agent_knowledge(
     Extracts text, cleans, chunks, generates embeddings, and saves isolated FAISS index.
     Updates Agent state to READY upon completion.
     """
+    user = await get_current_user_optional(authorization, session)
     agent = await session.get(Institute, agent_id)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    await require_ownership(user, agent)
 
     content_bytes = await file.read()
     is_valid, err = validate_file(file.filename, len(content_bytes))
@@ -272,8 +521,19 @@ async def upload_agent_knowledge(
     with open(saved_path, "wb") as f:
         f.write(content_bytes)
 
-    # Record Knowledge row
+    # Record Knowledge row — document versioning (spec §48): every re-upload
+    # creates a NEW version; the previous version is deactivated so retrieval
+    # never silently serves stale embeddings.
     ext = os.path.splitext(file.filename)[1].lower().lstrip(".")
+    prev_res = await session.execute(
+        select(Knowledge)
+        .where(Knowledge.institute_id == agent.id, Knowledge.is_active == True)  # noqa: E712
+        .order_by(Knowledge.id.desc())
+        .limit(1)
+    )
+    prev_active = prev_res.scalars().first()
+    next_version = (prev_active.document_version + 1) if prev_active else 1
+
     knowledge = Knowledge(
         institute_id=agent.id,
         document_name=file.filename,
@@ -281,8 +541,13 @@ async def upload_agent_knowledge(
         file_path=str(saved_path),
         file_size=len(content_bytes),
         status=KnowledgeStatus.PROCESSING,
+        ingestion_stage="extracting",
+        document_version=next_version,
+        is_active=True,
         processing_started_at=datetime.now(timezone.utc),
     )
+    if prev_active:
+        prev_active.is_active = False
     session.add(knowledge)
     agent.status = AgentStatus.PROCESSING.value
     await session.commit()
@@ -296,22 +561,45 @@ async def upload_agent_knowledge(
 
         # 2. Chunk text
         knowledge.status = KnowledgeStatus.CHUNKING
+        knowledge.ingestion_stage = "chunking"
         await session.commit()
         chunks = chunk_text(raw_text, source_document=file.filename)
         knowledge.chunks_count = len(chunks)
 
         # 3. Generate embeddings (pass chunk dicts — embeddings reads c["text"])
         knowledge.status = KnowledgeStatus.EMBEDDING
+        knowledge.ingestion_stage = "embedding"
         await session.commit()
         embeddings = generate_embeddings(chunks)
 
         # 4. Save to agent-isolated vector store
+        knowledge.ingestion_stage = "indexing"
+        await session.commit()
         vector_store_manager.save_store(agent.id, chunks, embeddings)
 
-        # 5. Mark as READY
+        # 4b. Persist chunk rows so retrieval can cite document/page/section
+        # provenance (spec §5 §8 §14 §51).
+        from app.database.models import KnowledgeChunk
+        for c in chunks:
+            session.add(KnowledgeChunk(
+                agent_id=agent.id,
+                document_id=knowledge.id,
+                chunk_id=c.get("chunk_id", 0),
+                page_number=c.get("page_number"),
+                section=c.get("section"),
+                text=c.get("text", ""),
+                token_count=max(1, len(c.get("text", "")) // 4),
+            ))
+        await session.flush()
+
+        # 5. Mark as READY — knowledge indexed; agent goes back to its
+        # pre-upload lifecycle state (DRAFT agents stay DRAFT until the
+        # user clicks Save Changes, spec §15).
         knowledge.status = KnowledgeStatus.READY
+        knowledge.ingestion_stage = "ready"
         knowledge.processing_completed_at = datetime.now(timezone.utc)
-        agent.status = AgentStatus.READY.value
+        if agent.status == AgentStatus.PROCESSING.value:
+            agent.status = AgentStatus.DRAFT.value
         await session.commit()
 
         # Reload ORM state after the heavy sync embedding work so attribute
@@ -333,17 +621,20 @@ async def upload_agent_knowledge(
         logger.error("Agent %d document processing failed: %s", agent.id, e)
         try:
             knowledge.status = KnowledgeStatus.ERROR
-            knowledge.error_message = str(e)
+            knowledge.error_message = str(e)[:1000]
+            knowledge.ingestion_error = str(e)[:1000]
             agent.status = AgentStatus.DRAFT.value
             await session.commit()
         except Exception as db_err:
             logger.error("Failed to persist error state: %s", db_err)
+        # Show the REAL failure reason, never a fake success (spec §4 §54).
         raise HTTPException(status_code=500, detail=f"Document processing error: {e}")
 
 
 @router.get("/api/agents/{agent_id}/documents")
 async def list_agent_documents(
     agent_id: int,
+    authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
     """List all knowledge documents for this agent."""
@@ -370,12 +661,13 @@ async def list_agent_documents(
 @router.post("/api/agents/{agent_id}/publish")
 async def publish_agent(
     agent_id: int,
+    authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
     """Publish agent to activate real calling campaigns."""
+    user = await get_current_user_optional(authorization, session)
     agent = await session.get(Institute, agent_id)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    await require_ownership(user, agent)
 
     kq = await session.execute(
         select(Knowledge).where(Knowledge.institute_id == agent_id, Knowledge.status == KnowledgeStatus.READY)
@@ -409,12 +701,13 @@ async def publish_agent(
 @router.post("/api/agents/{agent_id}/pause")
 async def pause_agent(
     agent_id: int,
+    authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
     """Pause agent to temporarily halt outbound calling."""
+    user = await get_current_user_optional(authorization, session)
     agent = await session.get(Institute, agent_id)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    await require_ownership(user, agent)
 
     agent.status = AgentStatus.PAUSED.value
     await session.commit()

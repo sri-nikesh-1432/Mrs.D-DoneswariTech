@@ -13,10 +13,11 @@ import asyncio
 
 from app.database.connection import get_database
 from app.database.models import Institute, Knowledge, KnowledgeStatus
+from app.config.settings import settings
 from app.uploads.document_service import DocumentService
 from app.rag.chunker import chunk_text
 from app.rag.embeddings import generate_embeddings
-from app.rag.vector_store import vector_store
+from app.rag.vector_store import vector_store_manager  # agent-isolated stores (spec §2 §9)
 from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
@@ -129,11 +130,10 @@ async def process_document(session: AsyncSession, knowledge: Knowledge, file_pat
     try:
         logger.info(f"=== RAG PIPELINE START: Processing document {knowledge.document_name} ===")
         
-        # IMPORTANT: Delete old vectors for this institute before creating new ones
-        # This ensures only ONE active knowledge base per institute
-        logger.info(f"Clearing old vectors for institute {knowledge.institute_id}...")
-        vector_store.clear()
-        logger.info("Old vectors cleared")
+        # IMPORTANT: agent-isolated vector store (spec §2 §9). Every rebuild
+        # targets THIS agent's store only — never a shared/global store.
+        agent_store = vector_store_manager.get_store(knowledge.institute_id)
+        logger.info(f"Rebuilding isolated vector store for agent {knowledge.institute_id}...")
         
         # Update status to processing
         knowledge.status = KnowledgeStatus.PROCESSING
@@ -177,16 +177,16 @@ async def process_document(session: AsyncSession, knowledge: Knowledge, file_pat
         
         logger.info(f"Generated {embeddings.shape[0]} embeddings")
         
-        # Build vector store (simplified - no quality gate for speed)
+        # Build the AGENT-SCOPED vector store (spec §9)
         logger.info("Building vector store...")
-        vector_store.build_index(chunks, embeddings)
+        agent_store.build_index(chunks, embeddings)
         
-        logger.info(f"Vector store ready with {len(vector_store.chunks)} chunks")
+        logger.info(f"Vector store ready with {len(agent_store.chunks)} chunks")
         
-        # Save vector store
-        vector_store_path = f"knowledge_{knowledge.institute_id}"
-        vector_store.save(str(file_path.parent / vector_store_path))
-        logger.info(f"Vector store saved to {vector_store_path}")
+        # Persist to the standard agent path so restarts reload THIS agent's index
+        save_path = settings.BASE_DIR / "knowledge" / f"agent_{knowledge.institute_id}" / "index"
+        agent_store.save(str(save_path))
+        logger.info(f"Vector store saved to {save_path}")
         
         # Update knowledge record
         knowledge.status = KnowledgeStatus.READY
@@ -204,6 +204,7 @@ async def process_document(session: AsyncSession, knowledge: Knowledge, file_pat
         knowledge.status = KnowledgeStatus.ERROR
         knowledge.error_message = str(e)
         await session.commit()
+        raise
 
 
 @router.get("/status/{institute_id}")
@@ -263,8 +264,8 @@ async def delete_knowledge(
         document_service = DocumentService()
         await document_service.delete_file(knowledge.file_path)
         
-        # Clear vector store
-        vector_store.clear()
+        # Clear THIS agent's isolated store only (spec §2 §9)
+        vector_store_manager.get_store(knowledge.institute_id).clear()
         
         # Delete database record
         await session.delete(knowledge)

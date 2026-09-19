@@ -17,7 +17,7 @@ const NAV_AGENT = [
   { to: "overview", label: "Overview", icon: Bot },
   { to: "test", label: "Voice Test", icon: PhoneCall },
   { to: "students", label: "Students", icon: Users },
-  { to: "campaign", label: "Calling", icon: PhoneCall },
+  { to: "campaign", label: "Start Calls", icon: PhoneCall },
   { to: "analytics", label: "Analytics", icon: BarChart3 },
 ];
 
@@ -57,6 +57,7 @@ export default function Sidebar({ workspaceName, userName, onLogout }: SidebarPr
       {/* Global nav */}
       <nav className="px-3 pt-4 space-y-0.5">
         <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--gray-400)] px-3 pb-1.5">Platform</div>
+        <SideLink to="/home" icon={LayoutDashboard} label="Home" end />
         <SideLink to="/dashboard" icon={LayoutDashboard} label="Dashboard" end />
         <SideLink to="/agents" icon={Bot} label="Agents" end />
         <SideLink to="/settings" icon={Settings} label="Settings" end />

@@ -1,13 +1,22 @@
 import React, { useState, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useParams } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import {
-  Upload, FileText, Loader2, CheckCircle2, Rocket, Pause, Bot, Save, Trash2,
+  Upload, FileText, Loader2, CheckCircle2, Rocket, Pause, Bot, Save,
+  PhoneCall, XCircle, AlertTriangle, Database, Headphones,
 } from "lucide-react";
-import { getAgent, updateAgent, uploadAgentDocument, listAgentDocuments, publishAgent, pauseAgent } from "../services/api";
+import {
+  getAgent, updateAgent, listAgentDocuments, publishAgent, pauseAgent,
+  saveAgentChanges, parseSaveError, getKnowledgeStatus, startTestCall, getTestCallStatus,
+} from "../services/api";
+import type { TestCallStatus } from "../services/api";
+import TrainingPanel from "../components/TrainingPanel";
 import { StatusChip } from "./Dashboard";
 
 const ALLOWED = ".pdf,.docx,.txt,.csv,.xlsx,.xls";
+
+// Ingestion pipeline stages displayed to the user (spec §4)
+const STAGES = ["extracting", "chunking", "embedding", "indexing", "ready"];
 
 export default function AgentOverview() {
   const { agentId } = useParams<{ agentId: string }>();
@@ -26,15 +35,37 @@ export default function AgentOverview() {
     enabled: !!agentId,
   });
 
-  const [uploading, setUploading] = useState(false);
-  const [uploadPct, setUploadPct] = useState(0);
-  const [uploadMsg, setUploadMsg] = useState("");
+  // Real ingestion status — polled while processing (spec §4 §53)
+  const isProcessing = agent?.status === "processing";
+  const { data: kStatus } = useQuery({
+    queryKey: ["knowledge-status", agentId],
+    queryFn: () => getKnowledgeStatus(agentId!),
+    enabled: !!agentId,
+    refetchInterval: isProcessing ? 1500 : false,
+  });
+
   const [publishing, setPublishing] = useState(false);
   const [toast, setToast] = useState("");
+  const [toastKind, setToastKind] = useState<"info" | "error">("info");
   const [saving, setSaving] = useState(false);
+  const [saveErrors, setSaveErrors] = useState<string[]>([]);
   const [form, setForm] = useState<{ agent_name?: string; company_name?: string; greeting_message?: string; instructions?: string } | null>(null);
 
-  // Sync local edit form when agent loads
+  // Test call state (spec §33)
+  const [showTestCall, setShowTestCall] = useState(false);
+  const [testPhone, setTestPhone] = useState("");
+  const [testCalling, setTestCalling] = useState(false);
+  const [testCallId, setTestCallId] = useState<string | null>(null);
+  const [testError, setTestError] = useState("");
+
+  // Live poll of REAL provider status while a test call is active
+  const { data: liveStatus } = useQuery({
+    queryKey: ["test-call-status", agentId, testCallId],
+    queryFn: () => getTestCallStatus(agentId!, testCallId!),
+    enabled: !!testCallId && !!agentId,
+    refetchInterval: 2000,
+  });
+
   React.useEffect(() => {
     if (agent && !form) {
       setForm({
@@ -46,21 +77,44 @@ export default function AgentOverview() {
     }
   }, [agent, form]);
 
-  const handleUpload = async (file: File) => {
-    if (!agentId) return;
-    setUploading(true);
-    setUploadPct(0);
-    setUploadMsg("Uploading & processing document…");
+  // Stop polling when the call reaches a terminal state
+  React.useEffect(() => {
+    const s = liveStatus?.call_status;
+    if (s && ["Completed", "No Answer", "Busy", "Failed", "Cancelled"].includes(s)) {
+      setTimeout(() => setTestCallId(null), 2500);
+    }
+  }, [liveStatus?.call_status]);
+
+  const showToast = (msg: string, kind: "info" | "error" = "info") => {
+    setToast(msg);
+    setToastKind(kind);
+    setTimeout(() => setToast(""), 5000);
+  };
+
+  // SAVE CHANGES = the validation gate (spec §15). Backend returns the exact
+  // list of failed checks; the agent becomes READY only when all pass.
+  const handleSave = async () => {
+    if (!agentId || !form) return;
+    setSaving(true);
+    setSaveErrors([]);
     try {
-      const res = await uploadAgentDocument(agentId, file, setUploadPct);
-      setUploadMsg(`${res.message} (${res.chunks_count} chunks)`);
+      // 1. Persist configuration fields.
+      await updateAgent(agentId, {
+        agent_name: form.agent_name,
+        company_name: form.company_name,
+        greeting_message: form.greeting_message,
+        instructions: form.instructions,
+      });
+      // 2. Run the readiness validation gate.
+      const res = await saveAgentChanges(agentId);
+      showToast(res.message);
       await queryClient.invalidateQueries({ queryKey: ["agent", agentId] });
-      await queryClient.invalidateQueries({ queryKey: ["agent-documents", agentId] });
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      setUploadMsg(detail || "Upload failed");
+      const parsed = parseSaveError(err);
+      setSaveErrors(parsed.errors);
+      showToast(parsed.message, "error");
     } finally {
-      setUploading(false);
+      setSaving(false);
     }
   };
 
@@ -69,13 +123,11 @@ export default function AgentOverview() {
     setPublishing(true);
     try {
       const res = await publishAgent(agentId);
-      setToast(res.message);
+      showToast(res.message);
       await queryClient.invalidateQueries({ queryKey: ["agent", agentId] });
-      setTimeout(() => setToast(""), 4000);
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      setToast(detail || "Publish failed");
-      setTimeout(() => setToast(""), 4000);
+      showToast(detail || "Publish failed", "error");
     } finally {
       setPublishing(false);
     }
@@ -84,26 +136,24 @@ export default function AgentOverview() {
   const handlePause = async () => {
     if (!agentId) return;
     const res = await pauseAgent(agentId);
-    setToast(res.message);
+    showToast(res.message);
     await queryClient.invalidateQueries({ queryKey: ["agent", agentId] });
-    setTimeout(() => setToast(""), 4000);
   };
 
-  const handleSave = async () => {
-    if (!agentId || !form) return;
-    setSaving(true);
+  const handleTestCall = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!agentId || !testPhone.trim()) return;
+    setTestCalling(true);
+    setTestError("");
     try {
-      await updateAgent(agentId, {
-        agent_name: form.agent_name,
-        company_name: form.company_name,
-        greeting_message: form.greeting_message,
-        instructions: form.instructions,
-      });
-      await queryClient.invalidateQueries({ queryKey: ["agent", agentId] });
-      setToast("Settings saved");
-      setTimeout(() => setToast(""), 3000);
+      const res = await startTestCall(agentId, testPhone.trim());
+      setTestCallId(res.call_id);
+      showToast(res.message);
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setTestError(typeof detail === "string" ? detail : "Test call failed");
     } finally {
-      setSaving(false);
+      setTestCalling(false);
     }
   };
 
@@ -116,9 +166,12 @@ export default function AgentOverview() {
     );
   }
 
+  const isReady = agent.status === "ready" || agent.status === "published";
+  const stageIdx = kStatus ? STAGES.indexOf(kStatus.stage) : -1;
+
   return (
     <div className="max-w-4xl mx-auto px-6 py-8">
-      {/* Header */}
+      {/* Header with knowledge stats (spec §62) */}
       <div className="flex items-start justify-between mb-6">
         <div className="flex items-center gap-3.5">
           <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[var(--sky-400)] to-[var(--sky-600)] flex items-center justify-center text-white font-bold text-lg">
@@ -130,6 +183,19 @@ export default function AgentOverview() {
               <StatusChip status={agent.status} />
             </div>
             <p className="text-sm text-[var(--gray-500)]">{agent.name} · {agent.calling_purpose}</p>
+            <div className="flex items-center gap-3 mt-1 text-[11.5px] text-[var(--gray-500)]">
+              <span className="flex items-center gap-1">
+                <Database className="w-3 h-3" />
+                {kStatus?.chunks ? `${kStatus.chunks.toLocaleString()} chunks` : "no chunks"}
+                {kStatus?.indexed ? " · Indexed" : ""}
+              </span>
+              <span className="flex items-center gap-1">
+                <Headphones className="w-3 h-3" /> Voice configured
+              </span>
+              <span>
+                Preview: {isReady ? "Available" : "Locked until Save"}
+              </span>
+            </div>
           </div>
         </div>
         <div className="flex gap-2">
@@ -140,8 +206,8 @@ export default function AgentOverview() {
           ) : (
             <button
               onClick={handlePublish}
-              disabled={publishing || !agent.knowledge_ready}
-              title={agent.knowledge_ready ? "" : "Upload knowledge document first"}
+              disabled={publishing || !isReady}
+              title={isReady ? "" : "Agent must be READY first — click Save Changes"}
               className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg px-4 py-2"
             >
               {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
@@ -152,61 +218,54 @@ export default function AgentOverview() {
       </div>
 
       {toast && (
-        <div className="mb-5 text-sm text-[var(--sky-800)] bg-[var(--sky-50)] border border-[var(--sky-200)] rounded-lg px-4 py-2.5">{toast}</div>
+        <div className={`mb-5 text-sm rounded-lg px-4 py-2.5 border ${
+          toastKind === "error"
+            ? "text-red-800 bg-red-50 border-red-200"
+            : "text-[var(--sky-800)] bg-[var(--sky-50)] border-[var(--sky-200)]"
+        }`}>{toast}</div>
       )}
 
-      {/* Knowledge upload */}
+      {/* Save validation failures — the exact checks that failed (spec §15 §54) */}
+      {saveErrors.length > 0 && (
+        <div className="mb-5 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+          <div className="flex items-center gap-2 text-[13px] font-semibold text-amber-800 mb-1.5">
+            <AlertTriangle className="w-4 h-4" /> Cannot mark agent READY — fix these:
+          </div>
+          <ul className="space-y-1">
+            {saveErrors.map((e, i) => (
+              <li key={i} className="text-[12.5px] text-amber-700 flex items-start gap-1.5">
+                <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {e}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* REAL training pipeline (spec §9 §10) — replaces the inline upload box */}
+      <TrainingPanel agentId={agentId!} onReady={() => queryClient.invalidateQueries({ queryKey: ["agent", agentId] })} />
+
+      {/* Knowledge documents list */}
       <section className="glass rounded-[var(--radius-md)] p-5 shadow-[var(--shadow-sm)] mb-5">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-[15px] font-semibold text-[var(--gray-800)] flex items-center gap-2">
             <FileText className="w-4 h-4 text-[var(--sky-600)]" /> Knowledge Base
           </h2>
-          {agent.knowledge_ready && (
+          {kStatus?.indexed && (
             <span className="flex items-center gap-1 text-[12px] font-semibold text-emerald-700">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Agent Ready
+              <CheckCircle2 className="w-3.5 h-3.5" /> Indexed
             </span>
           )}
         </div>
 
-        <div
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            const f = e.dataTransfer.files?.[0];
-            if (f) handleUpload(f);
-          }}
-          onClick={() => fileInputRef.current?.click()}
-          className="border-2 border-dashed border-[var(--gray-300)] hover:border-[var(--sky-400)] rounded-[var(--radius-md)] py-8 flex flex-col items-center justify-center cursor-pointer transition-colors bg-white/50"
-        >
-          {uploading ? (
-            <>
-              <Loader2 className="w-7 h-7 text-[var(--sky-500)] animate-spin mb-2" />
-              <div className="text-sm text-[var(--gray-600)]">{uploadMsg}</div>
-              <div className="w-56 h-1.5 bg-[var(--gray-100)] rounded-full mt-3 overflow-hidden">
-                <div className="h-full bg-[var(--sky-500)] rounded-full transition-all" style={{ width: `${uploadPct}%` }} />
-              </div>
-            </>
-          ) : (
-            <>
-              <Upload className="w-7 h-7 text-[var(--gray-400)] mb-2" />
-              <div className="text-sm font-medium text-[var(--gray-700)]">Drop knowledge document or click to upload</div>
-              <div className="text-[12px] text-[var(--gray-500)] mt-1">PDF, DOCX, TXT, CSV, XLSX — up to 50 MB</div>
-            </>
-          )}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={ALLOWED}
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) handleUpload(f);
-              e.target.value = "";
-            }}
-          />
-        </div>
+        {/* Upload failure reason is shown inside TrainingPanel; list lives below */}
 
-        {uploadMsg && !uploading && <div className="mt-3 text-[13px] text-[var(--gray-600)]">{uploadMsg}</div>}
+        {/* Real failure reason (spec §54) */}
+        {kStatus?.status === "error" && kStatus.error && (
+          <div className="mt-3 flex items-start gap-2 text-[12.5px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-3.5 py-2.5">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span><strong>Ingestion failed:</strong> {kStatus.error}</span>
+          </div>
+        )}
 
         {documents && documents.length > 0 && (
           <div className="mt-4 space-y-2">
@@ -223,6 +282,68 @@ export default function AgentOverview() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+      </section>
+
+      {/* Test Call — REAL phone call (spec §33) */}
+      <section className="glass rounded-[var(--radius-md)] p-5 shadow-[var(--shadow-sm)] mb-5">
+        <h2 className="text-[15px] font-semibold text-[var(--gray-800)] flex items-center gap-2 mb-1">
+          <PhoneCall className="w-4 h-4 text-[var(--sky-600)]" /> Test Call
+        </h2>
+        <p className="text-[12.5px] text-[var(--gray-500)] mb-4">
+          Enter your real phone number — the agent will actually call you. Requires telephony credentials on the server.
+        </p>
+        {isReady ? (
+          <form onSubmit={handleTestCall} className="flex flex-col gap-3">
+            <div className="flex gap-2.5">
+              <input
+                type="tel"
+                value={testPhone}
+                onChange={(e) => setTestPhone(e.target.value)}
+                placeholder="+91 98765 43210"
+                className="flex-1 bg-white border border-[var(--gray-200)] rounded-lg px-3.5 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
+              />
+              <button
+                type="submit"
+                disabled={testCalling || !testPhone.trim()}
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg px-5 py-2.5"
+              >
+                {testCalling ? <Loader2 className="w-4 h-4 animate-spin" /> : <PhoneCall className="w-4 h-4" />}
+                Test Call
+              </button>
+            </div>
+            {testError && (
+              <div className="text-[12.5px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-3.5 py-2.5">{testError}</div>
+            )}
+            {testCallId && liveStatus && (
+              <div className="bg-white border border-[var(--gray-100)] rounded-lg px-4 py-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[12px] font-semibold text-[var(--gray-500)] uppercase tracking-wide">Live Provider Status</span>
+                  <span className={`text-[12px] font-bold px-2.5 py-0.5 rounded-full ${
+                    ["Completed"].includes(liveStatus.call_status) ? "bg-emerald-50 text-emerald-700"
+                    : ["No Answer", "Busy", "Failed", "Cancelled"].includes(liveStatus.call_status) ? "bg-red-50 text-red-700"
+                    : "bg-[var(--sky-50)] text-[var(--sky-700)] animate-pulse"
+                  }`}>{liveStatus.provider_status || liveStatus.call_status}</span>
+                </div>
+                {liveStatus.events.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {liveStatus.events.map((ev, i) => (
+                      <span key={i} className="text-[10.5px] bg-[var(--gray-50)] text-[var(--gray-600)] px-2 py-0.5 rounded-full">
+                        {ev.event_type}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <p className="text-[11.5px] text-[var(--gray-400)] mt-2">
+                  Status comes from REAL provider events — not simulated (spec §34 §63).
+                </p>
+              </div>
+            )}
+          </form>
+        ) : (
+          <div className="text-[12.5px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3.5 py-2.5">
+            Agent must be READY (or PUBLISHED) before test calls. Click <strong>Save Changes</strong> after the knowledge index finishes.
           </div>
         )}
       </section>
@@ -249,7 +370,24 @@ export default function AgentOverview() {
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save Changes
           </button>
         </div>
+        <p className="text-[11.5px] text-[var(--gray-400)] mt-3">
+          Save runs full validation: name, knowledge ingestion, vector index, voice config. Agent becomes READY only when everything passes.
+        </p>
       </section>
+
+      {/* Preview gate — only when READY (spec §15 §16 §29) */}
+      {isReady ? (
+        <Link
+          to={`/agent/${agentId}/test`}
+          className="mt-5 flex items-center justify-center gap-2 w-full glass rounded-[var(--radius-md)] p-4 text-sm font-semibold text-[var(--sky-700)] hover:bg-[var(--sky-50)] transition-colors"
+        >
+          <Headphones className="w-4 h-4" /> Open Voice Preview — talks to the real agent runtime
+        </Link>
+      ) : (
+        <div className="mt-5 flex items-center justify-center gap-2 w-full glass rounded-[var(--radius-md)] p-4 text-[12.5px] text-[var(--gray-400)]">
+          <Headphones className="w-4 h-4" /> Preview unlocks after Save Changes marks the agent READY (spec §15)
+        </div>
+      )}
     </div>
   );
 }

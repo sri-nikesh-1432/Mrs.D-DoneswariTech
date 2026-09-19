@@ -248,13 +248,62 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# ── CORS ──────────────────────────────────────────────────────────────────────
+# ── Security headers (spec §63) ──────────────────────────────────────────────
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "microphone=(self)"
+    return response
+
+# ── CORS — restricted to configured origins (spec §63) ───────────────────────
+# ALLOWED_ORIGINS defaults to ["*"] for local dev (credentials off per the CORS
+# spec); production operators set explicit origins in .env.
+_allowed = settings.ALLOWED_ORIGINS or ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed,
+    allow_credentials="*" not in _allowed,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Simple in-memory rate limiter (spec §63) ─────────────────────────────────
+# Fixed-window per client IP for sensitive endpoints (auth + call initiation).
+# Swap the dict for Redis when scaling beyond a single worker.
+import time as _time
+import collections as _collections
+
+_RATE_BUCKETS: dict = {}
+_RATE_RULES = {
+    "/api/auth/login": (10, 60),      # 10/min per IP
+    "/api/auth/signup": (6, 60),      # 6/min per IP
+    "/api/agents/": (60, 60),         # 60/min for agent action routes
+}
+
+@app.middleware("http")
+async def rate_limit(request, call_next):
+    path = request.url.path
+    rule = None
+    for prefix, r in _RATE_RULES.items():
+        if path.startswith(prefix):
+            rule = r
+            break
+    if rule and request.method in ("POST", "PUT", "DELETE"):
+        limit, window = rule
+        ip = request.client.host if request.client else "unknown"
+        key = f"{ip}:{path.rsplit('/', 1)[0] or path}"
+        now = _time.time()
+        dq = _RATE_BUCKETS.setdefault(key, _collections.deque())
+        while dq and dq[0] < now - window:
+            dq.popleft()
+        if len(dq) >= limit:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=429, content={"detail": "Too many requests — slow down."})
+        dq.append(now)
+    return await call_next(request)
 
 # ── Static Files ──────────────────────────────────────────────────────────────
 app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
@@ -266,6 +315,7 @@ from app.api.receptionist_routes import router as receptionist_router
 from app.api.conversation_routes import router as conversation_router
 from app.api.analytics_routes import router as analytics_router
 from app.api.telephony_routes import router as telephony_router
+from app.api.telephony_routes import agent_telephony_router
 from app.voice.voice_ws import router as voice_ws_router
 from app.api.onboard_routes import router as onboard_router
 from app.api.agent_routes import router as agent_router
@@ -279,6 +329,7 @@ app.include_router(receptionist_router)
 app.include_router(conversation_router)
 app.include_router(analytics_router)
 app.include_router(telephony_router)
+app.include_router(agent_telephony_router)
 app.include_router(voice_ws_router)
 app.include_router(onboard_router)
 app.include_router(agent_router)
@@ -300,30 +351,75 @@ async def root():
 
 @app.get("/health", tags=["Health"])
 async def health_check():
-    """Health check endpoint returning actual status (spec §50)."""
+    """
+    Health check with per-component statuses (spec §67):
+    backend, database, vector DB, LLM, embedding, telephony config, realtime.
+    Returns REAL statuses — never fabricated.
+    """
     from datetime import datetime, timezone
-    from app.rag.vector_store import vector_store
+    from sqlalchemy import text as _sql_text
+    from app.database.connection import engine
+    from app.rag.vector_store import vector_store_manager
     from app.tts.edge_tts_service import get_tts_service
-    
-    # Check RAG status
-    rag_ready = vector_store.is_ready
-    
-    # Check voice/TTS status
+    from app.telephony.twilio_service import twilio_service
+
+    components: dict = {}
+
+    # 1. Backend process — implicit; we are serving this request.
+    components["backend"] = "healthy"
+
+    # 2. Database — real connectivity probe.
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(_sql_text("SELECT 1"))
+        components["database"] = "healthy"
+    except Exception as e:
+        components["database"] = f"unhealthy: {str(e)[:120]}"
+
+    # 3. Vector DB — any agent store ready on disk/memory.
+    try:
+        any_ready = any(
+            s.is_ready for s in vector_store_manager._stores.values()
+        )
+        if not any_ready:
+            # Check the default agent_1 path on disk.
+            from pathlib import Path
+            any_ready = (settings.BASE_DIR / "knowledge" / "agent_1" / "index.index").exists()
+        components["vector_db"] = "ready" if any_ready else "no_index_built"
+    except Exception as e:
+        components["vector_db"] = f"unhealthy: {str(e)[:120]}"
+
+    # 4. LLM — configuration presence (a real call probe would burn quota).
+    components["llm"] = "configured" if settings.is_groq_configured else "not_configured"
+
+    # 5. Embedding service — model loadable flag (loaded lazily).
+    try:
+        from app.rag.embeddings import _model as _emb_model
+        components["embedding"] = "model_loaded" if _emb_model is not None else "lazy_load_on_first_use"
+    except Exception:
+        components["embedding"] = "lazy_load_on_first_use"
+
+    # 6. Voice/TTS.
     try:
         tts = get_tts_service()
-        voice_ready = tts is not None
-    except Exception:
-        voice_ready = False
-    
-    # Check realtime WebSocket (basic check - actual connection tested on connect)
-    realtime_ready = True  # WebSocket endpoint is always available
-    
+        components["voice"] = "ready" if tts is not None else "not_ready"
+    except Exception as e:
+        components["voice"] = f"unhealthy: {str(e)[:120]}"
+
+    # 7. Telephony — real credential presence (spec §32 §54).
+    components["telephony"] = (
+        "configured" if twilio_service.is_configured()
+        else "not_configured (real calls disabled — set TWILIO_* env vars)"
+    )
+
+    # 8. Realtime voice WS — endpoint mounted means available.
+    components["realtime"] = "ready"
+
+    unhealthy = [k for k, v in components.items() if str(v).startswith("unhealthy")]
     return {
-        "status": "healthy" if (rag_ready and voice_ready and realtime_ready) else "degraded",
+        "status": "unhealthy" if unhealthy else "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "rag": "ready" if rag_ready else "not_ready",
-        "voice": "ready" if voice_ready else "not_ready",
-        "realtime": "ready" if realtime_ready else "not_ready",
+        "components": components,
         "groq_configured": settings.is_groq_configured,
         "models": {
             "llm": settings.GROQ_MODEL,
@@ -335,5 +431,5 @@ async def health_check():
             "port": settings.PORT,
             "version": "2.0.0",
         },
-        "agent": "Mrs. D",
+        "platform": "AI Telecaller SaaS",
     }

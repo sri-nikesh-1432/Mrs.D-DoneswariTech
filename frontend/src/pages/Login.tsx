@@ -26,20 +26,6 @@ export default function Login() {
     }
   };
 
-  const handleDemo = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      await login("demo@doneswari.ai", "demo1234");
-      navigate("/dashboard");
-    } catch {
-      // Demo account may not exist — continue to dashboard in preview mode
-      navigate("/dashboard");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-sky-gradient flex items-center justify-center px-4">
       <motion.div
@@ -102,21 +88,7 @@ export default function Login() {
             </button>
           </form>
 
-          <div className="flex items-center gap-3 my-5">
-            <div className="flex-1 h-px bg-[var(--gray-200)]" />
-            <span className="text-[11px] text-[var(--gray-400)] uppercase tracking-wide">or</span>
-            <div className="flex-1 h-px bg-[var(--gray-200)]" />
-          </div>
-
-          <button
-            onClick={handleDemo}
-            disabled={loading}
-            className="w-full text-sm font-medium text-[var(--sky-700)] bg-[var(--sky-50)] hover:bg-[var(--sky-100)] border border-[var(--sky-200)] rounded-lg py-2.5 transition-colors"
-          >
-            Try Demo Workspace →
-          </button>
-
-          <p className="text-center text-[13px] text-[var(--gray-500)] mt-5">
+          <p className="text-center text-[13px] text-[var(--gray-500)] mt-6">
             New here?{" "}
             <Link to="/signup" className="text-[var(--sky-600)] font-semibold hover:underline">
               Create an account

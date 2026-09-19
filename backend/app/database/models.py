@@ -125,6 +125,9 @@ class Institute(Base):
     # Agent Details
     name = Column(String(255), nullable=False)  # Institute / Organization name
     agent_name = Column(String(255), nullable=True, default="Aadhya")
+    # Phone is optional in the model (spec §3 §45): a workspace may not have a
+    # configured business number at creation time. Legacy SQLite DBs keep a
+    # NOT NULL constraint — handled by the connection.py migration.
     phone_number = Column(String(30), nullable=True, index=True)
     calling_purpose = Column(String(255), nullable=True, default="Admissions and Student Enquiry")
     description = Column(Text, nullable=True)
@@ -191,6 +194,14 @@ class Knowledge(Base):
     chunks_count = Column(Integer, default=0)
     embedding_model = Column(String(100), nullable=True)
 
+    # Document versioning (spec §48): each re-upload creates a new version.
+    # Only ONE version per agent is is_active — retrieval must never silently
+    # serve stale embeddings after a knowledge update.
+    document_version = Column(Integer, default=1, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    ingestion_stage = Column(String(50), nullable=True)  # extracting/chunking/embedding/indexing
+    ingestion_error = Column(Text, nullable=True)
+
     processing_started_at = Column(DateTime(timezone=True), nullable=True)
     processing_completed_at = Column(DateTime(timezone=True), nullable=True)
     error_message = Column(Text, nullable=True)
@@ -227,6 +238,7 @@ class Student(Base):
     call_status = Column(String(50), default="Pending")  # Pending, Calling, In Progress, Completed, No Answer, Busy, Failed, Callback Requested
     interest_level = Column(String(50), default="Unclear")  # Interested, Not Interested, Needs Follow-up, Callback Requested, Unclear
     duration_seconds = Column(Integer, default=0)
+    call_attempt_count = Column(Integer, default=0)  # spec §35: retry logic guard
 
     # Extracted Conversation Intelligence
     questions_asked = Column(JSON, nullable=True)
@@ -297,6 +309,13 @@ class CallHistory(Base):
     recording_path = Column(String(500), nullable=True)
     error_message = Column(Text, nullable=True)
 
+    # Real telephony metadata (spec §32): the provider's own call identifier
+    # and provider name. A call initiated through Twilio/Exotel stores the
+    # provider SID here — the frontend status reflects REAL provider events.
+    provider = Column(String(50), nullable=True)  # twilio | exotel | web | none
+    provider_call_id = Column(String(120), nullable=True, index=True)
+    direction = Column(String(20), nullable=True)  # outbound | inbound | web
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -342,7 +361,115 @@ class CallReport(Base):
     call = relationship("CallHistory", back_populates="report", uselist=False)
 
 
-# ── Questions Ranking Analysis ───────────────────────────────────────────────
+# ── Knowledge Chunks (spec §5 §8 §51) ───────────────────────────────────────
+
+class KnowledgeChunk(Base):
+    """
+    Persisted knowledge chunk with retrieval metadata.
+    Every embedded chunk is stored here so retrieval can report exactly where
+    information came from (document, page, section, chunk) — spec §14.
+    """
+    __tablename__ = "knowledge_chunks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_id = Column(Integer, ForeignKey("institutes.id"), nullable=False, index=True)
+    document_id = Column(Integer, ForeignKey("knowledge.id"), nullable=False, index=True)
+
+    chunk_id = Column(Integer, nullable=False)  # index within the document
+    page_number = Column(Integer, nullable=True)
+    section = Column(String(500), nullable=True)
+    text = Column(Text, nullable=False)
+    token_count = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── Transcript Messages (spec §36 §51) ──────────────────────────────────────
+
+class TranscriptMessage(Base):
+    """
+    One message in a real call transcript. Every turn of every real
+    conversation (voice WS or telephony) is persisted here — the transcript
+    is NEVER fabricated by a script.
+    """
+    __tablename__ = "transcript_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    call_id = Column(String(64), ForeignKey("call_history.call_id"), nullable=False, index=True)
+    agent_id = Column(Integer, ForeignKey("institutes.id"), nullable=False, index=True)
+
+    sequence = Column(Integer, nullable=False)          # order in the call
+    speaker = Column(String(20), nullable=False)        # agent | user
+    text = Column(Text, nullable=False)
+    language = Column(String(50), nullable=True)
+
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    latency_ms = Column(Integer, nullable=True)         # per-turn total latency
+
+
+# ── Call Events (spec §34 §51) ──────────────────────────────────────────────
+
+class CallEvent(Base):
+    """
+    Real call lifecycle events from the telephony provider or voice pipeline:
+    QUEUED → INITIATING → RINGING → ANSWERED → IN_PROGRESS → COMPLETED
+    (or NO_ANSWER / BUSY / FAILED / REJECTED / CANCELLED).
+    Frontend call status must be derived from these REAL events (spec §34 §63).
+    """
+    __tablename__ = "call_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    call_id = Column(String(64), ForeignKey("call_history.call_id"), nullable=False, index=True)
+
+    event_type = Column(String(50), nullable=False)     # queued|initiating|ringing|answered|in_progress|completed|no_answer|busy|failed
+    source = Column(String(50), nullable=True)          # provider | pipeline | system
+    provider_call_id = Column(String(120), nullable=True)
+    detail = Column(JSON, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── Per-Turn Latency Records (spec §28 latency requirement) ───────────────
+
+class TurnLatency(Base):
+    """
+    Measured latency for ONE conversational turn — never estimated.
+
+    The KPI is response_latency_ms = first_audio_played - user_speech_end
+    with a hard target of ≤ 700ms (spec: STRICT REALTIME VOICE LATENCY
+    REQUIREMENT). One row per turn lets the dashboard compute real
+    avg/median/P90/P95/max and the pass rate, per agent and per call.
+    """
+    __tablename__ = "turn_latencies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    call_id = Column(String(64), ForeignKey("call_history.call_id"), nullable=False, index=True)
+    agent_id = Column(Integer, ForeignKey("institutes.id"), nullable=False, index=True)
+    turn_index = Column(Integer, nullable=False)
+
+    # All timestamps in epoch milliseconds (measured, monotonic where possible)
+    user_speech_start_ms = Column(Integer, nullable=True)
+    user_speech_end_ms = Column(Integer, nullable=True)
+    turn_detected_ms = Column(Integer, nullable=True)
+    stt_start_ms = Column(Integer, nullable=True)
+    stt_end_ms = Column(Integer, nullable=True)
+    retrieval_start_ms = Column(Integer, nullable=True)
+    retrieval_end_ms = Column(Integer, nullable=True)
+    llm_start_ms = Column(Integer, nullable=True)
+    llm_first_token_ms = Column(Integer, nullable=True)
+    tts_start_ms = Column(Integer, nullable=True)
+    tts_first_audio_ms = Column(Integer, nullable=True)
+    first_audio_played_ms = Column(Integer, nullable=True)
+
+    # Derived (measured): first_audio_played - user_speech_end
+    response_latency_ms = Column(Integer, nullable=True, index=True)
+
+    language = Column(String(50), nullable=True)
+    source = Column(String(30), nullable=True)  # web | phone | dry_run
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── Questions Ranking Analysis ─────────────────────────────────────────────
 
 class QuestionRanking(Base):
     """

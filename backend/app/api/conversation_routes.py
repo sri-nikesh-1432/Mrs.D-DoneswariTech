@@ -39,7 +39,7 @@ tts_service = EdgeTTSService()
 
 
 LANGUAGE_INSTRUCTION = (
-    "Reply in {language}. Be a warm, natural admissions counsellor at Narayana Junior College. "
+    "Reply in {language}. Be a warm, natural AI admissions counsellor. "
     "MAX 3 SENTENCES. Answer directly, never restate the caller words. "
     "Use fillers sparingly. Fees as words not digits. End after answering."
 )
@@ -235,7 +235,7 @@ async def stream_conversation(
                                 institute_name = m.group(1).strip()
                                 break
                     greeting_prompt = (
-                        f"You are Mrs. D, a warm Indian admissions counsellor speaking on a live call.\n"
+                        f"You are a warm AI admissions counsellor speaking on a live call.\n"
                         f"You are representing {institute_name}.\n\n"
                         f"Context about the institute:\n{context_text or 'General admission inquiry'}\n\n"
                         f"Write a friendly, brief (2-3 sentence) greeting in {language} "
@@ -257,7 +257,7 @@ async def stream_conversation(
                         # greeting must never take the call down.
                         logger.warning("Greeting LLM failed, using fallback: %s", e)
                         ai_response = (
-                            f"Hi! I'm Mrs.D, AI Admission Counsellor of {institute_name}. "
+                            f"Hi! I'm the AI admissions counsellor calling from {institute_name}. "
                             f"How may I help you today?"
                         )
             else:
@@ -408,14 +408,12 @@ async def stream_conversation(
                         # a friendly message) — but still speak a graceful fallback
                         # if nothing was said, so the call never goes silent.
                         if not ai_response:
+                            # Generic graceful fallback — NEVER organization-specific
+                            # facts (spec §45 §56): those must come from the KB/LLM.
                             ai_response = (
-                                "అవును, మా నారాయణ కాలేజీ వివరాలు మీకు చెప్తాను. "
-                                "మీకు కోర్సులు, ఫీజు లేదా అడ్మిషన్ ప్రాసెస్ గురించి ఏది కావాలి?"
-                                if detected_lang == "Telugu"
-                                else (
-                                    "I can help with that. We offer MPC, BiPC, MEC and CEC streams. "
-                                    "What would you like to know more about — courses, fees or admission?"
-                                )
+                                "Sorry, I'm having a little trouble right now — could you say that again?"
+                                if detected_lang != "Telugu"
+                                else "క్షమించండి, ఇప్పుడు కొంచెం ఇబ్బంది వస్తోంది — మళ్లీ చెబుతారా?"
                             )
                             async for chunk in tts_service.stream_sentences(
                                 ai_response, language=synth_lang
@@ -773,18 +771,18 @@ async def process_test_conversation(
         except ValueError as e:
             # Fallback if Groq API key is not configured
             logger.warning(f"Groq API not configured, using fallback: {e}")
+            # LLM unavailable — generic fallback with ZERO organization-specific
+            # facts (spec §45 §56). Never invent courses, fees, or the org name.
             if detected_lang == "Telugu":
                 ai_response = (
-                    "అవును, మా నారాయణ కాలేజీ వివరాలు మీకు చెప్తాను. "
-                    "మీకు కోర్సులు, ఫీజు లేదా అడ్మిషన్ ప్రాసెస్ గురించి ఏది కావాలి?"
-                )
-            elif context:
-                ai_response = (
-                    "I can help with that. We offer MPC, BiPC, MEC and CEC streams. "
-                    "What would you like to know more about — courses, fees or admission?"
+                    "క్షమించండి, ఇప్పుడు నాకు సమాధానం చెప్పడంలో ఇబ్బంది వస్తోంది. "
+                    "కొంచెం తర్వాత మళ్లీ ప్రయత్నిస్తానా?"
                 )
             else:
-                ai_response = "I apologize, but I need more information to help you. Could you please provide more details about what you're looking for?"
+                ai_response = (
+                    "Sorry, I'm having trouble answering right now. "
+                    "Could you try again in a moment?"
+                )
             llm_time = 0
 
         # Update memory
@@ -1032,7 +1030,7 @@ async def process_conversation(
                         break
 
             # Generate greeting prompt
-            greeting_prompt = f"""You are Mrs. D, a warm Indian admissions counsellor speaking on a live call.
+            greeting_prompt = f"""You are a warm AI admissions counsellor speaking on a live call.
 You are representing {institute_name}.
 
 Use the following context about the institute to personalize the greeting:
@@ -1057,7 +1055,7 @@ Generate ONLY the greeting text, no additional commentary."""
             except ValueError as e:
                 # Fallback greeting if Groq API key is not configured
                 logger.warning(f"Groq API not configured, using fallback greeting: {e}")
-                ai_response = f"Hi! I'm Mrs.D, AI Admission Counsellor of {institute_name}. How may I help you today?"
+                ai_response = f"Hi! I'm the AI admissions counsellor calling from {institute_name}. How may I help you today?"
             llm_time = (time.time() - llm_start) * 1000
 
             # Add greeting to conversation memory so follow-up turns have context

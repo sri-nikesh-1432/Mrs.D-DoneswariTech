@@ -139,6 +139,133 @@ export async function publishAgent(agentId: string | number): Promise<{ status: 
   return res.data;
 }
 
+// ─── Save Changes validation gate (spec §15) ────────────────────────
+/** Validates name, knowledge ingestion, vector index, voice config —
+ *  agent becomes READY only when everything passes. Throws 400 with
+ *  { message, errors: string[] } on failure. */
+export async function saveAgentChanges(
+  agentId: string | number
+): Promise<{ status: string; message: string; chunks_indexed: number; knowledge_document?: string; agent: AgentProfile }> {
+  const res = await api.post(`/api/agents/${agentId}/save`);
+  return res.data;
+}
+
+export class SaveValidationError extends Error {
+  errors: string[];
+  constructor(message: string, errors: string[]) {
+    super(message);
+    this.errors = errors;
+  }
+}
+
+export function parseSaveError(err: unknown): { message: string; errors: string[] } {
+  const d = (err as { response?: { data?: { detail?: { message?: string; errors?: string[] } | string } } })?.response?.data?.detail;
+  if (d && typeof d === "object" && Array.isArray(d.errors)) {
+    return { message: d.message || "Validation failed", errors: d.errors };
+  }
+  const msg = typeof d === "string" ? d : "Save failed";
+  return { message: msg, errors: [msg] };
+}
+
+// ─── Knowledge validation (spec §48) ────────────────────────────────
+export interface KnowledgeValidationResult {
+  validated: boolean;
+  pass_rate: number;
+  tests_passed: number;
+  tests_total: number;
+  chunks_sampled: number;
+  tests: Array<{ question: string; retrieved: boolean; source_found: boolean; top_score?: number; error?: string }>;
+  message: string;
+}
+
+export async function validateKnowledge(agentId: string | number): Promise<KnowledgeValidationResult> {
+  const res = await api.post<KnowledgeValidationResult>(`/api/agents/${agentId}/validate-knowledge`);
+  return res.data;
+}
+
+// ─── Latency dashboard (spec: 700ms KPI) ────────────────────────────
+export interface LatencyDashboard {
+  has_data: boolean;
+  message?: string;
+  target_ms?: number;
+  sample_count?: number;
+  avg_ms?: number;
+  median_ms?: number;
+  p90_ms?: number;
+  p95_ms?: number;
+  max_ms?: number;
+  min_ms?: number;
+  pass_count?: number;
+  fail_count?: number;
+  pass_rate_percent?: number;
+  stages?: {
+    stt_ms?: number | null;
+    retrieval_ms?: number | null;
+    llm_first_token_ms?: number | null;
+    tts_first_audio_ms?: number | null;
+  };
+}
+
+export async function getLatencyDashboard(agentId: string | number): Promise<LatencyDashboard> {
+  const res = await api.get<LatencyDashboard>(`/api/agents/${agentId}/latency-dashboard`);
+  return res.data;
+}
+
+// ─── Knowledge ingestion status (spec §4) ───────────────────────────
+export interface KnowledgeStatus {
+  stage: string;
+  status: string;
+  document_name?: string;
+  document_version?: number;
+  chunks: number;
+  indexed: boolean;
+  error?: string | null;
+  message: string;
+}
+
+export async function getKnowledgeStatus(agentId: string | number): Promise<KnowledgeStatus> {
+  const res = await api.get<KnowledgeStatus>(`/api/agents/${agentId}/knowledge/status`);
+  return res.data;
+}
+
+// ─── Test Call — REAL phone call (spec §33) ─────────────────────────
+export interface TestCallResult {
+  call_id: string;
+  provider_call_id: string;
+  to: string;
+  to_national: string;
+  status: string;
+  message: string;
+}
+
+export async function startTestCall(agentId: string | number, phoneNumber: string): Promise<TestCallResult> {
+  const res = await api.post<TestCallResult>(`/api/agents/${agentId}/test-call`, { phone_number: phoneNumber });
+  return res.data;
+}
+
+export interface TestCallStatus {
+  call_id: string;
+  call_status: string;
+  provider_status: string | null;
+  provider_call_id: string | null;
+  duration_seconds: number | null;
+  events: Array<{ event_type: string; source: string; created_at: string | null }>;
+}
+
+export async function getTestCallStatus(agentId: string | number, callId: string): Promise<TestCallStatus> {
+  const res = await api.get<TestCallStatus>(`/api/agents/${agentId}/test-call/${callId}`);
+  return res.data;
+}
+
+// ─── Dry-run call — labelled demo through the REAL agent runtime ────
+export async function dryRunCall(
+  agentId: string | number,
+  studentId: number
+): Promise<{ message: string; call_id: string; call_status: string; interest_level: string; turns: number; latency_ms: number }> {
+  const res = await api.post(`/api/agents/${agentId}/campaign/dry-run-call/${studentId}`);
+  return res.data;
+}
+
 export async function pauseAgent(agentId: string | number): Promise<{ status: string; message: string }> {
   const res = await api.post(`/api/agents/${agentId}/pause`);
   return res.data;
@@ -247,8 +374,8 @@ export async function getCampaignStatus(agentId: string | number): Promise<Campa
   return res.data;
 }
 
-export async function startCampaign(agentId: string | number): Promise<{ message: string; is_running: boolean; pending_count?: number }> {
-  const res = await api.post(`/api/agents/${agentId}/campaign/start`);
+export async function startCampaign(agentId: string | number, studentIds?: number[]): Promise<{ message: string; is_running: boolean; pending_count?: number }> {
+  const res = await api.post(`/api/agents/${agentId}/campaign/start`, studentIds?.length ? { student_ids: studentIds } : {});
   return res.data;
 }
 
@@ -257,8 +384,10 @@ export async function pauseCampaign(agentId: string | number): Promise<{ message
   return res.data;
 }
 
+/** Labelled dry-run: the agent's REAL runtime with an LLM-role-played
+ *  student. Never presented as a real phone call (spec §55). */
 export async function simulateCall(agentId: string | number, studentId: number): Promise<{ message: string; call_status: string; interest_level: string }> {
-  const res = await api.post(`/api/agents/${agentId}/campaign/simulate-call/${studentId}`);
+  const res = await api.post(`/api/agents/${agentId}/campaign/dry-run-call/${studentId}`);
   return res.data;
 }
 
@@ -314,15 +443,12 @@ export async function getCallStats(instituteId: string | number): Promise<CallSt
   return res.data;
 }
 
+/** @deprecated Use startTestCall (real telephony via /api/agents/{id}/test-call). */
 export async function initiateTestCall(
   instituteId: string | number,
   phoneNumber: string
 ): Promise<{ call_id: string; status: string }> {
-  const res = await api.post<{ call_id: string; status: string }>("/api/calls/outbound", {
-    institute_id: instituteId,
-    phone_number: phoneNumber,
-  });
-  return res.data;
+  return startTestCall(instituteId, phoneNumber);
 }
 
 export async function getAnalytics(instituteId: string | number): Promise<AnalyticPoint[]> {

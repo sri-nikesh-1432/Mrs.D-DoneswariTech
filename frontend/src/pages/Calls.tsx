@@ -211,90 +211,34 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-// ─── MOCK data for demo ────────────────────────────────────────────
-const MOCK_STATS: CallStats = {
-  total_calls: 47,
-  answered_calls: 43,
-  missed_calls: 4,
-  hot_leads: 12,
-  warm_leads: 18,
-  cold_leads: 13,
-  avg_duration: "4:22",
-  conversion_rate: 68,
-  interested_leads: 30,
-};
-
-const MOCK_CALLS: CallRecord[] = [
-  {
-    id: "1", caller_name: "Rahul Sharma", caller_phone: "+91 98765 43210",
-    date: "Sep 11, 2026", duration: "5:12", language: "English",
-    interest_score: 82, lead_status: "HOT", course: "eTechno",
-    outcome: "Campus visit scheduled",
-    summary: "Caller enquired about Class VIII eTechno programme. Showed strong interest in hostel facilities. Requested campus visit.",
-    lead: { caller_name: "Rahul Sharma", student_name: "Aarav", student_class: "VII", course_interest: "eTechno", hostel: "Interested" },
-    questions_asked: ["Fee structure", "Hostel availability", "Admission process"],
-    objections: ["Fee confirmation needed"],
-    next_action: "Campus visit",
-    conversion_likelihood: 75,
-    transcript: [
-      { role: "assistant", content: "Hi, this is Mrs.D from Narayana. How can I help you?", timestamp: "10:01" },
-      { role: "user", content: "I want to know about Class 8 admissions.", timestamp: "10:01" },
-      { role: "assistant", content: "Sure! Are you enquiring for your child?", timestamp: "10:02" },
-    ],
-  },
-  {
-    id: "2", caller_name: "Priya Reddy", caller_phone: "+91 87654 32109",
-    date: "Sep 11, 2026", duration: "3:45", language: "Telugu",
-    interest_score: 65, lead_status: "WARM", course: "eChamps",
-    outcome: "Information sent",
-    summary: "Parent asked about eChamps for Class VI. Interested but wants to discuss with family.",
-    lead: { caller_name: "Priya Reddy", student_name: "Akshay", student_class: "V", course_interest: "eChamps" },
-    questions_asked: ["Programme details", "Fee", "Location"],
-    next_action: "Callback in 3 days",
-    conversion_likelihood: 50,
-  },
-  {
-    id: "3", caller_name: "Venkat Rao", caller_phone: "+91 76543 21098",
-    date: "Sep 10, 2026", duration: "2:10", language: "English",
-    interest_score: 30, lead_status: "COLD", course: "Senior Secondary",
-    outcome: "No immediate interest",
-    summary: "Caller was gathering information for comparison. Not ready to decide.",
-    next_action: "No action",
-    conversion_likelihood: 20,
-  },
-  {
-    id: "4", caller_name: "Meena Krishnan", caller_phone: "+91 65432 10987",
-    date: "Sep 10, 2026", duration: "6:30", language: "English",
-    interest_score: 90, lead_status: "HOT", course: "eTechno",
-    outcome: "Admission form requested",
-    summary: "Very interested parent. Asked detailed questions about robotics and digital classroom. Ready to visit campus.",
-    lead: { caller_name: "Meena Krishnan", student_name: "Divya", student_class: "IX", course_interest: "eTechno", hostel: "Not needed", transport: "Required" },
-    questions_asked: ["Robotics lab", "Digital classrooms", "Olympiad preparation", "Transport routes"],
-    next_action: "Admission form",
-    conversion_likelihood: 88,
-  },
-];
-
 // ─── Main Calls page ──────────────────────────────────────────────
 export default function Calls() {
-  const [stats, setStats] = useState<CallStats>(MOCK_STATS);
-  const [calls, setCalls] = useState<CallRecord[]>(MOCK_CALLS);
+  const [stats, setStats] = useState<CallStats | null>(null);
+  const [calls, setCalls] = useState<CallRecord[]>([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | LeadIntent>("all");
   const [selectedCall, setSelectedCall] = useState<CallRecord | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
-  // Try to load real data
+  // REAL data only (spec §56 §80): no seeded/demo values. A failed load shows
+  // an error; an empty result shows the honest empty state.
   useEffect(() => {
     const id = localStorage.getItem("mrsd_agent_id") ?? "1";
+    let cancelled = false;
     setLoading(true);
+    setLoadError("");
     Promise.all([getCallStats(id), getCalls(id)])
       .then(([s, c]) => {
+        if (cancelled) return;
         if (s) setStats(s);
-        if (c?.length) setCalls(c);
+        setCalls(Array.isArray(c) ? c : []);
       })
-      .catch(() => {/* use mock */})
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (!cancelled) setLoadError("Could not load calls — is the backend running and are you signed in?");
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   const filtered = calls.filter((c) => {
@@ -319,16 +263,20 @@ export default function Calls() {
           <p className="text-xs text-gray-500">All conversations and lead reports from your AI agent</p>
         </div>
 
-        {/* Stats grid */}
+        {loadError && (
+          <div className="text-[13px] text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3">{loadError}</div>
+        )}
+
+        {/* Stats grid — REAL values only (spec §56) */}
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-          <StatCard icon={<Phone size={16} className="text-sky-500" />}   label="Total Calls"    value={stats.total_calls}     color="bg-sky-100" />
-          <StatCard icon={<Phone size={16} className="text-emerald-500" />} label="Answered"     value={stats.answered_calls}  color="bg-emerald-100" />
-          <StatCard icon={<Flame size={16} className="text-red-500" />}   label="Hot Leads"     value={stats.hot_leads}       color="bg-red-100" />
-          <StatCard icon={<ThermometerSun size={16} className="text-orange-500" />} label="Warm Leads" value={stats.warm_leads} color="bg-orange-100" />
-          <StatCard icon={<Snowflake size={16} className="text-blue-500" />} label="Cold Leads"  value={stats.cold_leads}      color="bg-blue-100" />
-          <StatCard icon={<Users size={16} className="text-violet-500" />} label="Interested"   value={stats.interested_leads} color="bg-violet-100" />
-          <StatCard icon={<TrendingUp size={16} className="text-emerald-500" />} label="Conversion" value={`${stats.conversion_rate}%`} color="bg-emerald-100" />
-          <StatCard icon={<Clock size={16} className="text-sky-500" />}   label="Avg Duration"  value={stats.avg_duration}    color="bg-sky-100" />
+          <StatCard icon={<Phone size={16} className="text-sky-500" />}   label="Total Calls"    value={stats?.total_calls ?? 0}     color="bg-sky-100" />
+          <StatCard icon={<Phone size={16} className="text-emerald-500" />} label="Answered"     value={stats?.answered_calls ?? 0}  color="bg-emerald-100" />
+          <StatCard icon={<Flame size={16} className="text-red-500" />}   label="Hot Leads"     value={stats?.hot_leads ?? 0}       color="bg-red-100" />
+          <StatCard icon={<ThermometerSun size={16} className="text-orange-500" />} label="Warm Leads" value={stats?.warm_leads ?? 0} color="bg-orange-100" />
+          <StatCard icon={<Snowflake size={16} className="text-blue-500" />} label="Cold Leads"  value={stats?.cold_leads ?? 0}      color="bg-blue-100" />
+          <StatCard icon={<Users size={16} className="text-violet-500" />} label="Interested"   value={stats?.interested_leads ?? 0} color="bg-violet-100" />
+          <StatCard icon={<TrendingUp size={16} className="text-emerald-500" />} label="Conversion" value={`${stats?.conversion_rate ?? 0}%`} color="bg-emerald-100" />
+          <StatCard icon={<Clock size={16} className="text-sky-500" />}   label="Avg Duration"  value={stats?.avg_duration ?? "0:00"}    color="bg-sky-100" />
         </div>
 
         {/* Filters & search */}
@@ -393,7 +341,7 @@ export default function Calls() {
           {filtered.length === 0 ? (
             <div className="py-12 text-center text-sm text-gray-400">
               <Phone size={32} className="mx-auto mb-2 text-sky-200" />
-              No calls found.
+              {loading ? "Loading calls…" : calls.length === 0 ? "No calls yet — analytics appear after real calls are made." : "No calls match your filters."}
             </div>
           ) : (
             filtered.map((call) => (

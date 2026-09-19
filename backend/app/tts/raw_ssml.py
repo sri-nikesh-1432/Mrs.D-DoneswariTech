@@ -34,7 +34,7 @@ from edge_tts.drm import DRM
 
 class RawSSMLSynth:
     """
-    One persistent Edge websocket. Send a raw SSML fragment, get MP3 bytes back.
+    One persistent Edge websocket. Send a raw SSML fragment, get audio bytes back.
 
     The socket stays open across fragments (speech.config is sent once), and is
     transparently reconnected if the server drops it or a request fails.
@@ -42,11 +42,16 @@ class RawSSMLSynth:
     A background keepalive task sends an empty speech.config every 15s so the
     socket never goes stale — without it the first synthesis after an idle gap
     pays a full reconnect (~400-600ms extra TTFA).
+
+    output_format selects the Edge audio format:
+      - "audio-24khz-48kbitrate-mono-mp3" (default) for browser playback
+      - "raw-16khz-16bit-mono-pcm" for telephony (Twilio µ-law conversion)
     """
 
     KEEPALIVE_INTERVAL = 15
 
-    def __init__(self) -> None:
+    def __init__(self, output_format: str = "audio-24khz-48kbitrate-mono-mp3") -> None:
+        self._output_format = output_format
         self._lock = asyncio.Lock()
         self._session: Optional[aiohttp.ClientSession] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
@@ -93,7 +98,7 @@ class RawSSMLSynth:
             "Path:speech.config\r\n\r\n"
             '{"context":{"synthesis":{"audio":{"metadataoptions":'
             '{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},'
-            '"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}\r\n'
+            f'"outputFormat":"{self._output_format}"}}}}\r\n'
         )
         self._ensure_keepalive()
 
@@ -239,21 +244,36 @@ class RawSSMLSynth:
 # Shared singleton so every EdgeTTSService instance reuses ONE persistent
 # connection (no reconnect per sentence = lower realtime latency).
 _raw_synth: Optional[RawSSMLSynth] = None
+_raw_synth_pcm: Optional[RawSSMLSynth] = None
 
 
 def get_raw_synth() -> RawSSMLSynth:
-    """Get or create the shared persistent raw-SSML synthesizer."""
+    """Get or create the shared persistent raw-SSML synthesizer (MP3 out)."""
     global _raw_synth
     if _raw_synth is None:
-        _raw_synth = RawSSMLSynth()
+        _raw_synth = RawSSMLSynth(output_format="audio-24khz-48kbitrate-mono-mp3")
     return _raw_synth
 
 
+def get_raw_synth_pcm() -> RawSSMLSynth:
+    """Get or create the shared PCM synthesizer (raw 16 kHz 16-bit mono PCM).
+    Used by the telephony bridge, which converts PCM to µ-law for the phone."""
+    global _raw_synth_pcm
+    if _raw_synth_pcm is None:
+        _raw_synth_pcm = RawSSMLSynth(output_format="raw-16khz-16bit-mono-pcm")
+    return _raw_synth_pcm
+
+
 async def close_raw_synth() -> None:
-    """Close the shared synthesizer (call on app shutdown)."""
-    global _raw_synth
+    """Close the shared synthesizers (call on app shutdown)."""
+    global _raw_synth, _raw_synth_pcm
     if _raw_synth is not None:
         if _raw_synth._keepalive_task is not None:
             _raw_synth._keepalive_task.cancel()
         await _raw_synth.close()
         _raw_synth = None
+    if _raw_synth_pcm is not None:
+        if _raw_synth_pcm._keepalive_task is not None:
+            _raw_synth_pcm._keepalive_task.cancel()
+        await _raw_synth_pcm.close()
+        _raw_synth_pcm = None

@@ -2,11 +2,12 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Mic, MicOff, RotateCcw, Rocket, Loader2 } from "lucide-react";
 import AgentOrb from "../components/AgentOrb";
-import VoiceWaveform from "../components/VoiceWaveform";
+import RealWaveform from "../components/RealWaveform";
 import TextInput from "../components/TextInput";
 import { voiceWS } from "../services/voiceWebSocket";
 import type { VoiceWSState } from "../services/voiceWebSocket";
 import { publishAgent, getAgent } from "../services/api";
+import LatencyPanel from "../components/LatencyPanel";
 import type { ConversationMessage } from "../types";
 
 const STATE_MAP: Record<VoiceWSState, { label: string; color: string }> = {
@@ -25,7 +26,8 @@ export default function AgentTest() {
   const navigate = useNavigate();
 
   const [wsState, setWsState] = useState<VoiceWSState>("disconnected");
-  const [amplitude, setAmplitude] = useState(0);
+  const [amplitude, setAmplitude] = useState(0);      // REAL mic level
+  const [playAmplitude, setPlayAmplitude] = useState(0); // REAL agent audio level
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [partialUser, setPartialUser] = useState("");
   const [partialAgent, setPartialAgent] = useState("");
@@ -63,6 +65,7 @@ export default function AgentTest() {
     voiceWS.connect(agentId, {
       onStateChange: (s) => setWsState(s),
       onAmplitude: (a) => setAmplitude(a),
+      onPlaybackAmplitude: (a) => setPlayAmplitude(a),
       onTranscriptPartial: (t) => setPartialUser(t),
       onTranscriptFinal: (t) => {
         setPartialUser("");
@@ -141,9 +144,21 @@ export default function AgentTest() {
         <AgentOrb state={mapToOrbState(wsState)} amplitude={amplitude} />
       </div>
 
-      {/* Waveform */}
-      <div className="flex justify-center h-14 mb-4">
-        <VoiceWaveform state={mapToOrbState(wsState)} amplitude={amplitude} height={56} />
+      {/* REAL waveforms (spec §33 §34 §59): driven by actual audio —
+          user's mic while listening, agent's output while speaking.
+          No fake animation: silence is flat. */}
+      <div className="flex justify-center h-16 mb-2">
+        {wsState === "speaking" || wsState === "greeting" ? (
+          <RealWaveform source="playback" amplitude={playAmplitude} active={playAmplitude > 0.01} height={64} color="#8b5cf6" />
+        ) : (
+          <RealWaveform source="mic" amplitude={amplitude} active={wsState === "listening"} height={64} color="#0ea5e9" />
+        )}
+      </div>
+      {/* Two-state label (spec §34) */}
+      <div className="text-center text-[11.5px] text-[var(--gray-400)] mb-3">
+        {wsState === "speaking" || wsState === "greeting"
+          ? "AI SPEAKING — interruption works: just start talking"
+          : wsState === "listening" ? "USER SPEAKING — live waveform" : "LISTENING"}
       </div>
 
       {/* Transcript */}
@@ -195,6 +210,9 @@ export default function AgentTest() {
           disabled={!inConversation}
         />
       </div>
+
+      {/* Internal latency view — REAL measured per-turn values (spec §60) */}
+      {agentId && <LatencyPanel agentId={agentId} />}
 
       {/* Controls */}
       <div className="flex items-center justify-center gap-3 pb-2">

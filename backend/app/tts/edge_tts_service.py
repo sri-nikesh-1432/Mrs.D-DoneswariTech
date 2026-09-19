@@ -18,7 +18,7 @@ from app.roman_telugu import (
     clean_tts_text,
     split_into_sentences,
 )
-from app.tts.raw_ssml import get_raw_synth
+from app.tts.raw_ssml import get_raw_synth, get_raw_synth_pcm
 
 logger = get_logger(__name__)
 
@@ -532,6 +532,46 @@ class EdgeTTSService:
         if language and language in self.voices:
             return self.voices[language]
         return self.voice
+
+    async def synthesize_pcm(
+        self,
+        text: str,
+        voice: Optional[str] = None,
+        language: Optional[str] = None,
+    ) -> Optional[bytes]:
+        """
+        Synthesize text to raw PCM16 @16 kHz mono (telephony path).
+
+        Uses the PCM-configured persistent Edge socket so no MP3 decode is
+        needed; the Twilio bridge converts PCM → 8 kHz µ-law directly.
+        """
+        if not text or not text.strip():
+            return None
+        try:
+            spoken = clean_tts_text(normalize_for_speech(text))
+            if not spoken:
+                return None
+            voice_to_use = self._pick_voice(text, language=language, voice=voice)
+            xml_lang = _xml_lang_for(voice_to_use)
+            escaped = html.escape(spoken, quote=False)
+            ssml = (
+                "<speak version='1.0' "
+                "xmlns='http://www.w3.org/2001/10/synthesis' "
+                f"xml:lang='{xml_lang}'>"
+                f"<voice name='{voice_to_use}'>"
+                f"<prosody rate='{self.rate}'>"
+                f"{escaped}"
+                "</prosody>"
+                "</voice>"
+                "</speak>"
+            )
+            from app.tts.raw_ssml import get_raw_synth_pcm
+            return await asyncio.wait_for(
+                get_raw_synth_pcm().synthesize(ssml), timeout=20.0
+            )
+        except Exception as e:
+            logger.error("PCM synthesis failed: %s", e)
+            return None
 
     async def get_available_voices(self) -> list[str]:
         """Get list of available voices."""

@@ -34,6 +34,7 @@ interface VoiceWSCallbacks {
   onAgentFinal?: (text: string) => void;
   onError?: (msg: string) => void;
   onAmplitude?: (amplitude: number) => void;
+  onPlaybackAmplitude?: (amplitude: number) => void;
   onSpeakingChange?: (speaking: boolean) => void;
   // Legacy hooks kept for old pages; no-ops in the current protocol
   onMemoryUpdate?: (memory: Record<string, unknown>) => void;
@@ -63,6 +64,10 @@ class VoiceWebSocket {
   private currentSource: AudioBufferSourceNode | null = null;
   private playing = false;
   private playbackDone = true;
+  // REAL playback-level analyser (spec §34 §59): drives the agent-speaking
+  // waveform from the actual audio being played — never a fake animation.
+  private playAnalyser: AnalyserNode | null = null;
+  private playbackAmpFrame: number | null = null;
 
   // Transcript assembly
   private agentTextBuffer = "";
@@ -178,6 +183,27 @@ class VoiceWebSocket {
     // Keep the socket; just stop capturing
     this._stopMic();
     if (this.state === "listening") this._setState("connected");
+  }
+
+  // ─── Real playback amplitude (spec §34 §59) ─────────────────
+  private _trackPlaybackAmplitude(): void {
+    if (!this.playAnalyser) return;
+    const buf = new Uint8Array(this.playAnalyser.frequencyBinCount);
+    const tick = () => {
+      if (!this.playAnalyser) return;
+      this.playAnalyser.getByteTimeDomainData(buf);
+      // RMS of the time-domain signal — real audio energy.
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) {
+        const v = (buf[i] - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / buf.length);
+      this.callbacks.onPlaybackAmplitude?.(Math.min(1, rms * 4));
+      this.playbackAmpFrame = requestAnimationFrame(tick);
+    };
+    if (this.playbackAmpFrame) cancelAnimationFrame(this.playbackAmpFrame);
+    this.playbackAmpFrame = requestAnimationFrame(tick);
   }
 
   private _stopMic(): void {
@@ -299,7 +325,14 @@ class VoiceWebSocket {
   // ─── Audio playback queue ─────────────────────────────────────
   private async _enqueueAudio(text: string, audioB64: string): Promise<void> {
     try {
-      if (!this.playCtx) this.playCtx = new AudioContext();
+      if (!this.playCtx) {
+        this.playCtx = new AudioContext();
+        // Analyser taps the real output so the UI shows actual agent audio.
+        this.playAnalyser = this.playCtx.createAnalyser();
+        this.playAnalyser.fftSize = 256;
+        this.playAnalyser.connect(this.playCtx.destination);
+        this._trackPlaybackAmplitude();
+      }
       if (this.playCtx.state === "suspended") await this.playCtx.resume();
 
       const raw = atob(audioB64);
@@ -336,7 +369,7 @@ class VoiceWebSocket {
     }
     const source = this.playCtx.createBufferSource();
     source.buffer = item.buffer;
-    source.connect(this.playCtx.destination);
+    source.connect(this.playAnalyser ?? this.playCtx.destination);
     source.onended = () => {
       this.currentSource = null;
       if (this.intentionalClose) return;
@@ -353,6 +386,7 @@ class VoiceWebSocket {
       try { this.currentSource.stop(); } catch { /* already stopped */ }
       this.currentSource = null;
     }
+    this.callbacks.onPlaybackAmplitude?.(0);
     if (this.playing || !this.playbackDone) {
       this.playing = false;
       this.playbackDone = true;

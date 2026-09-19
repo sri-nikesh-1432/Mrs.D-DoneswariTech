@@ -3,8 +3,11 @@ import { Routes, Route, Navigate, useLocation, Outlet } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import Sidebar from "./components/Sidebar";
+import RequireAuth from "./components/RequireAuth";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
+import Landing from "./pages/Landing";
+import Home from "./pages/Home";
 import Dashboard from "./pages/Dashboard";
 import Agents from "./pages/Agents";
 import AgentOverview from "./pages/AgentOverview";
@@ -30,7 +33,7 @@ const PageWrap = ({ children }: { children: React.ReactNode }) => (
 
 // ─── Authenticated SaaS layout with persistent sidebar ─────────────
 function AppLayout() {
-  const { data: me } = useQuery({ queryKey: ["me"], queryFn: getMe, staleTime: 60_000 });
+  const { data: me } = useQuery({ queryKey: ["me"], queryFn: getMe, staleTime: 60_000, retry: false });
 
   return (
     <div className="flex min-h-screen bg-sky-gradient">
@@ -51,14 +54,17 @@ export default function App() {
   return (
     <AnimatePresence mode="wait">
       <Routes location={location} key={location.pathname}>
-        {/* Auth */}
+        {/* Public */}
+        <Route path="/" element={<PageWrap><Landing /></PageWrap>} />
         <Route path="/login" element={<PageWrap><Login /></PageWrap>} />
         <Route path="/signup" element={<PageWrap><Signup /></PageWrap>} />
 
         {/* Authenticated SaaS shell */}
-        <Route element={<AppLayout />}>
+        <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
+          <Route path="/home" element={<PageWrap><Home /></PageWrap>} />
           <Route path="/dashboard" element={<PageWrap><Dashboard /></PageWrap>} />
           <Route path="/agents" element={<PageWrap><Agents /></PageWrap>} />
+          <Route path="/agents/new" element={<PageWrap><Agents /></PageWrap>} />
 
           {/* Agent-scoped pages */}
           <Route path="/agent/:agentId/overview" element={<PageWrap><AgentOverview /></PageWrap>} />
@@ -73,11 +79,10 @@ export default function App() {
         </Route>
 
         {/* Redirects */}
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="/onboarding" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/onboarding" element={<Navigate to="/home" replace />} />
         <Route path="/agent" element={<Navigate to="/agents" replace />} />
         <Route path="/agent/:agentId" element={<Navigate to="overview" replace />} />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>
     </AnimatePresence>
   );

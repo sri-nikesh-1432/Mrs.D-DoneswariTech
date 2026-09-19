@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +24,7 @@ from app.database.connection import get_database
 from app.database.models import (
     CallHistory, CallReport, CallStatus, Institute, CallAnalytics
 )
+from app.api.auth_routes import get_current_user_optional, require_ownership
 from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
@@ -102,14 +103,21 @@ def _serialize_call(call: CallHistory, report: Optional[CallReport] = None) -> d
     }
 
 
-def _outcome_label(status: CallStatus) -> str:
+def _outcome_label(status) -> str:
+    """Map a call status (enum OR plain string, per spec §21) to a display label."""
+    if status is None:
+        return "Unknown"
+    # Accept both CallStatus enums and plain strings — call_status is stored
+    # as a VARCHAR, so raw strings are the common case.
+    key = status.value if hasattr(status, "value") else str(status)
     mapping = {
-        CallStatus.COMPLETED: "Completed",
-        CallStatus.MISSED: "Missed",
-        CallStatus.FAILED: "Failed",
-        CallStatus.ANSWERED: "Answered",
+        "completed": "Completed",
+        "missed": "Missed",
+        "failed": "Failed",
+        "answered": "Answered",
+        "callback requested": "Callback Requested",
     }
-    return mapping.get(status, str(status.value).title() if status else "Unknown")
+    return mapping.get(key.lower(), str(key).title())
 
 
 def _parse_transcript(raw: Optional[str]) -> list:
@@ -136,11 +144,29 @@ async def list_calls(
     institute_id: Optional[int] = Query(None),
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0),
+    authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
+    user = await get_current_user_optional(authorization, session)
+    if not user:
+        from fastapi import status as _status
+        raise HTTPException(
+            status_code=_status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     query = select(CallHistory)
     if institute_id:
+        # Tenant isolation (spec §17): the agent must belong to the caller.
+        agent = await session.get(Institute, institute_id)
+        await require_ownership(user, agent)
         query = query.where(CallHistory.institute_id == institute_id)
+    else:
+        # No agent filter → only calls of the user's own agents.
+        own_ids = (await session.execute(
+            select(Institute.id).where(Institute.user_id == user.id)
+        )).scalars().all()
+        query = query.where(CallHistory.institute_id.in_(own_ids or [-1]))
     query = query.order_by(CallHistory.started_at.desc()).limit(limit).offset(offset)
 
     result = await session.execute(query)
@@ -163,6 +189,7 @@ async def list_calls(
 @router.get("/api/calls/{call_id}")
 async def get_call(
     call_id: str,
+    authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
     result = await session.execute(
@@ -171,6 +198,9 @@ async def get_call(
     call = result.scalar_one_or_none()
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
+    user = await get_current_user_optional(authorization, session)
+    agent = await session.get(Institute, call.institute_id)
+    await require_ownership(user, agent)
 
     rq = await session.execute(
         select(CallReport).where(CallReport.call_id == call_id)
@@ -184,6 +214,7 @@ async def get_call(
 @router.get("/api/calls/{call_id}/report")
 async def get_call_report(
     call_id: str,
+    authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
     result = await session.execute(
@@ -192,6 +223,9 @@ async def get_call_report(
     call = result.scalar_one_or_none()
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
+    user = await get_current_user_optional(authorization, session)
+    agent = await session.get(Institute, call.institute_id)
+    await require_ownership(user, agent)
 
     rq = await session.execute(
         select(CallReport).where(CallReport.call_id == call_id)
@@ -222,55 +256,67 @@ class OutboundCallRequest(BaseModel):
 @router.post("/api/calls/outbound")
 async def initiate_outbound_call(
     body: OutboundCallRequest,
+    authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
     """
-    Initiate an outbound test call.
-    If Twilio is configured, places a real call.
-    Otherwise returns a simulated call_id.
+    Initiate a REAL outbound test call (spec §31 §33 §55).
+
+    NO SIMULATION: if telephony is not configured this fails with a clear
+    503 explaining exactly which credentials are missing. Use the agent
+    test-call endpoint (POST /api/agents/{id}/test-call) for the full
+    validated flow — this legacy route now delegates to the same real
+    Twilio service so both paths place genuine phone calls.
     """
     from app.config.settings import settings
+    from app.telephony.twilio_service import twilio_service, validate_phone_number
 
-    # Validate institute
+    # Validate institute (tenant-isolated)
+    user = await get_current_user_optional(authorization, session)
     result = await session.execute(
         select(Institute).where(Institute.id == body.institute_id)
     )
     institute = result.scalar_one_or_none()
-    if not institute:
-        raise HTTPException(status_code=404, detail="Institute not found")
+    await require_ownership(user, institute)
+
+    # Real telephony required — never simulate (spec §31 §55).
+    if not twilio_service.is_configured():
+        raise HTTPException(status_code=503, detail=twilio_service.configuration_error())
+
+    validation = validate_phone_number(body.phone_number)
+    if not validation["valid"]:
+        raise HTTPException(status_code=400, detail=validation["error"])
 
     call_id = f"call_{uuid.uuid4().hex[:12]}"
-
-    if settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN and settings.TWILIO_PHONE_NUMBER:
-        try:
-            from twilio.rest import Client as TwilioClient
-            client = TwilioClient(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-            callback_url = f"http://{settings.HOST}:{settings.PORT}/api/telephony/voice-webhook"
-            call = client.calls.create(
-                to=body.phone_number,
-                from_=settings.TWILIO_PHONE_NUMBER,
-                url=callback_url,
-                status_callback=f"{callback_url}/status",
-            )
-            call_id = call.sid
-            logger.info("Twilio outbound call placed: %s -> %s", call.sid, body.phone_number)
-        except Exception as e:
-            logger.warning("Twilio call failed (falling back to simulated): %s", e)
-    else:
-        logger.info("Twilio not configured — simulating outbound call to %s", body.phone_number)
-
-    # Log call in DB
     call_record = CallHistory(
         call_id=call_id,
         institute_id=body.institute_id,
-        caller_number=body.phone_number,
-        call_status=CallStatus.ANSWERED,
+        caller_number=validation["e164"],
+        call_status="Calling",
         started_at=datetime.now(timezone.utc),
+        provider="twilio",
+        direction="outbound",
     )
     session.add(call_record)
     await session.commit()
 
-    return {"call_id": call_id, "status": "calling", "phone": body.phone_number}
+    try:
+        created = await twilio_service.create_outbound_call(
+            to_number=validation["e164"],
+            agent_id=body.institute_id,
+            call_id=call_id,
+        )
+    except Exception as e:
+        call_record.call_status = "Failed"
+        call_record.error_message = str(e)[:500]
+        await session.commit()
+        raise HTTPException(status_code=502, detail=f"Telephony provider error: {e}")
+
+    call_record.provider_call_id = created["provider_call_id"]
+    await session.commit()
+    logger.info("REAL outbound call placed: %s -> %s", created["provider_call_id"], validation["e164"])
+
+    return {"call_id": call_id, "status": created["status"], "phone": validation["e164"]}
 
 
 # ─── Analytics stats ─────────────────────────────────────────────────────────

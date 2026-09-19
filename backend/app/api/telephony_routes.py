@@ -1,438 +1,447 @@
 """
-Telephony Webhook Routes - inbound/outbound call handling via Twilio-style provider.
+Telephony Webhook & Outbound Call Routes (spec §31-§35 §50 §63).
 
-Spec §58 §59 §63:
-  - Incoming call webhook → Mrs.D answers automatically, runs the voice pipeline,
-    records transcript + report, persists a CallHistory + call_report.
-  - Outbound call: dashboard POST /api/telephony/call initiates an outbound call
-    through the provider; the provider calls back with status updates.
-  - Webhook verification (Twilio signature) is supported; in development it is
-    bypassed when TWILIO_AUTH_TOKEN is unset.
+REAL telephony flow:
+  1. POST /api/agents/{id}/test-call          → validate + create REAL Twilio call
+  2. GET  /api/telephony/outbound/twiml/{id}  → TwiML that connects live audio
+                                                 to our media-stream WS
+  3. WS   /api/telephony/media/{call_id}      → bidirectional phone audio
+  4. POST /api/telephony/outbound/status      → provider status callbacks update
+                                                 the REAL call state
+  5. POST /api/telephony/incoming             → inbound calls answered by the agent
+
+Webhook signature verification is enforced whenever TWILIO_AUTH_TOKEN is set
+(spec §50); unauthenticated requests can never mark a call completed.
 """
 
 import hashlib
 import hmac
-import time
 import uuid
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Form, Header
-from fastapi.responses import Response
-from fastapi.websockets import WebSocket, WebSocketDisconnect
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from datetime import datetime, timezone
-import uuid as _uuid
+from typing import Optional
+from urllib.parse import quote
 
-from app.database.connection import get_database
-from app.database.models import Institute, CallHistory, CallStatus, Sentiment, CallReport
-from app.voice.voice_ws import _process_utterance
-from app.logs.logger import get_logger
+from fastapi import APIRouter, Depends, HTTPException, Request, Form, Header
+from fastapi.responses import Response
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
+
+from app.database.connection import get_database, AsyncSessionLocal
+from app.database.models import Institute, Student, CallHistory, CallEvent, AgentStatus
 from app.config.settings import settings
-from app.reports.call_report_service import generate_and_persist_report
+from app.logs.logger import get_logger
+from app.telephony.twilio_service import twilio_service, validate_phone_number
 
 logger = get_logger(__name__)
 
+# Telephony-provider routes (webhooks, TwiML, media) under /api/telephony.
 router = APIRouter(prefix="/api/telephony", tags=["Telephony"])
 
-
-def _twilio_signature_valid(
-    url: str, params: dict, signature: str, auth_token: str
-) -> bool:
-    """Verify a Twilio webhook request signature (spec §71)."""
-    if not auth_token:
-        return True  # development: no token configured → bypass verification
-    sorted_params = sorted((k, str(v)) for k, v in params.items())
-    encoded = "&".join(f"{k}={v}" for k, v in sorted_params)
-    base = f"{url}{encoded}"
-    expected = hmac.new(
-        auth_token.encode("utf-8"), base.encode("utf-8"), hashlib.sha1
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
+# Agent-scoped telephony routes (test call) mounted WITHOUT the prefix so
+# they live at the canonical /api/agents/{id}/test-call paths (spec §52).
+agent_telephony_router = APIRouter(tags=["Telephony"])
 
 
-@router.post("/incoming")
-async def handle_incoming_call(
-    request: Request,
-    called_number: str = Form(...),
-    from_number: str = Form(...),
-    from_city: Optional[str] = Form(None),
-    twilio_signature: Optional[str] = Header(None, alias="X-Twilio-Signature"),
-):
+# ── Webhook signature verification (spec §50) ─────────────────────────────────
+
+async def _twilio_signature_valid(request: Request, signature: Optional[str]) -> bool:
     """
-    Twilio-style inbound call webhook.
-
-    When somebody dials the tenant's configured business number, the telephony
-    provider POSTs here. Mrs.D answers, runs the voice session (WS → VAD → STT →
-    LLM → TTS), and persists a CallHistory + call report when the call ends.
-
-    In development (no TWILIO_AUTH_TOKEN) the signature check is skipped.
+    Verify the X-Twilio-Signature header per Twilio's algorithm:
+    HMAC-SHA1 over URL + sorted POST params using the auth token.
+    In development (token unset) verification is bypassed — production MUST
+    set TWILIO_AUTH_TOKEN.
     """
-    # Verify the webhook came from the provider (spec §71).
-    if not _twilio_signature_valid(
-        str(request.url), dict(request.form() or request.query_params), twilio_signature or "", settings.TWILIO_AUTH_TOKEN
-    ):
-        logger.warning("Incoming call webhook signature invalid; rejecting")
-        raise HTTPException(status_code=403, detail="Invalid webhook signature")
-
-    call_id = f"call_{_uuid.uuid4().hex[:12]}"
-    started_at = datetime.now(timezone.utc)
-
-    logger.info(
-        "INBOUND_CALL | call=%s | to=%s | from=%s | city=%s",
-        call_id, called_number, from_number, from_city,
-    )
-
+    if not settings.TWILIO_AUTH_TOKEN:
+        return True  # dev mode: no token configured
+    if not signature:
+        return False
     try:
-        # Resolve the institute that owns this phone number (tenant isolation).
-        session: AsyncSession = await get_database()
-        result = await session.execute(
-            select(Institute).where(Institute.phone_number == called_number)
-        )
-        institute = result.scalar_one_or_none()
-        if not institute:
-            logger.warning(
-                "INBOUND_CALL | no institute owns phone %s; rejecting", called_number
-            )
-            raise HTTPException(status_code=404, detail="No institute owns this phone number")
-
-        # Persist the incoming call record (tenant-scoped).
-        call = CallHistory(
-            call_id=call_id,
-            institute_id=institute.id,
-            caller_number=from_number,
-            caller_name=None,
-            call_status=CallStatus.INCOMING,
-            started_at=started_at,
-            detected_language=None,
-            sentiment=Sentiment.UNKNOWN,
-        )
-        session.add(call)
-        await session.commit()
-        await session.refresh(call)
-
-        # Hand off to the voice WS pipeline. In production this would dial the
-        # WebSocket voice agent with the real PCM audio stream from the telephony
-        # provider (Twilio Media Streams / WebRTC). Here we acknowledge the call
-        # and let the provider keep the line open while the WS pipeline runs.
-        logger.info(
-            "INBOUND_CALL | handed off to voice agent | call=%s | institute=%s",
-            call_id, institute.institute_id,
-        )
-
-        # Return TwiML-like instructions telling the provider to connect to Mrs.D.
-        # A real integration uses <Connect><Stream url="..."/></Connect> or the
-        # WebSocket voice agent URL. This placeholder tells the provider to keep
-        # the call live and stream audio to the voice WS endpoint.
-        twiml = (
-            '<?xml version="1.0" encoding="UTF-8"?>\n'
-            "<Response>\n"
-            f'  <Say voice="alice">Connecting you to {institute.name}. Please hold.</Say>\n'
-            "  <Connect>\n"
-            "    <Stream url='wss://" + settings.HOST + ":" + str(settings.PORT) + "/ws/voice/" + str(institute.id) + "'/>\n"
-            "  </Connect>\n"
-            "</Response>\n"
-        )
-        return Response(content=twiml, media_type="application/xml")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("INBOUND_CALL failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        form = await request.form()
+        params = {k: str(v) for k, v in form.items()}
+    except Exception:
+        params = dict(request.query_params)
+    sorted_params = "".join(f"{k}{v}" for k, v in sorted(params.items()))
+    base = str(request.url) + sorted_params
+    expected = hmac.new(
+        settings.TWILIO_AUTH_TOKEN.encode("utf-8"),
+        base.encode("utf-8"),
+        hashlib.sha1,
+    ).digest()
+    import base64 as _b64
+    expected_b64 = _b64.b64encode(expected).decode("utf-8")
+    return hmac.compare_digest(expected_b64, signature)
 
 
+# ── TwiML for outbound calls ──────────────────────────────────────────────────
+
+@router.get("/outbound/twiml/{call_id}")
+async def outbound_twiml(call_id: str, agent_id: int = 1):
+    """
+    Twilio requests this URL when the student ANSWERS the outbound call.
+    Returns TwiML that bridges the live call to our real-time voice agent
+    media stream (the same runtime as the browser preview — spec §16 §57).
+    """
+    twiml = twilio_service.build_outbound_twiml(agent_id, call_id)
+    logger.info("TWIML_REQUEST | call=%s agent=%d", call_id, agent_id)
+    return Response(content=twiml, media_type="application/xml")
 
 
-# ── Twilio Media Streams (real-time PCM from telephony provider) ──────────────
-# Twilio can stream the call audio to a WebSocket we host. This is the path
-# that makes inbound/outbound calls real: the provider sends 16 kHz PCM frames
-# (base64 inside a JSON track) and we feed them into the SAME ws_voice_agent
-# pipeline that the browser uses.
-# 
-# Architecture (spec §11 §12 §58):
-#   Twilio Media Streams WS  →  /api/telephony/media  →  decode PCM  →  VAD/STT/LLM/TTS
-#   The WS voice agent already accepts PCM 16 kHz mono int16 frames over a
-#   binary WebSocket; the Media Streams handler just decodes Twilio's JSON
-#   wrapper and forwards the raw PCM into that pipeline.
-
+# ── Provider status callbacks (spec §34 §63) ──────────────────────────────────
 
 @router.post("/outbound/status")
-async def handle_outbound_status(
-    request: Request,
-    call_sid: str = Form(...),
-    call_status: str = Form(...),
-    duration_seconds: Optional[int] = Form(None),
-    answered_by: Optional[str] = Form(None),
-    twilio_signature: Optional[str] = Header(None, alias="X-Twilio-Signature"),
-):
+async def handle_outbound_status(request: Request):
     """
-    Outbound call status callback from the telephony provider.
-
-    The provider reports call progress (queued → dialing → ringing → answered →
-    completed / failed / busy / no-answer) so we can update the CallHistory and,
-    when the call ends, finalize the report.
+    REAL provider status callback. The call state machine lives here:
+    queued → ringing → in-progress → completed / busy / no-answer / failed.
+    The frontend NEVER invents these states (spec §34 §53).
     """
-    if not _twilio_signature_valid(
-        str(request.url), dict(request.form() or request.query_params), twilio_signature or "", settings.TWILIO_AUTH_TOKEN
-    ):
+    sig = request.headers.get("X-Twilio-Signature")
+    if not await _twilio_signature_valid(request, sig):
+        logger.warning("Outbound status webhook: invalid signature; rejecting")
         raise HTTPException(status_code=403, detail="Invalid webhook signature")
 
+    try:
+        form = await request.form()
+        call_sid = str(form.get("CallSid", ""))
+        call_status = str(form.get("CallStatus", ""))
+        duration = str(form.get("CallDuration", "") or "")
+        from_number = str(form.get("From", ""))
+    except Exception:
+        call_sid = request.query_params.get("CallSid", "")
+        call_status = request.query_params.get("CallStatus", "")
+        duration = ""
+        from_number = ""
+
+    if not call_sid:
+        return {"status": "ignored"}
+
+    # Twilio status → internal call state machine (spec §34).
     status_map = {
-        "queued": CallStatus.INCOMING,
-        "dialing": CallStatus.INCOMING,
-        "ringing": CallStatus.INCOMING,
-        "answered": CallStatus.ANSWERED,
-        "completed": CallStatus.COMPLETED,
-        "failed": CallStatus.FAILED,
-        "busy": CallStatus.FAILED,
-        "no-answer": CallStatus.MISSED,
-        "canceled": CallStatus.MISSED,
+        "queued": "Calling",
+        "initiating": "Calling",
+        "ringing": "Ringing",
+        "in-progress": "In Progress",
+        "answered": "In Progress",
+        "completed": "Completed",
+        "busy": "Busy",
+        "failed": "Failed",
+        "no-answer": "No Answer",
+        "canceled": "Cancelled",
     }
-    db_status = status_map.get(call_status, CallStatus.FAILED)
+    db_status = status_map.get(call_status, "Failed")
+    duration_seconds = int(duration) if duration.isdigit() else None
 
     logger.info(
-        "OUTBOUND_STATUS | call_sid=%s | status=%s | duration=%s | answered_by=%s",
-        call_sid, call_status, duration_seconds, answered_by,
+        "OUTBOUND_STATUS | sid=%s | status=%s | mapped=%s | duration=%s",
+        call_sid, call_status, db_status, duration or "-",
     )
 
-    try:
-        session: AsyncSession = await get_database()
-        result = await session.execute(
-            select(CallHistory).where(CallHistory.call_id == call_sid)
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(
+            select(CallHistory).where(CallHistory.provider_call_id == call_sid)
         )
-        call = result.scalar_one_or_none()
+        call = res.scalar_one_or_none()
         if not call:
-            logger.warning("OUTBOUND_STATUS | unknown call_sid=%s", call_sid)
+            logger.warning("OUTBOUND_STATUS | unknown provider call sid=%s", call_sid)
             return {"status": "ignored", "call_sid": call_sid}
 
+        now = datetime.now(timezone.utc)
         call.call_status = db_status
-        call.duration_seconds = duration_seconds or call.duration_seconds
-        if answered_by:
-            call.caller_name = answered_by
-        if db_status == CallStatus.COMPLETED and duration_seconds:
-            call.ended_at = datetime.now(timezone.utc)
-            # Update institute stats.
-            institute_result = await session.execute(
-                select(Institute).where(Institute.id == call.institute_id)
-            )
-            institute = institute_result.scalar_one()
-            institute.total_calls += 1
-            institute.completed_calls += 1
-            institute.total_duration_seconds = (
-                institute.total_duration_seconds or 0
-            ) + float(duration_seconds)
+        if db_status in ("Busy", "No Answer", "Failed", "Cancelled"):
+            call.ended_at = now
+            if duration_seconds:
+                call.duration_seconds = duration_seconds
 
-            # Generate + persist the structured call report (spec §32).
-            try:
-                institute_obj = institute
-                transcript = call.transcript or ""
-                # Best-effort memory: none in the telephony path yet; the WS
-                # voice agent path feeds memory into the report instead.
-                memory: dict = {}
-                await generate_and_persist_report(
-                    session, call, institute_obj.name or "Institute", transcript, memory,
-                )
-            except Exception as e:
-                logger.error("CALL_REPORT generation failed for %s: %s", call_sid, e)
+        if duration_seconds and db_status == "Completed":
+            call.duration_seconds = duration_seconds
+
+        session.add(CallEvent(
+            call_id=call.call_id,
+            event_type=call_status or "unknown",
+            source="provider",
+            provider_call_id=call_sid,
+            detail={"mapped_status": db_status, "duration": duration or None},
+        ))
+
+        # Keep the student's call status in sync with REAL provider events.
+        if call.student_id:
+            student = await session.get(Student, call.student_id)
+            if student:
+                if db_status in ("Busy", "No Answer", "Failed", "Cancelled", "Completed", "In Progress"):
+                    student.call_status = db_status
 
         await session.commit()
+        call_id = call.call_id
 
-        return {"status": "ok", "call_sid": call_sid}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("OUTBOUND_STATUS failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"status": "ok", "call_id": call_id, "call_status": db_status}
 
 
-# ── Twilio Media Streams WebSocket (real telephony PCM) ─────────────────────
+# ── Inbound calls (spec §63) ──────────────────────────────────────────────────
 
-@router.websocket("/telephony/media/{call_sid}")
-async def twilio_media_stream(websocket: WebSocket):
-    """Accept a Twilio Media Streams WebSocket for a live call and feed PCM into
-    the voice pipeline.
-
-    Twilio connects to this WS when the call is answered and streams 16 kHz mono
-    PCM frames as base64-encoded tracks. We decode them and hand them to the SAME
-    VAD→STT→LLM→TTS pipeline used by the browser WS path (spec §11 §12 §58).
-
-    Flow:
-      1. Twilio opens WS to /api/telephony/media/{call_sid}
-      2. We accept and send a Twilio Media Streams handshake (stream onset)
-      3. We receive {"event":"media","streamSid", "media":{"payload": base64}}
-      4. We decode the base64 PCM and forward it to the voice agent as if it came
-         from a browser mic (the voice agent runs VAD, STT, LLM, TTS internally)
-      5. TTS audio is sent back to Twilio as {"event":"media","streamSid",
-         "media":{"payload": base64_pcm}}
-      6. On disconnect, the call is finalized and the report persisted (spec §32)
+@router.post("/incoming")
+async def handle_incoming_call(request: Request):
     """
-    await websocket.accept()
-    call_sid = websocket.path_params["call_sid"]
-    logger.info("TWILIO_MEDIA_CONNECT | call_sid=%s", call_sid)
+    Inbound call webhook: when someone dials the agent's configured business
+    number, answer with the agent's real-time voice pipeline.
+    """
+    sig = request.headers.get("X-Twilio-Signature")
+    if not await _twilio_signature_valid(request, sig):
+        raise HTTPException(status_code=403, detail="Invalid webhook signature")
 
-    # Handshake: tell Twilio we're ready to receive the stream.
-    await websocket.send_json({
-        "event": "start",
-        "streamSid": call_sid,
-        "start": {"streamSid": call_sid, "tracks": [{"type": "audio"}]},
-    })
-
-    # The voice agent expects PCM bytes over a binary WS. We keep a separate
-    # binary pipe that the Media Streams decoder writes PCM into and the voice
-    # agent reads from. For now (dev), we log and acknowledge.
     try:
-        while True:
-            raw = await websocket.receive_json()
-            event = raw.get("event")
-            if event == "media":
-                payload = raw.get("media", {}).get("payload")
-                if payload:
-                    import base64
-                    pcm = base64.b64decode(payload)
-                    logger.debug("TWILIO_MEDIA | call_sid=%s | received %d bytes PCM", call_sid, len(pcm))
-                    # TODO: forward pcm into the voice agent pipeline (same as browser WS path).
-                    # The simplest integration: open a SECOND binary WS to the same voice
-                    # agent and write pcm bytes there, then read TTS audio back and push
-                    # it to Twilio as {"event":"media"}. That is wired in a later pass.
-            elif event == "track":
-                logger.info("TWILIO_MEDIA | track event: %s", raw.get("track"))
-            elif event == "stop":
-                logger.info("TWILIO_MEDIA | stream ended: call_sid=%s", call_sid)
-                break
-    except WebSocketDisconnect:
-        logger.info("TWILIO_MEDIA_DISCONNECT | call_sid=%s", call_sid)
-    except Exception as e:
-        logger.exception("TWILIO_MEDIA error | call_sid=%s: %s", call_sid, e)
-    finally:
-        try:
-            await websocket.close()
-        except Exception:
-            pass
+        form = await request.form()
+        called_number = str(form.get("To", ""))
+        from_number = str(form.get("From", ""))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Malformed webhook")
+
+    call_id = f"in_{uuid.uuid4().hex[:12]}"
+    logger.info("INBOUND_CALL | call=%s | to=%s | from=%s", call_id, called_number, from_number)
+
+    async with AsyncSessionLocal() as session:
+        # Tenant isolation: the inbound number must belong to a configured agent.
+        res = await session.execute(
+            select(Institute).where(Institute.phone_number == called_number)
+        )
+        agent = res.scalar_one_or_none()
+        if not agent:
+            raise HTTPException(status_code=404, detail="No agent owns this phone number")
+
+        if agent.status not in (AgentStatus.PUBLISHED.value, AgentStatus.READY.value):
+            raise HTTPException(status_code=400, detail="Agent is not accepting calls")
+
+        call = CallHistory(
+            call_id=call_id,
+            institute_id=agent.id,
+            caller_number=from_number,
+            call_status="Ringing",
+            started_at=datetime.now(timezone.utc),
+            provider="twilio",
+            provider_call_id=str(form.get("CallSid", "")),
+            direction="inbound",
+        )
+        session.add(call)
+        session.add(CallEvent(call_id=call_id, event_type="ringing", source="provider"))
+        await session.commit()
+
+    twiml = twilio_service.build_outbound_twiml(agent.id, call_id)
+    return Response(content=twiml, media_type="application/xml")
 
 
-
+# ── Call detail with real transcript + events (spec §36 §38 §63) ─────────────
 
 @router.get("/calls/{call_id}")
-async def get_call_with_report(
-    call_id: str,
-    session: AsyncSession = Depends(get_database),
-):
-    """Get a call with its structured report (spec §34 §35)."""
-    result = await session.execute(
-        select(CallHistory).where(CallHistory.call_id == call_id)
-    )
-    call = result.scalar_one_or_none()
+async def get_call_detail(call_id: str, session: AsyncSession = Depends(get_database)):
+    """Full real call detail: transcript messages, events, analysis, latency."""
+    from app.database.models import TranscriptMessage, CallReport
+
+    res = await session.execute(select(CallHistory).where(CallHistory.call_id == call_id))
+    call = res.scalar_one_or_none()
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
+
+    msgs_res = await session.execute(
+        select(TranscriptMessage)
+        .where(TranscriptMessage.call_id == call_id)
+        .order_by(TranscriptMessage.id.asc())
+    )
+    messages = [
+        {
+            "sequence": m.sequence,
+            "speaker": m.speaker,
+            "text": m.text,
+            "language": m.language,
+            "latency_ms": m.latency_ms,
+            "timestamp": m.timestamp.isoformat() if m.timestamp else None,
+        }
+        for m in msgs_res.scalars().all()
+    ]
+
+    events_res = await session.execute(
+        select(CallEvent)
+        .where(CallEvent.call_id == call_id)
+        .order_by(CallEvent.id.asc())
+    )
+    events = [
+        {
+            "event_type": e.event_type,
+            "source": e.source,
+            "provider_call_id": e.provider_call_id,
+            "detail": e.detail,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in events_res.scalars().all()
+    ]
 
     report = None
     if call.report:
         report = {
-            "caller_name": call.report.caller_name,
-            "student_name": call.report.student_name,
-            "student_class": call.report.student_class,
-            "course": call.report.course,
-            "location": call.report.location,
-            "budget": call.report.budget,
-            "hostel": call.report.hostel,
-            "transport": call.report.transport,
             "interest_score": call.report.interest_score,
             "conversion_probability": call.report.conversion_probability,
             "intent": call.report.intent,
             "lead_status": call.report.lead_status,
-            "objections": call.report.objections,
-            "next_action": call.report.next_action,
             "summary": call.report.summary,
-            "questions_asked": call.report.questions_asked,
+            "next_action": call.report.next_action,
         }
 
     return {
         "call_id": call.call_id,
         "caller_number": call.caller_number,
         "caller_name": call.caller_name,
-        "call_status": call.call_status.value,
+        "call_status": call.call_status,
+        "provider": call.provider,
+        "provider_call_id": call.provider_call_id,
+        "direction": call.direction,
         "started_at": call.started_at.isoformat() if call.started_at else None,
         "answered_at": call.answered_at.isoformat() if call.answered_at else None,
         "ended_at": call.ended_at.isoformat() if call.ended_at else None,
         "duration_seconds": call.duration_seconds,
-        "transcript": call.transcript,
-        "detected_language": call.detected_language,
-        "sentiment": call.sentiment.value if call.sentiment else None,
-        "total_turns": call.total_turns,
+        "interest_level": call.interest_level,
+        "outcome": call.outcome,
+        "transcript_messages": messages,
+        "events": events,
         "report": report,
     }
 
 
-@router.post("/outbound")
-async def initiate_outbound_call(
-    phone_number: str = Form(...),
-    institute_id: int = Form(...),
-    client_number: Optional[str] = Form(None),
+# ── Agent-scoped telephony endpoints ─────────────────────────────────────────
+
+class TestCallRequest(BaseModel):
+    phone_number: str
+
+
+@agent_telephony_router.post("/api/agents/{agent_id}/test-call")
+async def agent_test_call(
+    agent_id: int,
+    body: TestCallRequest,
+    session: AsyncSession = Depends(get_database),
 ):
     """
-    Initiate an outbound call through the telephony provider (spec §59).
-
-    Mrs.D calls the given phone number and conducts a real voice conversation.
-    The provider callbacks to /api/telephony/outbound/status with progress.
-
-    Returns the call_sid so the dashboard can poll /calls/{id} for status.
+    TEST CALL (spec §33): dial a real phone number now.
+      1. Validate the number (libphonenumber).
+      2. Validate agent is READY/PUBLISHED.
+      3. Validate telephony configuration.
+      4. Create the REAL outbound call — the user's actual phone rings.
     """
-    if not settings.TWILIO_ACCOUNT_SID:
+    agent = await session.get(Institute, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    if agent.status not in (AgentStatus.PUBLISHED.value, AgentStatus.READY.value):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Agent must be READY or PUBLISHED before test calls (current status: {agent.status}). "
+                   "Save changes and process knowledge first.",
+        )
+
+    if not twilio_service.is_configured():
         raise HTTPException(
             status_code=503,
-            detail="Telephony not configured. Set TWILIO_ACCOUNT_SID, "
-            "TWILIO_AUTH_TOKEN and TWILIO_PHONE_NUMBER in .env.",
+            detail=twilio_service.configuration_error()
+            + " Real phone calls cannot be simulated.",
         )
 
-    call_sid = f"out_{_uuid.uuid4().hex[:12]}"
-    started_at = datetime.now(timezone.utc)
+    validation = validate_phone_number(body.phone_number)
+    if not validation["valid"]:
+        raise HTTPException(status_code=400, detail=validation["error"])
 
-    logger.info(
-        "OUTBOUND_CALL | call_sid=%s | to=%s | institute_id=%s",
-        call_sid, phone_number, institute_id,
+    call_id = f"test_{uuid.uuid4().hex[:12]}"
+    call = CallHistory(
+        call_id=call_id,
+        institute_id=agent.id,
+        caller_number=validation["e164"],
+        caller_name="Test Call",
+        call_status="Calling",
+        started_at=datetime.now(timezone.utc),
+        provider="twilio",
+        direction="outbound",
     )
+    session.add(call)
+    session.add(CallEvent(call_id=call_id, event_type="queued", source="system", detail={"test_call": True}))
+    await session.commit()
 
     try:
-        session: AsyncSession = await get_database()
-        result = await session.execute(
-            select(Institute).where(Institute.id == institute_id)
+        result = await twilio_service.create_outbound_call(
+            to_number=validation["e164"],
+            agent_id=agent.id,
+            call_id=call_id,
         )
-        institute = result.scalar_one_or_none()
-        if not institute:
-            raise HTTPException(status_code=404, detail="Institute not found")
-
-        # Persist the outbound call record.
-        call = CallHistory(
-            call_id=call_sid,
-            institute_id=institute.id,
-            caller_number=phone_number,
-            caller_name=None,
-            call_status=CallStatus.INCOMING,  # provider hasn't answered yet
-            started_at=started_at,
-        )
-        session.add(call)
-        await session.commit()
-        await session.refresh(call)
-
-        # In a real integration this would call the Twilio REST API:
-        #   client.calls.create(to=phone_number, from_=TWILIO_PHONE_NUMBER,
-        #                       url=call_webhook_url, status_callback=status_webhook_url)
-        # Here we return the call_sid and let the provider callback populate the
-        # rest; the frontend polls /calls/{call_sid} for the live state.
-
-        return {
-            "call_sid": call_sid,
-            "to": phone_number,
-            "from": settings.TWILIO_PHONE_NUMBER or "",
-            "status": "queued",
-            "institute_id": institute.id,
-            "institute_name": institute.name,
-            "started_at": started_at.isoformat(),
-        }
-
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error("OUTBOUND_CALL failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        async with AsyncSessionLocal() as s2:
+            res = await s2.execute(select(CallHistory).where(CallHistory.call_id == call_id))
+            c = res.scalar_one_or_none()
+            if c:
+                c.call_status = "Failed"
+                c.error_message = str(e)[:500]
+                s2.add(CallEvent(call_id=call_id, event_type="failed", source="provider", detail={"error": str(e)[:300]}))
+            await s2.commit()
+        raise HTTPException(status_code=502, detail=f"Telephony provider error: {e}")
+
+    async with AsyncSessionLocal() as s2:
+        res = await s2.execute(select(CallHistory).where(CallHistory.call_id == call_id))
+        c = res.scalar_one_or_none()
+        if c:
+            c.provider_call_id = result["provider_call_id"]
+            s2.add(CallEvent(
+                call_id=call_id, event_type="initiating", source="provider",
+                provider_call_id=result["provider_call_id"],
+            ))
+            await s2.commit()
+
+    logger.info("TEST_CALL | call=%s sid=%s to=%s agent=%d", call_id, result["provider_call_id"], validation["e164"], agent.id)
+
+    return {
+        "call_id": call_id,
+        "provider_call_id": result["provider_call_id"],
+        "to": validation["e164"],
+        "to_national": validation["national"],
+        "status": result["status"],
+        "message": f"Real call placed to {validation['national']} — your phone should ring now.",
+    }
+
+
+@agent_telephony_router.get("/api/agents/{agent_id}/test-call/{call_id}")
+async def agent_test_call_status(agent_id: int, call_id: str):
+    """
+    Live status for a test call — read from the REAL provider so the UI
+    shows ringing/answered/completed exactly as the provider reports.
+    """
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(
+            select(CallHistory).where(
+                CallHistory.call_id == call_id, CallHistory.institute_id == agent_id
+            )
+        )
+        call = res.scalar_one_or_none()
+        if not call:
+            raise HTTPException(status_code=404, detail="Call not found")
+
+        events_res = await session.execute(
+            select(CallEvent).where(CallEvent.call_id == call_id).order_by(CallEvent.id.asc())
+        )
+        events = [
+            {"event_type": e.event_type, "source": e.source, "created_at": e.created_at.isoformat() if e.created_at else None}
+            for e in events_res.scalars().all()
+        ]
+
+        # Prefer LIVE provider status when available (spec §34 §63).
+        provider_status = None
+        if call.provider_call_id and twilio_service.is_configured():
+            try:
+                import asyncio
+                live = await asyncio.get_event_loop().run_in_executor(
+                    None, twilio_service.fetch_call_status, call.provider_call_id
+                )
+                provider_status = live.get("status")
+            except Exception as e:
+                logger.debug("Live provider status fetch failed: %s", e)
+
+    return {
+        "call_id": call.call_id,
+        "call_status": call.call_status,
+        "provider_status": provider_status,
+        "provider_call_id": call.provider_call_id,
+        "duration_seconds": call.duration_seconds,
+        "events": events,
+    }

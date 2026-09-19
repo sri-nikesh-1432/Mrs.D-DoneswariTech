@@ -38,7 +38,7 @@ class JSONRetriever:
             logger.error(f"Knowledge file not found: {knowledge_path}")
             self.knowledge_data = {
                 "institute_name": "Unknown Institute",
-                "greeting": "Hi! I'm Mrs.D, AI Admission Counsellor. How may I help you today?",
+                "greeting": "Hi! I'm the AI admissions counsellor. How may I help you today?",
                 "knowledge": []
             }
             return
@@ -53,7 +53,7 @@ class JSONRetriever:
             logger.error(f"Error loading knowledge file: {e}")
             self.knowledge_data = {
                 "institute_name": "Unknown Institute",
-                "greeting": "Hi! I'm Mrs.D, AI Admission Counsellor. How may I help you today?",
+                "greeting": "Hi! I'm the AI admissions counsellor. How may I help you today?",
                 "knowledge": []
             }
     
@@ -69,7 +69,7 @@ class JSONRetriever:
         map (keys are language names: English, Telugu, Hindi, ...). Falls back
         to the plain 'greeting' field, then to a hardcoded English greeting.
         """
-        default = "Hi! I'm Mrs.D, AI Admission Counsellor. How may I help you today?"
+        default = "Hi! I'm the AI admissions counsellor. How may I help you today?"
         greeting = self.knowledge_data.get("greeting", default)
 
         if language:

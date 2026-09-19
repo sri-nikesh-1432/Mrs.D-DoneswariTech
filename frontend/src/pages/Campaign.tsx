@@ -43,12 +43,14 @@ export default function Campaign() {
   const handleSimulate = async () => {
     if (!agentId) return;
     try {
-      // Simulate a call for the next pending student via queue stats
+      // Labelled DRY-RUN (spec §55): the agent's REAL runtime (real RAG + real
+      // LLM + real transcript) with an LLM role-playing the student. Never
+      // presented as a real phone call.
       const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:8000"}/api/agents/${agentId}/students?call_status=Pending&limit=1`);
       const json = await res.json();
       const first: { id: number; name: string } | undefined = json.students?.[0];
       if (!first) {
-        alert("No pending students to simulate.");
+        alert("No pending students for a dry-run.");
         return;
       }
       const sim = await simulateCall(agentId, first.id);
@@ -56,7 +58,7 @@ export default function Campaign() {
       await queryClient.invalidateQueries({ queryKey: ["campaign-status", agentId] });
       await queryClient.invalidateQueries({ queryKey: ["students", agentId] });
     } catch (err) {
-      alert("Simulation failed");
+      alert("Dry-run failed");
     }
   };
 
@@ -95,10 +97,10 @@ export default function Campaign() {
           )}
           <button
             onClick={handleSimulate}
-            title="Run one instant demo call against the next pending student"
+            title="Labelled dry-run: the agent's real RAG+LLM runtime with an LLM role-playing the student (no phone call)"
             className="flex items-center gap-2 bg-white hover:bg-[var(--gray-50)] text-[var(--gray-700)] border border-[var(--gray-200)] text-sm font-semibold rounded-lg px-4 py-2.5"
           >
-            <Zap className="w-4 h-4" /> Simulate Call
+            <Zap className="w-4 h-4" /> Dry-Run (Demo)
           </button>
         </div>
       </div>
