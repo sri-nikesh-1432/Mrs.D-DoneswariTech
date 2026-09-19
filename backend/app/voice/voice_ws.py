@@ -358,6 +358,95 @@ _language_detector = LanguageDetector()
 # Natural pause calculation (human breathing cadence)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Asynchronous thinking-fillers (spec: "make it talk like human with natural
+# noise" — asynchronous filler pattern).
+#
+# When the real answer needs retrieval/LLM time, the agent INSTANTLY says a
+# short natural acknowledgement ("Hmm, let me check that for you...") so the
+# caller never hears dead air — the human conversational equivalent of a
+# loading indicator. The filler audio is pre-synthesized per language and
+# cached in-memory, so it goes out in ~0 ms after speech end.
+# ---------------------------------------------------------------------------
+
+# Two filler "slots" per language so consecutive slow turns don't repeat the
+# same phrase. One question-type and one neutral ack per slot.
+_FILLER_PHRASES: dict[str, list[list[str]]] = {
+    "English": [
+        ["Hmm, let me check that for you...", "Sure, give me just a second..."],
+        ["Okay, one moment...", "Let me see..."],
+    ],
+    "Telugu": [
+        ["హ్మ్, నేను చూస్తాను...", "క్షణం మాత్రం ఆగండి..."],
+        ["సరే, ఒక్క క్షణం...", "చూడాలి..."],
+    ],
+    "Hindi": [
+        ["ह्म्म, मैं देखता हूँ...", "बस एक सेकंड..."],
+        ["ठीक है, एक मिनट...", "देखते हैं..."],
+    ],
+    "Tamil": [
+        ["ஹ்ம்ம், பார்க்கிறேன்...", "ஒரு நிமிடம்..."],
+        ["சரி, ஒரு கணம்...", "பார்ப்போம்..."],
+    ],
+    "Kannada": [
+        ["ಹ್ಮ್ಮ್, ನೋಡುತ್ತೇನೆ...", "ಒಂದು ಕ್ಷಣ..."],
+        ["ಸರಿ, ಒಂದು ಕ್ಷಣ...", "ನೋಡೋಣ..."],
+    ],
+    "Malayalam": [
+        ["ഹ്മ്മ്, നോക്കാം...", "ഒരു നിമിഷം..."],
+        ["ശരി, ഒരു നിമിഷം...", "നോക്കട്ടെ..."],
+    ],
+}
+
+# Rotating pointer so the same caller doesn't hear the same filler twice in a row.
+_filler_cursor: dict[int, int] = {}
+
+# Pre-synthesized filler audio: (language, slot, phrase_idx) -> base64 MP3
+_filler_audio_cache: dict[tuple[str, int, int], str] = {}
+
+
+def _filler_cache_key(language: str, slot: int, phrase_idx: int) -> tuple[str, int, int]:
+    return (language, slot, phrase_idx)
+
+
+async def _warm_filler_cache() -> None:
+    """Pre-synthesize every filler phrase for every language (called at startup)."""
+    try:
+        from app.tts.edge_tts_service import get_tts_service
+        tts = get_tts_service()
+        if not tts.is_initialized:
+            await tts.initialize()
+        for lang, slots in _FILLER_PHRASES.items():
+            for slot, phrases in enumerate(slots):
+                for i, phrase in enumerate(phrases):
+                    key = _filler_cache_key(lang, slot, i)
+                    if key in _filler_audio_cache:
+                        continue
+                    try:
+                        audio = await tts.synthesize(phrase, language=lang)
+                        if audio:
+                            _filler_audio_cache[key] = base64.b64encode(audio).decode("ascii")
+                    except Exception as e:  # noqa: BLE001 — cache is best-effort
+                        logger.warning("Filler warm failed (%s/%s): %s", lang, phrase, e)
+        logger.info("Filler cache warmed: %d phrases", len(_filler_audio_cache))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Filler cache warming skipped: %s", e)
+
+
+def _get_cached_filler(language: str) -> tuple[str, str] | None:
+    """Return (text, audio_b64) for the next cached filler, or None (cold cache)."""
+    slots = _FILLER_PHRASES.get(language) or _FILLER_PHRASES["English"]
+    cur = _filler_cursor.get(0, -1)
+    slot = (cur + 1) % len(slots)
+    for i in range(len(slots[slot])):
+        phrase_idx = (i) % len(slots[slot])
+        key = _filler_cache_key(language, slot, phrase_idx)
+        if key in _filler_audio_cache:
+            _filler_cursor[0] = slot
+            return slots[slot][phrase_idx], _filler_audio_cache[key]
+    return None
+
+
 def _natural_pause_ms(sentence: str) -> int:
     """Natural breathing pause after a sentence (used by non-WS callers).
     Tuned for human conversational cadence (spec §37): short beats between
@@ -878,6 +967,29 @@ async def _process_turn(
         tts = get_tts_service()
         sentence_count = 0
         first_sentence_text = ""
+
+        # ── Asynchronous thinking-filler ────────────────────────────────────
+        # While the real answer is still generating, instantly send a short
+        # natural ack ("Hmm, let me check that...") from the pre-synthesized
+        # cache so the caller hears a human-like response beat immediately.
+        # The real answer streams in right behind it. Skipped when the full
+        # answer is already cached (that path is instant anyway).
+        if not cached_text:
+            filler = _get_cached_filler(detected_lang)
+            if filler:
+                filler_text, filler_audio = filler
+                try:
+                    latency.mark_tts_first_audio()
+                    await websocket.send_json({
+                        "type": "sentence",
+                        "index": -1,
+                        "text": filler_text,
+                        "audio_data": filler_audio,
+                        "filler": True,
+                    })
+                    logger.info("FILLER | conv=%s sent '%s'", conversation_id, filler_text)
+                except Exception as e:  # noqa: BLE001 — filler is best-effort
+                    logger.warning("Filler send failed (conv=%s): %s", conversation_id, e)
 
         if cached_text:
             logger.info("Cache HIT for: %.40s", llm_input)

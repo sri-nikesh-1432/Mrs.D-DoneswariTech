@@ -215,6 +215,14 @@ async def lifespan(app: FastAPI):
             await asyncio.wait_for(warm_tts_cache(get_tts_service(), max_entries=2), timeout=60)
         except Exception as e:
             logger.warning("TTS cache warmup stopped (non-fatal): %s", e)
+        # Pre-synthesize the async thinking-fillers ("Hmm, let me check that...")
+        # for every supported language FIRST — they're short, fast, and needed
+        # on every slow turn, so they must be ready before anything else.
+        try:
+            from app.voice.voice_ws import _warm_filler_cache
+            await asyncio.wait_for(_warm_filler_cache(), timeout=180)
+        except Exception as e:
+            logger.warning("Filler cache warmup stopped (non-fatal): %s", e)
         # Preload the most common admissions questions (text + first-sentence
         # audio) so the highest-traffic questions answer in <100ms TTFA.
         try:

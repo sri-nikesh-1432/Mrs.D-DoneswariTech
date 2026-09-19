@@ -60,7 +60,7 @@ class VoiceWebSocket {
 
   // Playback queue
   private playCtx: AudioContext | null = null;
-  private playQueue: Array<{ text: string; buffer: AudioBuffer }> = [];
+  private playQueue: Array<{ text: string; buffer: AudioBuffer; isFiller?: boolean }> = [];
   private currentSource: AudioBufferSourceNode | null = null;
   private playing = false;
   private playbackDone = true;
@@ -267,10 +267,15 @@ class VoiceWebSocket {
       case "sentence": {
         const text = String(msg.text ?? "");
         const audioB64 = msg.audio_data as string | null;
-        this.agentTextBuffer += (this.agentTextBuffer ? " " : "") + text;
+        // Thinking-fillers ("Hmm, let me check that...") play instantly but are
+        // NOT appended to the transcript — the real answer follows right behind.
+        const isFiller = msg.filler === true;
+        if (!isFiller) {
+          this.agentTextBuffer += (this.agentTextBuffer ? " " : "") + text;
+        }
         this.callbacks.onAgentPartial?.(text);
         if (audioB64) {
-          this._enqueueAudio(text, audioB64);
+          this._enqueueAudio(text, audioB64, isFiller);
         } else {
           // No audio for this sentence — show text immediately
           this.callbacks.onAgentFinal?.(text);
@@ -323,7 +328,7 @@ class VoiceWebSocket {
   }
 
   // ─── Audio playback queue ─────────────────────────────────────
-  private async _enqueueAudio(text: string, audioB64: string): Promise<void> {
+  private async _enqueueAudio(text: string, audioB64: string, isFiller = false): Promise<void> {
     try {
       if (!this.playCtx) {
         this.playCtx = new AudioContext();
@@ -375,9 +380,10 @@ class VoiceWebSocket {
       if (this.intentionalClose) return;
       // Natural inter-sentence breath — varied like real speech rhythm
       // (spec §37): shorter between related thoughts, a thinking beat after
-      // questions. Skipped instantly when barged in.
+      // questions. Fillers get almost no gap — the real answer chases them.
+      // Skipped instantly when barged in.
       const t = item.text?.trim() ?? "";
-      const breath = t.endsWith("?") ? 340 : t.endsWith("!") ? 260 : 220;
+      const breath = item.isFiller ? 40 : t.endsWith("?") ? 340 : t.endsWith("!") ? 260 : 220;
       setTimeout(() => { if (!this.intentionalClose) this._playNext(); }, breath);
     };
     this.currentSource = source;
