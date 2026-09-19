@@ -82,15 +82,15 @@ export default function TextInput({
         )}
       </motion.button>
 
-      {/* Text input */}
+      {/* Text input — always typable, even while the mic listens */}
       <input
         ref={inputRef}
         type="text"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKey}
-        placeholder={listening ? "Listening — say something..." : "Type something..."}
-        disabled={disabled || listening}
+        placeholder={listening ? "Listening — you can also type here…" : "Type a message…"}
+        disabled={disabled}
         className="flex-1 bg-transparent text-sm text-gray-700 placeholder-gray-400 outline-none disabled:cursor-not-allowed"
       />
 

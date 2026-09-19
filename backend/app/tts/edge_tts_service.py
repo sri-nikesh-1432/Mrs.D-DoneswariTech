@@ -41,8 +41,8 @@ class EdgeTTSService:
         # Indian neural voices per language (validated against edge_tts list_voices).
         # Main + Alt entries so voice rotation never picks a nonexistent voice.
         self.voices = {
-            "English": "en-IN-NeerjaNeural",        # Indian English female
-            "English-Alt": "en-IN-PrabhatNeural",   # Indian English male
+            "English": "en-IN-NeerjaExpressiveNeural",   # Indian English female, expressive variant
+            "English-Alt": "en-IN-PrabhatNeural",        # Indian English male
             "Telugu": "te-IN-ShrutiNeural",          # Telugu female
             "Telugu-Alt": "te-IN-MohanNeural",       # Telugu male
             "Hindi": "hi-IN-SwaraNeural",            # Hindi female
@@ -54,7 +54,7 @@ class EdgeTTSService:
             "Malayalam": "ml-IN-SobhanaNeural",      # Malayalam female
             "Malayalam-Alt": "ml-IN-MidhunNeural",   # Malayalam male
         }
-        self.voice = os.getenv("TTS_VOICE", "te-IN-ShrutiNeural")
+        self.voice = os.getenv("TTS_VOICE", "en-IN-NeerjaExpressiveNeural")
         self.rate = os.getenv("TTS_RATE", "+10%")  # ~1.1x speed, calm counsellor pace
         self.pitch = os.getenv("TTS_PITCH", "+0Hz")
         self.is_initialized = False
