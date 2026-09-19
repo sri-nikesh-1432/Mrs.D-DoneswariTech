@@ -373,8 +373,12 @@ class VoiceWebSocket {
     source.onended = () => {
       this.currentSource = null;
       if (this.intentionalClose) return;
-      // Natural inter-sentence breath (~250ms), skipped when barged in
-      setTimeout(() => { if (!this.intentionalClose) this._playNext(); }, 250);
+      // Natural inter-sentence breath — varied like real speech rhythm
+      // (spec §37): shorter between related thoughts, a thinking beat after
+      // questions. Skipped instantly when barged in.
+      const t = item.text?.trim() ?? "";
+      const breath = t.endsWith("?") ? 340 : t.endsWith("!") ? 260 : 220;
+      setTimeout(() => { if (!this.intentionalClose) this._playNext(); }, breath);
     };
     this.currentSource = source;
     source.start();

@@ -411,16 +411,20 @@ class EdgeTTSService:
     # speaker with a natural breathing rhythm.
     @staticmethod
     def _silence_for(sentence: str) -> int:
+        """Breathing pause after a sentence (ms), played by the frontend.
+        Tuned for natural human conversation cadence (spec §37): short beats
+        between related thoughts, a thinking beat before questions. Not too
+        long — long gaps make the agent sound detached or laggy."""
         s = sentence.strip()
         if s.endswith("?"):
-            return 550
+            return 420
         if s.endswith("!"):
-            return 450
+            return 340
         if len(s) > 140:
-            return 600
+            return 460
         if len(s) < 20:
-            return 300
-        return 380
+            return 220
+        return 300
 
     # Expressive mode. IMPORTANT FINDING: the free Edge endpoint silently
     # returns ZERO audio for <mstts:express-as>, <mstts:silence> AND <break>

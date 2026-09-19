@@ -359,19 +359,21 @@ _language_detector = LanguageDetector()
 # ---------------------------------------------------------------------------
 
 def _natural_pause_ms(sentence: str) -> int:
-    """Natural breathing pause after a sentence (used by non-WS callers)."""
+    """Natural breathing pause after a sentence (used by non-WS callers).
+    Tuned for human conversational cadence (spec §37): short beats between
+    related thoughts, a thinking beat before questions — never sluggish."""
     s = sentence.strip()
     if s.endswith("?"):
-        return 450 + int(random.random() * 200)
+        return 380 + int(random.random() * 140)
     if s.endswith("!"):
-        return 350 + int(random.random() * 150)
+        return 300 + int(random.random() * 120)
     if s.endswith("..."):
-        return 500 + int(random.random() * 200)
+        return 420 + int(random.random() * 160)
     if len(s) > 120:
-        return 400 + int(random.random() * 200)
+        return 340 + int(random.random() * 140)
     if len(s) < 25:
-        return 250 + int(random.random() * 150)
-    return 300 + int(random.random() * 200)
+        return 200 + int(random.random() * 100)
+    return 260 + int(random.random() * 120)
 
 
 # ---------------------------------------------------------------------------

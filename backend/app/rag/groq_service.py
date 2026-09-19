@@ -125,17 +125,26 @@ async def stream_chat_fast(
       - max_tokens=180 for a concise 2-sentence phone answer (was 300)
       - temperature=0.25 → less sampling overhead
     """
-    # ── System prompt (kept tiny for speed) ──────────────────────────────────
+    # ── System prompt (kept tiny for speed, tuned for HUMAN speech §37 §38) ──
     system = (
-        f"You are {agent_name}, a professional human-like telecaller from {company_name} on a live phone call. "
-        f"Reply in {lang}. "
-        f"Speak naturally and concisely in 1-2 sentences max. Ask only ONE question at a time. "
-        f"CRITICAL for low latency: your FIRST sentence must be the direct answer in 12 words or fewer; "
-        f"optionally add ONE short follow-up question as the second sentence. "
-        f"Strict Anti-Hallucination: The KNOWLEDGE section below is authoritative and contains the institute's real details. "
-        f"If the knowledge mentions the asked topic — even partially — you MUST answer from it. Never claim information is missing when it is present. "
-        f"Never guess or invent fees, dates, or eligibility. "
-        f"Only if the knowledge truly lacks the topic, say 'I don't have the exact information available right now. I can help with what I have, or arrange for a counsellor to provide the exact details.'"
+        f"You are {agent_name}, a warm human telecaller from {company_name} on a live phone call. "
+        f"Reply in {lang}. You sound like a REAL PERSON talking, never a chatbot or a document. "
+        # — How humans actually talk (spec §37) —
+        "SPEAK LIKE A HUMAN: use contractions (we're, that's, you'll, it's). "
+        "Start with a natural acknowledgement when it fits: 'Sure.', 'Yeah.', 'Okay, so…', 'Hmm, good question.', 'Right.' — vary them, never the same one twice in a row. "
+        "Keep it to 1-2 SHORT sentences. Ask only ONE question at a time. "
+        "Prefer casual spoken wording: 'basically', 'actually', 'pretty affordable', 'around 45,000 a year' — the way a friend would explain it. "
+        "NEVER sound like a brochure: no 'based on the information available', no 'our institution offers', no lists, no formal phrasing. "
+        "A light filler is fine occasionally ('well…', 'let me see…') — that's what humans do. "
+        "Style example: 'Yeah, sure. MPC is basically Maths, Physics and Chemistry. Want me to tell you about the admission details too?' "
+        # — Latency contract (unchanged) —
+        "CRITICAL for low latency: your FIRST sentence must be the direct answer in 12 words or fewer; "
+        "optionally add ONE short follow-up question as the second sentence. "
+        # — Grounding (unchanged) —
+        "The KNOWLEDGE below is authoritative and contains the institute's real details. "
+        "If the knowledge mentions the asked topic — even partially — you MUST answer from it, in casual spoken words. Never claim information is missing when it is present. "
+        "Never guess or invent fees, dates, or eligibility. "
+        "Only if the knowledge truly lacks the topic, say naturally: 'I don't have that specific detail right now, but I can connect you with someone who can help with that.'"
     )
     if instructions and instructions.strip():
         system += f"\nSpecial Instructions: {instructions.strip()[:200]}"
@@ -144,6 +153,16 @@ async def stream_chat_fast(
         # Hard cap at 500 chars — keeps LLM prefill fast (TTFT) while still
         # covering the top RAG facts for grounded answers
         system += f"\n\nKNOWLEDGE:\n{context.strip()[:500]}"
+    else:
+        # No knowledge retrieved (spec §43): silence in the KB is NOT evidence
+        # of absence — never confirm/deny facts about the org. Natural,
+        # varied fallback so it doesn't sound like a broken record.
+        system += (
+            "\n\nNO KNOWLEDGE FOUND for this question. Do NOT confirm or deny anything "
+            "about the organization. Say naturally, in your own words, that you don't "
+            "have that specific detail right now and offer to connect them with a counsellor. "
+            "If it was small talk or a pleasantry, just respond conversationally without inventing facts."
+        )
 
     # ── Message list: system + last 3 turns + user ───────────────────────────
     messages: List[Dict] = [{"role": "system", "content": system}]
@@ -158,10 +177,11 @@ async def stream_chat_fast(
     messages.append({"role": "user", "content": query})
 
     try:
-        # max_tokens=180 → 1-2 crisp sentences; low temperature → consistent
-        # grounding behaviour (never randomly refuses answerable questions)
+        # max_tokens=180 → 1-2 crisp sentences. Temperature 0.55 gives natural
+        # human phrasing variety (spec §37) while staying grounded — the strict
+        # system prompt keeps facts locked to KNOWLEDGE even at this temp.
         stream = await _create_with_fallback(
-            messages, temperature=0.15, max_tokens=180, stream=True
+            messages, temperature=0.55, max_tokens=180, stream=True
         )
         async for chunk in stream:
             if not chunk.choices:
