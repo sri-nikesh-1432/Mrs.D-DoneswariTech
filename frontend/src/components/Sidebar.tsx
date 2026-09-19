@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { listAgents, logout } from "../services/api";
+import { useI18n } from "../i18n";
 
 interface SidebarProps {
   workspaceName?: string;
@@ -24,6 +25,7 @@ const NAV_AGENT = [
 export default function Sidebar({ workspaceName, userName, onLogout }: SidebarProps) {
   const navigate = useNavigate();
   const { agentId } = useParams<{ agentId: string }>();
+  const { t } = useI18n();
 
   const { data: agents } = useQuery({
     queryKey: ["agents"],
@@ -56,11 +58,11 @@ export default function Sidebar({ workspaceName, userName, onLogout }: SidebarPr
 
       {/* Global nav */}
       <nav className="px-3 pt-4 space-y-0.5">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--gray-400)] px-3 pb-1.5">Platform</div>
-        <SideLink to="/home" icon={LayoutDashboard} label="Home" end />
-        <SideLink to="/dashboard" icon={LayoutDashboard} label="Dashboard" end />
-        <SideLink to="/agents" icon={Bot} label="Agents" end />
-        <SideLink to="/settings" icon={Settings} label="Settings" end />
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--gray-400)] px-3 pb-1.5">{t("nav.platform")}</div>
+        <SideLink to="/home" icon={LayoutDashboard} label={t("nav.home")} end />
+        <SideLink to="/dashboard" icon={LayoutDashboard} label={t("nav.dashboard")} end />
+        <SideLink to="/agents" icon={Bot} label={t("nav.agents")} end />
+        <SideLink to="/settings" icon={Settings} label={t("nav.settings")} end />
       </nav>
 
       {/* Agent-scoped nav */}
@@ -74,7 +76,7 @@ export default function Sidebar({ workspaceName, userName, onLogout }: SidebarPr
               key={item.to}
               to={`/agent/${agentId}/${item.to}`}
               icon={item.icon}
-              label={item.label}
+              label={t(`nav.${item.to === "overview" ? "overview" : item.to === "test" ? "voiceTest" : item.to === "students" ? "students" : item.to === "campaign" ? "startCalls" : "analytics"}` as never)}
             />
           ))}
         </nav>
@@ -113,7 +115,7 @@ export default function Sidebar({ workspaceName, userName, onLogout }: SidebarPr
           </div>
           <button
             onClick={handleLogout}
-            title="Log out"
+            title={t("nav.logout")}
             className="p-1.5 rounded-lg text-[var(--gray-400)] hover:text-[var(--gray-600)] hover:bg-[var(--gray-100)] transition-colors"
           >
             <LogOut className="w-4 h-4" />

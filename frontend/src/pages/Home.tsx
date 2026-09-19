@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Plus, Bot, Loader2, ArrowUpRight, GraduationCap, PhoneCall, Users, TrendingUp, Clock } from "lucide-react";
 import { getMe, listAgents, createAgent } from "../services/api";
 import { StatusChip } from "./Dashboard";
+import { useI18n } from "../i18n";
 
 /**
  * HOME (spec §5 §19 §55): the main agent-management area.
@@ -13,6 +14,7 @@ import { StatusChip } from "./Dashboard";
 export default function Home() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { t } = useI18n();
 
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: getMe, staleTime: 60_000 });
   const { data: agents, isLoading } = useQuery({
@@ -53,7 +55,7 @@ export default function Home() {
       <div className="flex items-start justify-between mb-7">
         <div>
           <h1 className="text-2xl font-bold text-[var(--gray-800)]">
-            Welcome{me?.user?.full_name ? `, ${me.user.full_name.split(" ")[0]}` : ""}
+            {t("home.welcome")}{me?.user?.full_name ? `, ${me.user.full_name.split(" ")[0]}` : ""}
           </h1>
           <p className="text-sm text-[var(--gray-500)] mt-0.5">
             {me?.workspace?.name ?? "Your workspace"} · AI telecalling agents
@@ -63,7 +65,7 @@ export default function Home() {
           onClick={() => setShowCreate(true)}
           className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-lg px-4 py-2.5 transition-colors shadow-[var(--shadow-sm)]"
         >
-          <Plus className="w-4 h-4" /> Create New Agent
+          <Plus className="w-4 h-4" /> {t("home.createAgent")}
         </button>
       </div>
 
@@ -75,15 +77,15 @@ export default function Home() {
       ) : (agents ?? []).length === 0 ? (
         <div className="glass rounded-[var(--radius-md)] p-12 text-center">
           <Bot className="w-10 h-10 text-[var(--gray-300)] mx-auto mb-3" />
-          <div className="text-[15px] font-semibold text-[var(--gray-700)]">No agents yet</div>
+          <div className="text-[15px] font-semibold text-[var(--gray-700)]">{t("home.agents")}</div>
           <p className="text-[13px] text-[var(--gray-500)] mt-1.5 max-w-sm mx-auto">
-            Create your first AI calling agent, upload your knowledge, train it, and start real calls.
+            {t("home.noAgents")}
           </p>
           <button
             onClick={() => setShowCreate(true)}
             className="mt-5 inline-flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-lg px-5 py-2.5"
           >
-            <Plus className="w-4 h-4" /> Create New Agent
+            <Plus className="w-4 h-4" /> {t("home.createAgent")}
           </button>
         </div>
       ) : (
@@ -112,9 +114,9 @@ export default function Home() {
 
               {/* Real counts from the agent's own records (spec §55) */}
               <div className="grid grid-cols-3 gap-2 mt-3.5 pt-3.5 border-t border-[var(--gray-100)] text-center">
-                <MiniStat icon={Users} value={a.total_students ?? 0} label="Students" />
-                <MiniStat icon={PhoneCall} value={a.calls_completed ?? 0} label="Calls" />
-                <MiniStat icon={TrendingUp} value={a.interested_count ?? 0} label="Interested" />
+                <MiniStat icon={Users} value={a.total_students ?? 0} label={t("home.students")} />
+                <MiniStat icon={PhoneCall} value={a.calls_completed ?? 0} label={t("home.calls")} />
+                <MiniStat icon={TrendingUp} value={a.interested_count ?? 0} label={t("home.interested")} />
               </div>
             </Link>
           ))}
@@ -125,7 +127,7 @@ export default function Home() {
       {showCreate && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 px-4" onClick={() => setShowCreate(false)}>
           <div className="bg-white rounded-[var(--radius-lg)] shadow-[var(--shadow-lg)] w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-lg font-semibold text-[var(--gray-800)] mb-1">Create New Agent</h2>
+            <h2 className="text-lg font-semibold text-[var(--gray-800)] mb-1">{t("home.createAgent")}</h2>
             <p className="text-[12.5px] text-[var(--gray-500)] mb-5">
               The agent starts as a DRAFT — you'll upload knowledge and train it next.
             </p>

@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { GraduationCap, Loader2, CheckCircle2, XCircle, AlertTriangle, ShieldCheck } from "lucide-react";
 import { uploadAgentDocument, getKnowledgeStatus, validateKnowledge } from "../services/api";
 import type { KnowledgeStatus, KnowledgeValidationResult } from "../services/api";
+import { useI18n } from "../i18n";
 
 /**
  * REAL training pipeline UI (spec §9 §10 §11).
@@ -21,6 +22,7 @@ interface Props {
 }
 
 export default function TrainingPanel({ agentId, onReady }: Props) {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -112,7 +114,7 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
     <div className="glass rounded-[var(--radius-md)] p-5 shadow-[var(--shadow-sm)] mb-5">
       <div className="flex items-center justify-between mb-1">
         <h2 className="text-[15px] font-semibold text-[var(--gray-800)] flex items-center gap-2">
-          <GraduationCap className="w-4 h-4 text-[var(--sky-600)]" /> Train Agent
+          <GraduationCap className="w-4 h-4 text-[var(--sky-600)]" /> {t("train.trainAgent")}
         </h2>
         {phase === "done" && validation?.validated && (
           <span className="flex items-center gap-1 text-[12px] font-semibold text-emerald-700">
@@ -163,7 +165,7 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
               disabled={!file}
               className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] disabled:opacity-50 text-white text-sm font-semibold rounded-lg px-5 py-2.5"
             >
-              <GraduationCap className="w-4 h-4" /> Train Agent
+              <GraduationCap className="w-4 h-4" /> {t("train.trainAgent")}
             </button>
             {phase === "failed" && (
               <button onClick={reset} className="text-sm font-medium text-[var(--gray-600)] bg-[var(--gray-50)] hover:bg-[var(--gray-100)] border border-[var(--gray-200)] rounded-lg px-4 py-2.5">
@@ -192,7 +194,7 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
             return (
               <div key={s} className={`flex items-center gap-2.5 text-[13px] ${done ? "text-emerald-700" : active ? "text-[var(--sky-700)] font-semibold" : "text-[var(--gray-400)]"}`}>
                 {done ? <CheckCircle2 className="w-4 h-4" /> : active ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="w-4 h-4 rounded-full border border-[var(--gray-300)] inline-block" />}
-                <span className="capitalize">{s === "indexing" ? "Building knowledge index" : s === "validating" ? "Validating knowledge" : `${s}…`}</span>
+                <span className="capitalize">{s === "extracting" ? t("train.extracting") : s === "chunking" ? t("train.chunking") : s === "embedding" ? t("train.embedding") : s === "indexing" ? t("train.indexing") : s === "validating" ? t("train.validating") : `${s}…`}</span>
                 {s === "chunking" && status?.chunks ? <span className="text-[var(--gray-500)]">— {status.chunks.toLocaleString()} chunks created</span> : null}
               </div>
             );
@@ -231,7 +233,7 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
       {phase === "failed" && (
         <div className="flex items-start gap-2 text-[12.5px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-3.5 py-2.5">
           <XCircle className="w-4 h-4 mt-0.5 shrink-0" />
-          <span><strong>Training failed:</strong> {error}</span>
+          <span><strong>{t("train.failed")}:</strong> {error}</span>
         </div>
       )}
     </div>

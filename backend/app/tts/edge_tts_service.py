@@ -38,20 +38,21 @@ class EdgeTTSService:
     """Edge-TTS based text-to-speech service."""
     
     def __init__(self):
-        # Indian neural voices for different languages
+        # Indian neural voices per language (validated against edge_tts list_voices).
+        # Main + Alt entries so voice rotation never picks a nonexistent voice.
         self.voices = {
-            "English": "en-IN-NeerjaNeural",  # Indian English female
-            "English-Alt": "en-IN-PrabhaNeural",  # Indian English female (alternative)
-            "Telugu": "te-IN-ShrutiNeural",    # Telugu female
-            "Telugu-Alt": "te-IN-ChitraNeural", # Telugu female (alternative)
-            "Hindi": "hi-IN-SwaraNeural",      # Hindi female
-            "Hindi-Alt": "hi-IN-MeeraNeural",  # Hindi female (alternative)
-            "Tamil": "ta-IN-PallaviNeural",    # Tamil female
-            "Tamil-Alt": "ta-IN-VenkatalakshmiNeural",  # Tamil female (alternative)
-            "Kannada": "kn-IN-SapnaNeural",    # Kannada female
-            "Kannada-Alt": "kn-IN-KushalNeural",  # Kannada female (alternative)
-            "Malayalam": "ml-IN-SobhanaNeural", # Malayalam female
-            "Malayalam-Alt": "ml-IN-MirnalBetterBetterNeural",  # Malayalam female (alternative)
+            "English": "en-IN-NeerjaNeural",        # Indian English female
+            "English-Alt": "en-IN-PrabhatNeural",   # Indian English male
+            "Telugu": "te-IN-ShrutiNeural",          # Telugu female
+            "Telugu-Alt": "te-IN-MohanNeural",       # Telugu male
+            "Hindi": "hi-IN-SwaraNeural",            # Hindi female
+            "Hindi-Alt": "hi-IN-MadhurNeural",       # Hindi male
+            "Tamil": "ta-IN-PallaviNeural",          # Tamil female
+            "Tamil-Alt": "ta-IN-ValluvarNeural",     # Tamil male
+            "Kannada": "kn-IN-SapnaNeural",          # Kannada female
+            "Kannada-Alt": "kn-IN-GaganNeural",      # Kannada male
+            "Malayalam": "ml-IN-SobhanaNeural",      # Malayalam female
+            "Malayalam-Alt": "ml-IN-MidhunNeural",   # Malayalam male
         }
         self.voice = os.getenv("TTS_VOICE", "te-IN-ShrutiNeural")
         self.rate = os.getenv("TTS_RATE", "+10%")  # ~1.1x speed, calm counsellor pace

@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import Sidebar from "./components/Sidebar";
 import RequireAuth from "./components/RequireAuth";
+import LanguageSwitcher from "./components/LanguageSwitcher";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import Landing from "./pages/Landing";
@@ -42,6 +43,10 @@ function AppLayout() {
         userName={me?.user?.full_name}
       />
       <main className="flex-1 min-w-0">
+        {/* Page-language switcher — top of every authenticated page */}
+        <div className="flex justify-end px-5 pt-3">
+          <LanguageSwitcher compact />
+        </div>
         <Outlet />
       </main>
     </div>

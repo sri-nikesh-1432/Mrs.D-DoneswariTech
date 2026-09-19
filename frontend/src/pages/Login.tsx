@@ -3,9 +3,12 @@ import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Mail, Lock, ArrowRight, Loader2 } from "lucide-react";
 import { login } from "../services/api";
+import { useI18n } from "../i18n";
+import LanguageSwitcher from "../components/LanguageSwitcher";
 
 export default function Login() {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -27,7 +30,11 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-sky-gradient flex items-center justify-center px-4">
+    <div className="min-h-screen bg-sky-gradient flex items-center justify-center px-4 relative">
+      {/* Page language switcher — top-right of every page */}
+      <div className="absolute top-4 right-4">
+        <LanguageSwitcher compact />
+      </div>
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
@@ -39,13 +46,13 @@ export default function Login() {
             D
           </div>
           <h1 className="text-2xl font-bold text-[var(--gray-800)]">Doneswari AI Telecaller</h1>
-          <p className="text-[var(--gray-500)] text-sm mt-1.5">Sign in to your workspace</p>
+          <p className="text-[var(--gray-500)] text-sm mt-1.5">{t("auth.signin")}</p>
         </div>
 
         <div className="glass rounded-[var(--radius-lg)] shadow-[var(--shadow-lg)] p-7">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-[13px] font-medium text-[var(--gray-700)] mb-1.5">Email</label>
+              <label className="block text-[13px] font-medium text-[var(--gray-700)] mb-1.5">{t("auth.email")}</label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--gray-400)]" />
                 <input
@@ -60,7 +67,7 @@ export default function Login() {
             </div>
 
             <div>
-              <label className="block text-[13px] font-medium text-[var(--gray-700)] mb-1.5">Password</label>
+              <label className="block text-[13px] font-medium text-[var(--gray-700)] mb-1.5">{t("auth.password")}</label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--gray-400)]" />
                 <input
@@ -84,12 +91,12 @@ export default function Login() {
               className="w-full flex items-center justify-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white font-semibold text-sm rounded-lg py-2.5 transition-colors disabled:opacity-60"
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
-              Sign In
+              {t("auth.signin")}
             </button>
           </form>
 
           <p className="text-center text-[13px] text-[var(--gray-500)] mt-6">
-            New here?{" "}
+            {t("auth.noAccount")}{" "}
             <Link to="/signup" className="text-[var(--sky-600)] font-semibold hover:underline">
               Create an account
             </Link>

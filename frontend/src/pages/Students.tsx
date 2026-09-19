@@ -8,8 +8,10 @@ import {
   validateStudentsFile, importStudents, addStudent, listStudents, deleteStudent,
 } from "../services/api";
 import type { ImportPreview } from "../types";
+import { useI18n } from "../i18n";
 
 export default function Students() {
+  const { t } = useI18n();
   const { agentId } = useParams<{ agentId: string }>();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -92,7 +94,7 @@ export default function Students() {
     <div className="max-w-6xl mx-auto px-6 py-8">
       <div className="flex items-start justify-between mb-6">
         <div>
-          <h1 className="text-xl font-bold text-[var(--gray-800)]">Student Contacts</h1>
+          <h1 className="text-xl font-bold text-[var(--gray-800)]">{t("nav.students")}</h1>
           <p className="text-sm text-[var(--gray-500)] mt-0.5">{data?.total ?? 0} total contacts</p>
         </div>
         <div className="flex gap-2">
@@ -108,7 +110,7 @@ export default function Students() {
             onClick={() => setShowAdd(true)}
             className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-lg px-4 py-2.5"
           >
-            <Plus className="w-4 h-4" /> Add Student
+            <Plus className="w-4 h-4" /> {t("students.add")}
           </button>
         </div>
         <input

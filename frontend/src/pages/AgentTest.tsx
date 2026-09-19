@@ -8,6 +8,7 @@ import { voiceWS } from "../services/voiceWebSocket";
 import type { VoiceWSState } from "../services/voiceWebSocket";
 import { publishAgent, getAgent } from "../services/api";
 import LatencyPanel from "../components/LatencyPanel";
+import { useI18n } from "../i18n";
 import type { ConversationMessage } from "../types";
 
 const STATE_MAP: Record<VoiceWSState, { label: string; color: string }> = {
@@ -24,6 +25,7 @@ const STATE_MAP: Record<VoiceWSState, { label: string; color: string }> = {
 export default function AgentTest() {
   const { agentId } = useParams<{ agentId: string }>();
   const navigate = useNavigate();
+  const { t } = useI18n();
 
   const [wsState, setWsState] = useState<VoiceWSState>("disconnected");
   const [amplitude, setAmplitude] = useState(0);      // REAL mic level
@@ -129,7 +131,7 @@ export default function AgentTest() {
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h1 className="text-xl font-bold text-[var(--gray-800)]">Voice Test — {agentName}</h1>
+          <h1 className="text-xl font-bold text-[var(--gray-800)]">{t("test.title")} — {agentName}</h1>
           <p className="text-[13px] text-[var(--gray-500)] mt-0.5">Speak naturally; barge-in interrupts the agent instantly</p>
         </div>
         <span className={`text-[12px] font-semibold px-3 py-1 rounded-full ${badge.color}`}>{badge.label}</span>
@@ -157,8 +159,8 @@ export default function AgentTest() {
       {/* Two-state label (spec §34) */}
       <div className="text-center text-[11.5px] text-[var(--gray-400)] mb-3">
         {wsState === "speaking" || wsState === "greeting"
-          ? "AI SPEAKING — interruption works: just start talking"
-          : wsState === "listening" ? "USER SPEAKING — live waveform" : "LISTENING"}
+          ? `${t("test.aiSpeaking")} — interruption works: just start talking`
+          : wsState === "listening" ? `${t("test.userSpeaking")} — live waveform` : t("test.listening")}
       </div>
 
       {/* Transcript */}
@@ -221,7 +223,7 @@ export default function AgentTest() {
             onClick={startConversation}
             className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white font-semibold text-sm rounded-full px-6 py-3 shadow-[var(--shadow-md)]"
           >
-            <Mic className="w-4.5 h-4.5" /> Start Conversation
+            <Mic className="w-4.5 h-4.5" /> {t("test.start")}
           </button>
         ) : (
           <>
@@ -234,13 +236,13 @@ export default function AgentTest() {
               }`}
             >
               {wsState === "listening" ? <Mic className="w-4.5 h-4.5" /> : <MicOff className="w-4.5 h-4.5" />}
-              {wsState === "listening" ? "Mic On" : "Mic Off"}
+              {wsState === "listening" ? t("test.micOn") : t("test.micOff")}
             </button>
             <button
               onClick={restartConversation}
               className="flex items-center gap-2 bg-white text-[var(--gray-600)] border border-[var(--gray-200)] hover:bg-[var(--gray-50)] font-semibold text-sm rounded-full px-5 py-3"
             >
-              <RotateCcw className="w-4 h-4" /> Restart
+              <RotateCcw className="w-4 h-4" /> {t("test.restart")}
             </button>
           </>
         )}
@@ -251,7 +253,7 @@ export default function AgentTest() {
           className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-full px-6 py-3 shadow-[var(--shadow-md)] disabled:opacity-60"
         >
           {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4.5 h-4.5" />}
-          Publish Agent
+          {t("test.publish")}
         </button>
       </div>
     </div>

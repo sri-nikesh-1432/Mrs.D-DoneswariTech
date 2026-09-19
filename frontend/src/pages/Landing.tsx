@@ -5,6 +5,8 @@ import {
   Bot, Upload, GraduationCap, PhoneCall, MessageSquareText, BarChart3,
   ShieldCheck, ArrowRight, Globe, Zap, Users, Building2,
 } from "lucide-react";
+import { useI18n } from "../i18n";
+import LanguageSwitcher from "../components/LanguageSwitcher";
 
 /**
  * Professional SaaS landing page (spec §2).
@@ -65,6 +67,7 @@ const STEPS = [
 ];
 
 export default function Landing() {
+  const { t } = useI18n();
   return (
     <div className="min-h-screen bg-white text-[var(--gray-800)]">
       {/* ── Nav ── */}
@@ -76,6 +79,7 @@ export default function Landing() {
           <span className="font-semibold text-[15px]">Doneswari AI Telecaller</span>
         </div>
         <div className="flex items-center gap-3">
+          <LanguageSwitcher compact />
           <Link to="/login" className="text-sm font-medium text-[var(--gray-600)] hover:text-[var(--gray-800)] px-3 py-2">
             Sign In
           </Link>
@@ -95,12 +99,10 @@ export default function Landing() {
             <Zap className="w-3.5 h-3.5" /> AI-powered telecalling platform
           </span>
           <h1 className="text-4xl md:text-5xl font-bold leading-tight tracking-tight max-w-3xl mx-auto">
-            AI calling agents that know your business
+            {t("landing.title")}
           </h1>
           <p className="text-[16px] md:text-[17px] text-[var(--gray-500)] max-w-2xl mx-auto mt-5 leading-relaxed">
-            Upload your own knowledge, train a dedicated AI agent, and preview it with your voice —
-            then let it handle student and customer calls with grounded answers, real transcripts,
-            and honest analytics.
+            {t("landing.subtitle")}
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3 mt-8">
             <Link
