@@ -35,6 +35,7 @@ export default function AgentTest() {
   const [partialUser, setPartialUser] = useState("");
   const [partialAgent, setPartialAgent] = useState("");
   const [agentName, setAgentName] = useState("Aadhya");
+  const [agentStatus, setAgentStatus] = useState<string | undefined>();
   const [publishing, setPublishing] = useState(false);
   const [toast, setToast] = useState("");
   const [lastLatency, setLastLatency] = useState<number | null>(null);
@@ -46,7 +47,10 @@ export default function AgentTest() {
   useEffect(() => {
     if (!agentId) return;
     getAgent(agentId)
-      .then((a) => setAgentName(a.agent_name || "Aadhya"))
+      .then((a) => {
+        setAgentName(a.agent_name || "Aadhya");
+        setAgentStatus(a.status);
+      })
       .catch(() => setAgentName("Aadhya"));
   }, [agentId]);
 
@@ -123,7 +127,11 @@ export default function AgentTest() {
     }
   };
 
-  const badge = STATE_MAP[wsState] ?? STATE_MAP.disconnected;
+  const isLiveAgent = agentStatus === "published" || agentStatus === "ready" || agentStatus === "testing";
+  const badge =
+    wsState === "disconnected" && isLiveAgent
+      ? { label: "Online", color: "bg-emerald-50 text-emerald-700" }
+      : STATE_MAP[wsState] ?? STATE_MAP.disconnected;
   const inConversation = wsState !== "disconnected" && wsState !== "error";
 
   return (
