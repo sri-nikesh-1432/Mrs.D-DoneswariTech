@@ -52,6 +52,37 @@ class VectorStore:
         self.is_ready = True
         logger.info("Agent %d vector store ready (%d chunks)", self.agent_id, len(chunks))
 
+    def append_chunks(self, chunks: List[Dict], embeddings: np.ndarray) -> None:
+        """Append new chunks to this agent's existing FAISS index.
+
+        Used by the /insert quick-knowledge path. Raises if the new
+        embeddings do not match the index dimension. Never touches any
+        other agent's store.
+        """
+        if len(chunks) == 0:
+            logger.error("Cannot append empty chunks")
+            return
+
+        if len(chunks) != embeddings.shape[0]:
+            raise ValueError(f"Chunk count {len(chunks)} does not match embedding count {embeddings.shape[0]}")
+
+        for chunk in chunks:
+            chunk["agent_id"] = self.agent_id
+
+        if not self.is_ready or self.index is None:
+            self.build_index(chunks, embeddings)
+            return
+
+        if embeddings.shape[1] != self.dimension:
+            raise ValueError(
+                f"Embedding dimension {embeddings.shape[1]} does not match index dimension {self.dimension}"
+            )
+
+        faiss.normalize_L2(embeddings)
+        self.index.add(embeddings)
+        self.chunks.extend(chunks)
+        logger.info("Agent %d vector store appended (%d new chunks, %d total)", self.agent_id, len(chunks), len(self.chunks))
+
     def search(self, query_embedding: np.ndarray, top_k: int = None) -> List[Dict]:
         """Search for most similar chunks to the query embedding."""
         if not self.is_ready or self.index is None:

@@ -26,41 +26,49 @@ _scheduler = AsyncIOScheduler()
 
 async def _restore_vector_store() -> None:
     """
-    Reload the most recent READY knowledge base vector store from disk.
-    Without this, the FAISS index is empty after a restart even though the
-    database says the knowledge is ready, and all retrievals return nothing.
+    Reload every agent's READY knowledge base from the standard
+    knowledge/agent_{id}/index path. vector_store_manager.get_store()
+    auto-loads an agent's own isolated index from disk, so this simply
+    pre-warms the in-memory stores for all agents that have a READY
+    knowledge record.
+
+    Each agent gets ONLY its own index — an onboarding/upload for agent N
+    can never leak into another agent's store after a restart (spec §2 §9).
     """
     try:
         from sqlalchemy import select
-        from pathlib import Path
         from app.database.connection import AsyncSessionLocal
         from app.database.models import Knowledge, KnowledgeStatus
-        from app.rag.vector_store import vector_store
+        from app.rag.vector_store import vector_store_manager
 
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(Knowledge)
+                select(Knowledge.institute_id)
                 .where(Knowledge.status == KnowledgeStatus.READY)
-                .order_by(Knowledge.id.desc())
-                .limit(1)
+                .distinct()
             )
-            knowledge = result.scalar_one_or_none()
+            agent_ids = [row[0] for row in result.all()]
 
-            if not knowledge:
+            if not agent_ids:
                 logger.info("No ready knowledge base found at startup")
                 return
 
-            vec_path = Path(knowledge.file_path).parent / f"knowledge_{knowledge.institute_id}"
-            if vector_store.load(str(vec_path)):
-                logger.info(
-                    "Vector store restored at startup: %s (%d chunks)",
-                    knowledge.document_name, len(vector_store.chunks),
-                )
-            else:
-                logger.warning(
-                    "Knowledge %s is marked READY but no vector store file found at %s — re-upload to rebuild",
-                    knowledge.document_name, vec_path,
-                )
+            restored = 0
+            for agent_id in agent_ids:
+                store = vector_store_manager.get_store(agent_id)
+                if store.is_ready:
+                    restored += 1
+                    logger.info(
+                        "Vector store restored for agent %d (%d chunks)",
+                        agent_id, len(store.chunks),
+                    )
+                else:
+                    logger.warning(
+                        "Agent %d is marked READY but no vector store found at "
+                        "knowledge/agent_%d/index — re-upload to rebuild",
+                        agent_id, agent_id,
+                    )
+            logger.info("Vector store restore complete: %d/%d agents ready", restored, len(agent_ids))
     except Exception as e:
         logger.error("Failed to restore vector store at startup: %s", e)
 

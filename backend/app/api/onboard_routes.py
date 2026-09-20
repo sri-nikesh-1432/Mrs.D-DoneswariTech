@@ -12,15 +12,18 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
-from sqlalchemy import select
+from sqlalchemy import select, delete as sa_delete
 
 from app.database.connection import AsyncSessionLocal
-from app.database.models import Institute, Knowledge, KnowledgeStatus
+from app.database.models import Institute, Knowledge, KnowledgeStatus, KnowledgeChunk
 from app.uploads.document_service import DocumentService
 from app.rag.document_processor import extract_text_detailed
 from app.rag.chunker import chunk_text
 from app.rag.embeddings import generate_embeddings
-from app.rag.vector_store import vector_store
+from app.rag.vector_store import vector_store_manager
+from app.rag.retriever import invalidate_bm25
+from app.rag.response_cache import invalidate_institute as invalidate_response_cache
+from app.config.settings import settings
 from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
@@ -123,6 +126,11 @@ async def onboard(
             knowledge.status = KnowledgeStatus.PROCESSING
             await session.commit()
 
+            # IMPORTANT: agent-isolated vector store (spec §2 §9). Every
+            # rebuild targets THIS agent's store only — never the shared
+            # global store. The knowledge base is always per-agency/agent.
+            agent_store = vector_store_manager.get_store(institute_id)
+
             extraction = extract_text_detailed(str(file_path), file.filename or "knowledge.pdf")
             text = extraction.text
             if not text or not text.strip():
@@ -140,16 +148,48 @@ async def onboard(
             if not chunks:
                 raise ValueError("PDF produced no text chunks after processing.")
 
+            # Idempotent re-index: clear this agent's previous chunks + caches
+            await session.execute(
+                sa_delete(KnowledgeChunk).where(KnowledgeChunk.agent_id == institute_id)
+            )
+            invalidate_bm25(institute_id)
+            await invalidate_response_cache(institute_id)
+
+            # Stamp full provenance on every chunk
+            for c in chunks:
+                c["agent_id"] = institute_id
+                c["workspace_id"] = getattr(institute, "workspace_id", None)
+                c["document_id"] = knowledge.id
+                c["document_version_id"] = knowledge.id
+                c["embedding_model"] = settings.EMBEDDING_MODEL
+
             knowledge.status = KnowledgeStatus.EMBEDDING
             await session.commit()
 
             embeddings = generate_embeddings(chunks)
 
-            vector_store.clear()
-            vector_store.build_index(chunks, embeddings)
+            agent_store.build_index(chunks, embeddings)
 
-            vec_path = file_path.parent / f"knowledge_{institute_id}"
-            vector_store.save(str(vec_path))
+            # Persist to the STANDARD agent path so runtime reloads THIS agent's
+            # index (knowledge/agent_{id}/index) — not the legacy global path.
+            save_path = settings.BASE_DIR / "knowledge" / f"agent_{institute_id}" / "index"
+            agent_store.save(str(save_path))
+
+            # Persist the REAL chunk rows (provenance per chunk)
+            for c in chunks:
+                session.add(KnowledgeChunk(
+                    agent_id=institute_id,
+                    document_id=knowledge.id,
+                    workspace_id=c.get("workspace_id"),
+                    document_version_id=knowledge.id,
+                    chunk_id=c.get("chunk_id", 0),
+                    page_number=c.get("page_number"),
+                    section=c.get("section"),
+                    text=c.get("text", ""),
+                    token_count=c.get("token_count") or max(1, len(c.get("text", "")) // 4),
+                    character_count=c.get("character_count") or len(c.get("text", "")),
+                    embedding_model=settings.EMBEDDING_MODEL,
+                ))
 
             knowledge.status = KnowledgeStatus.READY
             knowledge.chunks_count = len(chunks)

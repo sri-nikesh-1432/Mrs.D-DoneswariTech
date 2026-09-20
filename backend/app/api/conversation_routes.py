@@ -20,7 +20,6 @@ from app.rag.groq_service import generate_response, stream_chat, stream_chat_fas
 from app.rag.response_cache import find_cached_response, get_cached_audio
 from app.rag.chunker import chunk_text
 from app.rag.embeddings import generate_embeddings
-from app.rag.vector_store import vector_store
 from app.rag.json_retriever import get_json_retriever
 from app.tts.edge_tts_service import EdgeTTSService
 from app.stt.groq_stt import transcribe_audio as groq_transcribe_audio
@@ -942,31 +941,23 @@ async def process_conversation(
             # Generate embeddings
             embeddings = generate_embeddings(chunks)
 
-            # Add to existing vector store
-            if vector_store.chunks is None or len(vector_store.chunks) == 0:
-                # If vector store is empty, build new index
-                vector_store.build_index(chunks, embeddings)
-            else:
-                # Append to existing index
-                vector_store.append_chunks(chunks, embeddings)
+            # Append to THIS agent's isolated store ONLY (spec §2 §9) — never
+            # the shared global store. /insert must live in the same agent-owned
+            # index that onboarding/knowledge uploads use, and persist to the
+            # standard knowledge/agent_{id}/index path the runtime reloads.
+            from app.config.settings import settings
+            from app.rag.vector_store import vector_store_manager
+            from app.rag.retriever import invalidate_bm25
+            from app.rag.response_cache import invalidate_institute as invalidate_response_cache
+            from app.database.connection import AsyncSessionLocal
+            from app.database.models import Institute, Knowledge, KnowledgeStatus, KnowledgeChunk
+            from sqlalchemy import select
 
-            # Persist to disk so the insert survives a restart.
-            # Same path scheme as knowledge_routes (uploads/knowledge/knowledge_{institute_id}).
+            agent_store = vector_store_manager.get_store(institute_id)
             try:
-                from app.config.settings import settings
-                vector_store.save(str(settings.KNOWLEDGE_DIR / f"knowledge_{institute_id}"))
-            except Exception as save_err:
-                logger.warning("Failed to persist /insert to disk: %s", save_err)
-
-            # Ensure a READY Knowledge record exists so startup restore reloads
-            # this store. Without it, /insert-before-upload knowledge would
-            # vanish after a restart (_restore_vector_store only loads the
-            # store of the latest READY Knowledge row).
-            try:
-                from app.database.connection import AsyncSessionLocal
-                from app.database.models import Knowledge, KnowledgeStatus
-                from sqlalchemy import select
                 async with AsyncSessionLocal() as session:
+                    # Latest knowledge row, or create one so the insert has a
+                    # provenance anchor and survives a restart.
                     result = await session.execute(
                         select(Knowledge)
                         .where(Knowledge.institute_id == institute_id)
@@ -975,20 +966,63 @@ async def process_conversation(
                     )
                     kb = result.scalar_one_or_none()
                     if kb is None:
-                        from pathlib import Path
-                        session.add(Knowledge(
+                        kb = Knowledge(
                             institute_id=institute_id,
                             document_name="manual_insert",
                             document_type="text",
                             file_path=str(settings.KNOWLEDGE_DIR / "manual_insert.txt"),
                             file_size=len(insert_content.encode("utf-8")),
-                            status=KnowledgeStatus.READY,
-                            chunks_count=len(vector_store.chunks),
-                        ))
+                            status=KnowledgeStatus.PROCESSING,
+                        )
+                        session.add(kb)
                         await session.commit()
-                        logger.info("Created Knowledge record for /insert (institute %s)", institute_id)
+                        await session.refresh(kb)
+
+                    agent_row = await session.get(Institute, institute_id)
+                    for c in chunks:
+                        c["agent_id"] = institute_id
+                        c["workspace_id"] = getattr(agent_row, "workspace_id", None)
+                        c["document_id"] = kb.id
+                        c["document_version_id"] = kb.id
+                        c["embedding_model"] = settings.EMBEDDING_MODEL
+
+                    if not agent_store.is_ready or len(agent_store.chunks) == 0:
+                        agent_store.build_index(chunks, embeddings)
+                    else:
+                        agent_store.append_chunks(chunks, embeddings)
+
+                    # Standard per-agent path — the exact path startup reloads.
+                    save_path = settings.BASE_DIR / "knowledge" / f"agent_{institute_id}" / "index"
+                    agent_store.save(str(save_path))
+
+                    invalidate_bm25(institute_id)
+                    await invalidate_response_cache(institute_id)
+
+                    # Persist the REAL chunk rows (provenance per chunk).
+                    for c in chunks:
+                        session.add(KnowledgeChunk(
+                            agent_id=institute_id,
+                            document_id=kb.id,
+                            workspace_id=c.get("workspace_id"),
+                            document_version_id=kb.id,
+                            chunk_id=c.get("chunk_id", 0),
+                            page_number=c.get("page_number"),
+                            section=c.get("section"),
+                            text=c.get("text", ""),
+                            token_count=c.get("token_count") or max(1, len(c.get("text", "")) // 4),
+                            character_count=c.get("character_count") or len(c.get("text", "")),
+                            embedding_model=settings.EMBEDDING_MODEL,
+                        ))
+
+                    kb.status = KnowledgeStatus.READY
+                    kb.chunks_count = len(agent_store.chunks)
+                    await session.commit()
+                    logger.info(
+                        "Persisted /insert for institute %s (total chunks %d)",
+                        institute_id, len(agent_store.chunks),
+                    )
             except Exception as db_err:
-                logger.warning("Failed to create Knowledge record for /insert: %s", db_err)
+                logger.warning("Failed to persist /insert to database: %s", db_err)
 
             insert_time = (time.time() - insert_start) * 1000
 

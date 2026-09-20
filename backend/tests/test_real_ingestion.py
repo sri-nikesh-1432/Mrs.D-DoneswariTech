@@ -248,3 +248,141 @@ def test_embedding_count_always_matches_chunk_count(tmp_path):
     embeddings = generate_embeddings(chunks)
     assert embeddings.shape[0] == len(chunks)
     assert not np.isnan(embeddings).any()
+
+
+def test_onboard_training_uses_own_agent_store_and_never_clobbers_global(tmp_path, monkeypatch):
+    """Onboarding regression fix.
+
+    The old /api/onboard pipeline called vector_store.clear() + build_index()
+    on the SHARED global agent-1 store and saved to
+    knowledge/knowledge_{id} — a path the runtime never loads. So an
+    onboarded knowledge base either "trained" the wrong agent, or looked
+    missing after restart.
+
+    The fixed pipeline trains ONLY the new agent's isolated store and saves
+    to the standard knowledge/agent_{id}/index path that runtime reloads.
+    """
+    from app.config.settings import settings
+    from app.rag.vector_store import vector_store_manager
+
+    monkeypatch.setattr(settings, "BASE_DIR", tmp_path)
+
+    # A pre-existing "global" agent-1 store that must survive onboarding.
+    global_store = vector_store_manager.get_store(1)
+    global_chunks = [{
+        "text": "Global agent existing knowledge about legacy records.",
+        "chunk_id": 0, "source": "legacy.pdf", "page_number": 1,
+        "section": "Legacy", "token_count": 8, "character_count": 60,
+        "document_id": 1, "document_version_id": 1,
+    }]
+    global_store.build_index(global_chunks, generate_embeddings(global_chunks))
+    global_store.save(str(settings.BASE_DIR / "knowledge" / "agent_1" / "index"))
+    vector_store_manager._stores.pop(1, None)  # read it back from disk below
+
+    onboarded_agent = 55501
+    onboarded_chunks = [{
+        "text": "Nomadic Academy teaches drone piloting and satellite communications.",
+        "chunk_id": 0, "source": "nomadic.pdf", "page_number": 1,
+        "section": "Drone Piloting", "token_count": 12, "character_count": 88,
+        "document_id": 701, "document_version_id": 701,
+    }]
+
+    # Exactly the steps the fixed onboard route performs.
+    agent_store = vector_store_manager.get_store(onboarded_agent)
+    agent_store.build_index(onboarded_chunks, generate_embeddings(onboarded_chunks))
+    save_path = settings.BASE_DIR / "knowledge" / f"agent_{onboarded_agent}" / "index"
+    agent_store.save(str(save_path))
+
+    # 1) The knowledge landed in the STANDARD per-agent path on disk.
+    assert (settings.BASE_DIR / "knowledge" / f"agent_{onboarded_agent}" / "index.index").exists()
+    assert (settings.BASE_DIR / "knowledge" / f"agent_{onboarded_agent}" / "index.chunks.pkl").exists()
+    # 2) A runtime reload of that agent loads the onboarded content.
+    vector_store_manager._stores.pop(onboarded_agent, None)
+    reloaded = vector_store_manager.get_store(onboarded_agent)
+    assert reloaded.is_ready and len(reloaded.chunks) == 1
+    assert "drone" in reloaded.chunks[0]["text"]
+    assert all("legacy" not in c["text"] for c in reloaded.chunks)
+    # 3) The GLOBAL agent-1 store was NOT clobbered by onboarding.
+    global_reloaded = vector_store_manager.get_store(1)
+    assert global_reloaded.is_ready and len(global_reloaded.chunks) == 1
+    assert "legacy" in global_reloaded.chunks[0]["text"]
+    assert all("drone" not in c["text"] for c in global_reloaded.chunks)
+    # 4) No legacy knowledge_{id} file was written beside the upload.
+    assert not list(tmp_path.glob("knowledge_*"))
+
+    vector_store_manager._stores.pop(onboarded_agent, None)
+    vector_store_manager._stores.pop(1, None)
+
+
+def test_append_chunks_grows_only_the_agents_own_store():
+    """/insert regression: append_chunks extends the SAME agent store and
+    never rebuilds the agent-1 global one (spec §2 §9)."""
+    agent = 77701
+    store = VectorStore(agent_id=agent)
+
+    first = [{
+        "text": "Intermediate MPC consists of Mathematics, Physics and Chemistry.",
+        "chunk_id": 0, "source": "alpha.pdf", "page_number": 1,
+        "section": "MPC Stream", "token_count": 9, "character_count": 70,
+    }]
+    store.build_index(first, generate_embeddings(first))
+    assert len(store.chunks) == 1
+
+    extra = [{
+        "text": "Hostel facilities include a safe environment and wardens.",
+        "chunk_id": 1, "source": "manual_insert", "page_number": None,
+        "section": "Hostel", "token_count": 9, "character_count": 66,
+    }]
+    store.append_chunks(extra, generate_embeddings(extra))
+    assert len(store.chunks) == 2
+
+    added = store.chunks[-1]
+    assert added["agent_id"] == 77701
+    assert added["text"].startswith("Hostel")
+    assert all(c["agent_id"] == 77701 for c in store.chunks)
+
+    hits = store.search(generate_embedding("do you have hostel facility"), top_k=3)
+    assert any("Hostel" in h["text"] for h in hits)
+    assert any("Mathematics" in h["text"] for h in hits)
+
+
+def test_restore_prewarms_each_agent_from_its_own_standard_path(tmp_path, monkeypatch):
+    """Startup restore regression: every agent's READY store must reload from
+    knowledge/agent_{id}/index — never from a single global path."""
+    from app.config.settings import settings
+    from app.rag.vector_store import vector_store_manager
+
+    monkeypatch.setattr(settings, "BASE_DIR", tmp_path)
+
+    chunks_a = [{
+        "text": "Alpha Junior College offers MPC with Mathematics and Physics.",
+        "chunk_id": 0, "source": "alpha.pdf", "page_number": 2,
+        "section": "MPC", "token_count": 10, "character_count": 68,
+        "document_id": 1, "document_version_id": 1,
+    }]
+    chunks_b = [{
+        "text": "Beta Culinary School teaches pastry baking and dessert plating.",
+        "chunk_id": 0, "source": "beta.pdf", "page_number": 1,
+        "section": "Baking", "token_count": 9, "character_count": 64,
+        "document_id": 2, "document_version_id": 2,
+    }]
+
+    for agent_id, chunks in ((77702, chunks_a), (77703, chunks_b)):
+        store = vector_store_manager.get_store(agent_id)
+        store.build_index(chunks, generate_embeddings(chunks))
+        store.save(str(settings.BASE_DIR / "knowledge" / f"agent_{agent_id}" / "index"))
+        vector_store_manager._stores.pop(agent_id, None)  # fresh reload below
+
+    # Both agents load independently, each from its OWN path (what the fixed
+    # _restore_vector_store does by calling get_store() per READY agent).
+    store_a = vector_store_manager.get_store(77702)
+    store_b = vector_store_manager.get_store(77703)
+    assert store_a.is_ready and len(store_a.chunks) == 1
+    assert store_b.is_ready and len(store_b.chunks) == 1
+    assert "Mathematics" in store_a.chunks[0]["text"]
+    assert "pastry" in store_b.chunks[0]["text"]
+    assert store_a.search(generate_embedding("MPC subjects"), top_k=1)[0]["agent_id"] == 77702
+    assert store_b.search(generate_embedding("culinary pastries"), top_k=1)[0]["agent_id"] == 77703
+
+    vector_store_manager._stores.pop(77702, None)
+    vector_store_manager._stores.pop(77703, None)
