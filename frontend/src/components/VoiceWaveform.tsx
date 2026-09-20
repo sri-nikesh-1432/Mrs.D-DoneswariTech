@@ -3,12 +3,20 @@ import type { VoiceState } from "../types";
 
 interface VoiceWaveformProps {
   state: VoiceState;
-  amplitude?: number;   // 0..1
+  amplitude?: number;   // 0..1 REAL level from the Web Audio analyser
   barCount?: number;
   color?: string;
   height?: number;
 }
 
+/**
+ * REAL waveform (spec §10): renders the ACTUAL measured audio amplitude.
+ *
+ * There are NO sine waves, NO phase oscillators, NO random values:
+ *   - every bar height comes from the latest real amplitude measurement
+ *   - a scrolling ring buffer of real measurements gives the shape
+ *   - silence renders flat/minimal exactly as silence sounds
+ */
 export default function VoiceWaveform({
   state,
   amplitude = 0,
@@ -18,9 +26,14 @@ export default function VoiceWaveform({
 }: VoiceWaveformProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
-  const phaseRef = useRef(0);
 
   const active = state === "listening" || state === "speaking" || state === "greeting";
+
+  // Ring buffer of REAL measured amplitudes (scrolled over time).
+  const historyRef = useRef<number[]>(new Array(barCount).fill(0));
+  const ampRef = useRef(0);
+
+  ampRef.current = active ? Math.max(0, Math.min(1, amplitude)) : 0;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -36,30 +49,32 @@ export default function VoiceWaveform({
     canvas.height = h * dpr;
     ctx.scale(dpr, dpr);
 
-    function draw() {
-      ctx.clearRect(0, 0, w, h);
-      phaseRef.current += active ? 0.06 : 0.015;
-      const phase = phaseRef.current;
+    let lastPush = 0;
+    const PUSH_EVERY_MS = 45;
 
-      const barW = (w - barCount) / barCount;
-      const gap = 1;
+    function draw(ts: number) {
+      // Push the latest REAL measurement into the history buffer.
+      if (ts - lastPush >= PUSH_EVERY_MS) {
+        lastPush = ts;
+        const hist = historyRef.current;
+        hist.push(ampRef.current);
+        if (hist.length > barCount) hist.shift();
+      }
+
+      ctx.clearRect(0, 0, w, h);
+      const hist = historyRef.current;
+      const barW = Math.max(2, (w - barCount) / barCount);
       const maxH = h * 0.9;
-      const minH = h * 0.06;
+      const minH = h * 0.05;
 
       for (let i = 0; i < barCount; i++) {
-        const norm = i / barCount;
-        const wave =
-          Math.sin(norm * Math.PI * 4 + phase) * 0.5 +
-          Math.sin(norm * Math.PI * 2.5 + phase * 0.7) * 0.3 +
-          Math.sin(norm * Math.PI * 7 + phase * 1.3) * 0.2;
-
-        const amp = active ? (0.4 + amplitude * 0.6) : 0.08;
-        const bh = Math.max(minH, ((wave + 1) / 2) * maxH * amp + minH);
-
-        const x = i * (barW + gap);
+        // Real measured amplitude for this column (0 when silent).
+        const v = hist[hist.length - barCount + i] ?? 0;
+        const bh = Math.max(minH, v * maxH);
+        const x = i * (barW + 1);
         const y = (h - bh) / 2;
 
-        const alpha = active ? 0.7 + norm * 0.3 : 0.25;
+        const alpha = v > 0.01 ? 0.55 + v * 0.45 : 0.18;
         ctx.fillStyle = color + Math.round(alpha * 255).toString(16).padStart(2, "0");
         ctx.beginPath();
         ctx.roundRect(x, y, barW, bh, barW / 2);
@@ -69,9 +84,9 @@ export default function VoiceWaveform({
       animRef.current = requestAnimationFrame(draw);
     }
 
-    draw();
+    animRef.current = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(animRef.current);
-  }, [state, amplitude, barCount, color, height, active]);
+  }, [barCount, color, height, active]);
 
   return (
     <canvas

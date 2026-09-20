@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header
 from pydantic import BaseModel
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.connection import get_database, AsyncSessionLocal
@@ -24,10 +24,12 @@ from app.api.auth_routes import (
     get_or_create_default_workspace,
     require_ownership,
 )
-from app.rag.document_processor import validate_file, extract_text
+from app.rag.document_processor import validate_file, extract_text_detailed
 from app.rag.chunker import chunk_text
 from app.rag.embeddings import generate_embeddings
 from app.rag.vector_store import vector_store_manager
+from app.rag.retriever import invalidate_bm25
+from app.rag.response_cache import invalidate_institute as invalidate_response_cache
 from app.logs.logger import get_logger
 from app.config.settings import settings
 
@@ -294,7 +296,9 @@ async def save_agent_changes(
     if not (agent.name or "").strip():
         problems.append("Organization name is missing.")
 
-    # 3. Knowledge document exists and completed ingestion.
+    # 3. Knowledge document exists and completed ingestion. A FAILED
+    # ingestion blocks the gate — a failed upload can never become READY
+    # (spec §25: agent READY only when every ingestion stage succeeded).
     kq = await session.execute(
         select(Knowledge)
         .where(Knowledge.institute_id == agent.id, Knowledge.is_active == True)  # noqa: E712
@@ -302,6 +306,12 @@ async def save_agent_changes(
         .limit(1)
     )
     knowledge = kq.scalar_one_or_none()
+    if knowledge and knowledge.status == KnowledgeStatus.ERROR:
+        problems.append(
+            f"Knowledge ingestion FAILED ({(knowledge.error_message or 'unknown error')[:200]}) "
+            "— upload a working document to replace it."
+        )
+        knowledge = None
     if not knowledge:
         problems.append("No knowledge document uploaded — the agent has nothing to answer from.")
     elif knowledge.status == KnowledgeStatus.PROCESSING or knowledge.ingestion_stage not in (None, "ready"):
@@ -318,6 +328,13 @@ async def save_agent_changes(
     store = vector_store_manager.get_store(agent.id)
     if not store.is_ready or not store.chunks:
         problems.append("Vector index is missing or empty — re-upload the knowledge document to rebuild it.")
+    elif knowledge is not None and len(store.chunks) != (knowledge.chunks_count or len(store.chunks)):
+        # Chunk count must match what the last ingestion actually produced
+        # (spec §3: the UI number IS the backend number).
+        logger.warning(
+            "Agent %d chunk mismatch: DB says %s, index holds %d",
+            agent.id, knowledge.chunks_count, len(store.chunks),
+        )
 
     # 5. Voice configuration exists.
     if not (agent.voice or "").strip():
@@ -405,6 +422,13 @@ async def get_knowledge_status(
         "chunks": k.chunks_count or (len(store.chunks) if store.is_ready else 0),
         "indexed": bool(store.is_ready and store.chunks),
         "error": k.error_message or k.ingestion_error,
+        # REAL extraction facts (spec §4): measured from the uploaded file.
+        "page_count": k.page_count,
+        "extracted_character_count": k.extracted_character_count,
+        "extracted_word_count": k.extracted_word_count,
+        "extraction_method": k.extraction_method,
+        "extraction_status": k.extraction_status,
+        "extraction_previews": (k.extraction_previews or {}).get("pages", []),
         "processing_started_at": k.processing_started_at.isoformat() if k.processing_started_at else None,
         "processing_completed_at": k.processing_completed_at.isoformat() if k.processing_completed_at else None,
     }
@@ -431,6 +455,7 @@ async def validate_agent_knowledge(
     its source chunk — training never silently reports success.
     """
     import random as _random
+    import re as _re
 
     user = await get_current_user_optional(authorization, session)
     agent = await session.get(Institute, agent_id)
@@ -442,49 +467,152 @@ async def validate_agent_knowledge(
 
     from app.rag.retriever import retrieve_context
 
+    # REAL validation (spec §13): generate test queries FROM the actual
+    # extracted content — direct factual, paraphrased, heading, number/date,
+    # table and a contextual follow-up — then verify retrieval returns the
+    # chunk the query was derived from.
+    kq = await session.execute(
+        select(Knowledge)
+        .where(Knowledge.institute_id == agent_id, Knowledge.is_active == True)  # noqa: E712
+        .order_by(Knowledge.id.desc())
+        .limit(1)
+    )
+    knowledge = kq.scalar_one_or_none()
+    if knowledge is not None:
+        knowledge.ingestion_stage = "validating"
+        await session.commit()
+
     chunks = store.chunks
     sample = chunks[:6] if len(chunks) <= 6 else _random.Random(42).sample(chunks, 6)
 
-    tests = []
-    passed = 0
+    def _source_of(c: dict) -> dict:
+        return {
+            "document": c.get("source"),
+            "document_id": c.get("document_id"),
+            "document_version_id": c.get("document_version_id"),
+            "page": c.get("page_number"),
+            "section": c.get("section"),
+            "chunk_id": c.get("chunk_id"),
+        }
+
+    # Build (query, kind, source_chunk) candidates from the real content.
+    candidates: List[tuple] = []
     for c in sample:
         text = (c.get("text") or "").strip()
         if len(text) < 40:
             continue
-        first_sentence = text.split(".")[0][:120]
-        keywords = " ".join([w for w in text.split() if len(w) > 5][:6])
-        for q in (first_sentence, keywords):
-            if not q:
-                continue
-            try:
-                hits = await retrieve_context(q, top_k=3, min_score=0.0, agent_id=agent_id)
-                ok = any(h.get("text", "")[:60] == text[:60] for h in hits)
-                tests.append({
-                    "question": q[:100],
-                    "retrieved": bool(hits),
-                    "source_found": ok,
-                    "top_score": round(hits[0].get("score", 0), 3) if hits else 0,
-                })
-                if ok:
-                    passed += 1
-            except Exception as e:
-                tests.append({"question": q[:100], "retrieved": False, "source_found": False, "error": str(e)[:120]})
+
+        # 1. Direct factual — the first real sentence of the chunk.
+        first_sentence = text.split(".")[0].strip()[:160]
+        if len(first_sentence) > 15:
+            candidates.append((first_sentence, "factual", c))
+
+        # 2. Paraphrased — content keywords only, no verbatim sentence shape.
+        keywords = [w for w in text.split() if len(w) > 5][:6]
+        if len(keywords) >= 3:
+            candidates.append((" ".join(keywords), "paraphrase", c))
+
+        # 3. Heading / section query, when the chunk carries a section title.
+        section = (c.get("section") or "").strip()
+        if 3 <= len(section) <= 120:
+            candidates.append((section, "heading", c))
+
+        # 4. Number / date query, when the chunk actually contains one.
+        m = _re.search(r"[^.!\n]{0,60}(?:\d[\d,.]*|₹\s*\d+|\d+%|\d{4})[^.!\n]{0,60}", text)
+        if m:
+            snippet = m.group(0).strip()
+            if len(snippet) > 12:
+                candidates.append((snippet, "number_date", c))
+
+        # 5. Table query, when the chunk holds a table row.
+        row = next((ln for ln in text.split("\n") if "|" in ln and len(ln.strip()) > 10), None)
+        if row:
+            cells = [cell.strip() for cell in row.split("|") if cell.strip()]
+            if len(cells) >= 2:
+                candidates.append((" ".join(cells[:3]), "table", c))
+
+    # 6. Contextual follow-up — exercises the conversation-aware query
+    # rewrite: the topic lives in history, the question does not repeat it.
+    for c in sample[:2]:
+        text = (c.get("text") or "").strip()
+        topic = next((w for w in text.split() if len(w) > 5), None)
+        if topic:
+            candidates.append(("what about the details?", f"followup:{topic}", c))
+
+    tests = []
+    passed = 0
+    any_retrieved = False
+    for q, kind, src in candidates[:16]:
+        src_text = (src.get("text") or "").strip()
+        history = None
+        if kind.startswith("followup:"):
+            history = [{"role": "user", "content": kind.split(":", 1)[1]}]
+        try:
+            hits = await retrieve_context(
+                q, top_k=3, min_score=0.0, agent_id=agent_id,
+                conversation_history=history,
+            )
+            retrieved = bool(hits)
+            any_retrieved = any_retrieved or retrieved
+            ok = any((h.get("text") or "")[:60] == src_text[:60] for h in hits)
+            tests.append({
+                "question": q[:120],
+                "kind": kind,
+                "retrieved": retrieved,
+                "source_found": ok,
+                "retrieved_chunk_ids": [h.get("chunk_id") for h in hits],
+                "retrieval_scores": [round(h.get("score", 0), 3) for h in hits],
+                "expected_source": _source_of(src),
+                "top_score": round(hits[0].get("score", 0), 3) if hits else 0,
+            })
+            if ok:
+                passed += 1
+        except Exception as e:
+            tests.append({
+                "question": q[:120], "kind": kind, "retrieved": False,
+                "source_found": False, "expected_source": _source_of(src),
+                "error": str(e)[:120],
+            })
 
     total = len(tests)
     if total == 0:
         raise HTTPException(status_code=400, detail="Chunks too small to validate — document may be empty or malformed.")
 
+    # Zero retrievable information means the index is unusable: training has
+    # genuinely FAILED (spec §13 §25) — never report success because
+    # embeddings merely exist.
+    if passed == 0:
+        if knowledge is not None:
+            knowledge.ingestion_stage = "failed"
+            knowledge.ingestion_error = (
+                "Retrieval validation failed: no test query derived from the document could "
+                "retrieve its own source chunk."
+            )
+            await session.commit()
+        raise HTTPException(status_code=400, detail={
+            "message": "Knowledge validation FAILED — the index contains no retrievable information.",
+            "tests_passed": 0,
+            "tests_total": total,
+            "tests": tests,
+        })
+
     need = max(1, int(total * 0.5))
+    validated = passed >= need
+    if knowledge is not None:
+        knowledge.ingestion_stage = "ready"
+        await session.commit()
+
     return {
-        "validated": passed >= need,
+        "validated": validated,
         "pass_rate": round(passed / total * 100, 1),
         "tests_passed": passed,
         "tests_total": total,
         "chunks_sampled": len(sample),
+        "retrieved_anything": any_retrieved,
         "tests": tests,
         "message": (
             f"Knowledge validation passed: {passed}/{total} retrieval tests found their source chunk."
-            if passed >= need
+            if validated
             else f"Knowledge validation WEAK: only {passed}/{total} tests retrieved their source — consider a cleaner/structured document."
         ),
     }
@@ -547,24 +675,69 @@ async def upload_agent_knowledge(
         processing_started_at=datetime.now(timezone.utc),
     )
     if prev_active:
+        # Idempotent re-index (spec §20): the previous version's chunk rows are
+        # removed so repeated uploads never accumulate duplicate/stale chunks.
         prev_active.is_active = False
+        await session.execute(
+            sa_delete(KnowledgeChunk).where(KnowledgeChunk.document_id == prev_active.id)
+        )
     session.add(knowledge)
     agent.status = AgentStatus.PROCESSING.value
     await session.commit()
     await session.refresh(knowledge)
 
+    # Re-training invalidates every cached artefact derived from the OLD
+    # knowledge: BM25 index, query cache, LLM response cache, audio cache.
+    invalidate_bm25(agent.id)
+    await invalidate_response_cache(agent.id)
     try:
-        # 1. Extract text
-        raw_text = await extract_text(str(saved_path), file.filename)
+        from app.voice.voice_ws import _AUDIO_CACHE
+        _AUDIO_CACHE.clear()
+    except Exception:
+        pass
+
+    try:
+        # 1. Extract text + REAL metadata (pages, chars, words, method).
+        extraction = extract_text_detailed(str(saved_path), file.filename)
+        raw_text = extraction.text
         if not raw_text.strip():
             raise ValueError("No extractable text found in uploaded document")
 
-        # 2. Chunk text
+        # Persist real extraction facts on the Knowledge row (spec §4).
+        knowledge.page_count = extraction.page_count
+        knowledge.extracted_character_count = extraction.extracted_character_count
+        knowledge.extracted_word_count = extraction.extracted_word_count
+        knowledge.extraction_method = extraction.extraction_method
+        knowledge.extraction_status = extraction.extraction_status
+        knowledge.extraction_previews = {
+            "pages": extraction.page_previews[:10],
+        }
+        # EXTRACTED stage (spec §11): the parser ran and produced usable text.
+        knowledge.ingestion_stage = "extracted"
+        await session.commit()
+
+        # 2. Chunk text — the count below is REAL: whatever the actual
+        # chunking of the actual document produces. Never a fixed number.
         knowledge.status = KnowledgeStatus.CHUNKING
         knowledge.ingestion_stage = "chunking"
         await session.commit()
         chunks = chunk_text(raw_text, source_document=file.filename)
+        if not chunks:
+            raise ValueError("Chunking produced zero chunks — document has no usable content")
         knowledge.chunks_count = len(chunks)
+
+        # Stamp every chunk with full provenance (spec §7) so the vector
+        # store, the persisted rows and the retrieval debug view all agree on
+        # which agent / workspace / document version a fact belongs to.
+        chunk_meta = {
+            "agent_id": agent.id,
+            "workspace_id": agent.workspace_id,
+            "document_id": knowledge.id,
+            "document_version_id": knowledge.id,
+            "document_version": knowledge.document_version,
+            "embedding_model": settings.EMBEDDING_MODEL,
+        }
+        chunks = [{**c, **chunk_meta} for c in chunks]
 
         # 3. Generate embeddings (pass chunk dicts — embeddings reads c["text"])
         knowledge.status = KnowledgeStatus.EMBEDDING
@@ -578,17 +751,21 @@ async def upload_agent_knowledge(
         vector_store_manager.save_store(agent.id, chunks, embeddings)
 
         # 4b. Persist chunk rows so retrieval can cite document/page/section
-        # provenance (spec §5 §8 §14 §51).
+        # provenance (spec §5 §7 §8 §14 §51).
         from app.database.models import KnowledgeChunk
         for c in chunks:
             session.add(KnowledgeChunk(
                 agent_id=agent.id,
                 document_id=knowledge.id,
+                workspace_id=agent.workspace_id,
+                document_version_id=knowledge.id,
                 chunk_id=c.get("chunk_id", 0),
                 page_number=c.get("page_number"),
                 section=c.get("section"),
                 text=c.get("text", ""),
-                token_count=max(1, len(c.get("text", "")) // 4),
+                token_count=c.get("token_count") or max(1, len(c.get("text", "")) // 4),
+                character_count=c.get("character_count") or len(c.get("text", "")),
+                embedding_model=settings.EMBEDDING_MODEL,
             ))
         await session.flush()
 
@@ -597,6 +774,7 @@ async def upload_agent_knowledge(
         # user clicks Save Changes, spec §15).
         knowledge.status = KnowledgeStatus.READY
         knowledge.ingestion_stage = "ready"
+        knowledge.embedding_model = settings.EMBEDDING_MODEL
         knowledge.processing_completed_at = datetime.now(timezone.utc)
         if agent.status == AgentStatus.PROCESSING.value:
             agent.status = AgentStatus.DRAFT.value
@@ -607,12 +785,21 @@ async def upload_agent_knowledge(
         await session.refresh(agent)
         await session.refresh(knowledge)
 
-        logger.info("Agent %d knowledge processed successfully: %d chunks", agent.id, len(chunks))
+        logger.info(
+            "Agent %d knowledge processed successfully: %d chunks, %d pages, "
+            "%d chars via %s",
+            agent.id, len(chunks), extraction.page_count,
+            extraction.extracted_character_count, extraction.extraction_method,
+        )
 
         return {
             "message": "Knowledge document processed successfully",
             "document_name": file.filename,
             "chunks_count": len(chunks),
+            "page_count": extraction.page_count,
+            "extracted_character_count": extraction.extracted_character_count,
+            "extracted_word_count": extraction.extracted_word_count,
+            "extraction_method": extraction.extraction_method,
             "status": "ready",
             "agent": _format_agent(agent, knowledge),
         }

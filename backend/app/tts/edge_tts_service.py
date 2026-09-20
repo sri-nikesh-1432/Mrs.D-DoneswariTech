@@ -449,30 +449,14 @@ class EdgeTTSService:
     ) -> Optional[bytes]:
         """
         Synthesize ONE complete sentence as audio bytes.
-        SSML via persistent WebSocket (fastest after warmup).
-        Plain Communicate fallback.
-        """
-        if self._EXPRESSIVE:
-            try:
-                xml_lang = _xml_lang_for(voice)
-                escaped = html.escape(spoken, quote=False)
-                ssml = (
-                    "<speak version='1.0' "
-                    "xmlns='http://www.w3.org/2001/10/synthesis' "
-                    f"xml:lang='{xml_lang}'>"
-                    f"<voice name='{voice}'>"
-                    f"<prosody pitch='{pitch}' rate='{rate}' volume='{volume}'>"
-                    f"{escaped}"
-                    "</prosody>"
-                    "</voice>"
-                    "</speak>"
-                )
-                audio = await get_raw_synth().synthesize(ssml)
-                if audio:
-                    return audio
-            except Exception as e:
-                logger.debug("SSML failed (%s); falling back to plain", e)
 
+        Uses edge_tts.Communicate directly. (The raw-SSML persistent-socket
+        path was removed after live testing showed the free Edge endpoint
+        intermittently drops raw-SSML turns after turn.start — every such
+        turn silently degraded to this same Communicate path anyway, but
+        only after wasting retries. Communicate opens a fresh connection
+        per sentence and is empirically reliable.)
+        """
         try:
             import edge_tts
             communicate = edge_tts.Communicate(

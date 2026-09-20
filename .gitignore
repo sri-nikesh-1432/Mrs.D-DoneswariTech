@@ -31,6 +31,10 @@ backend/logs/
 
 # ── Vector Store ─────────────────────────────────────────
 backend/uploads/vector_db/
+# Per-agent FAISS indices are generated at runtime from uploaded documents.
+# They are rebuildable artefacts (and contain customer document text), so
+# they are never committed. `backend/knowledge/*.json` seed files stay tracked.
+backend/knowledge/agent_*/
 
 # ── IDE ─────────────────────────────────────────────────
 .vscode/

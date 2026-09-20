@@ -8,6 +8,7 @@ import { voiceWS } from "../services/voiceWebSocket";
 import type { VoiceWSState } from "../services/voiceWebSocket";
 import { publishAgent, getAgent } from "../services/api";
 import LatencyPanel from "../components/LatencyPanel";
+import RetrievalDebugPanel from "../components/RetrievalDebugPanel";
 import { useI18n } from "../i18n";
 import type { ConversationMessage } from "../types";
 
@@ -215,6 +216,10 @@ export default function AgentTest() {
 
       {/* Internal latency view — REAL measured per-turn values (spec §60) */}
       {agentId && <LatencyPanel agentId={agentId} />}
+
+      {/* Internal retrieval debug view (spec §14) — shows the real chunks the
+          agent retrieved, with document/page/section provenance. */}
+      {agentId && <RetrievalDebugPanel agentId={agentId} />}
 
       {/* Controls */}
       <div className="flex items-center justify-center gap-3 pb-2">

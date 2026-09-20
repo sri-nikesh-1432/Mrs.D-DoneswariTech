@@ -194,6 +194,16 @@ class Knowledge(Base):
     chunks_count = Column(Integer, default=0)
     embedding_model = Column(String(100), nullable=True)
 
+    # REAL extraction metadata (spec §4): measured from the actual uploaded
+    # file — never estimated or fabricated. extraction_previews holds a JSON
+    # sample of the extracted pages so the UI can show real text.
+    page_count = Column(Integer, nullable=True)
+    extracted_character_count = Column(Integer, nullable=True)
+    extracted_word_count = Column(Integer, nullable=True)
+    extraction_method = Column(String(50), nullable=True)
+    extraction_status = Column(String(30), nullable=True)
+    extraction_previews = Column(JSON, nullable=True)
+
     # Document versioning (spec §48): each re-upload creates a new version.
     # Only ONE version per agent is is_active — retrieval must never silently
     # serve stale embeddings after a knowledge update.
@@ -374,12 +384,19 @@ class KnowledgeChunk(Base):
     id = Column(Integer, primary_key=True, index=True)
     agent_id = Column(Integer, ForeignKey("institutes.id"), nullable=False, index=True)
     document_id = Column(Integer, ForeignKey("knowledge.id"), nullable=False, index=True)
+    # Tenant + version provenance (spec §7): a chunk must always be traceable
+    # back to the workspace and to the exact document version that produced
+    # it, so stale knowledge can never be attributed to a new upload.
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=True, index=True)
+    document_version_id = Column(Integer, nullable=True, index=True)
 
     chunk_id = Column(Integer, nullable=False)  # index within the document
     page_number = Column(Integer, nullable=True)
     section = Column(String(500), nullable=True)
     text = Column(Text, nullable=False)
     token_count = Column(Integer, nullable=True)
+    character_count = Column(Integer, nullable=True)
+    embedding_model = Column(String(100), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

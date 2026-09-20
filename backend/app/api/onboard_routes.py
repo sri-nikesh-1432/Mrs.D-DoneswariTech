@@ -17,6 +17,7 @@ from sqlalchemy import select
 from app.database.connection import AsyncSessionLocal
 from app.database.models import Institute, Knowledge, KnowledgeStatus
 from app.uploads.document_service import DocumentService
+from app.rag.document_processor import extract_text_detailed
 from app.rag.chunker import chunk_text
 from app.rag.embeddings import generate_embeddings
 from app.rag.vector_store import vector_store
@@ -122,9 +123,18 @@ async def onboard(
             knowledge.status = KnowledgeStatus.PROCESSING
             await session.commit()
 
-            text = await doc_service.extract_text(file_path)
+            extraction = extract_text_detailed(str(file_path), file.filename or "knowledge.pdf")
+            text = extraction.text
             if not text or not text.strip():
                 raise ValueError("Could not extract text from PDF.")
+
+            knowledge.page_count = extraction.page_count
+            knowledge.extracted_character_count = extraction.extracted_character_count
+            knowledge.extracted_word_count = extraction.extracted_word_count
+            knowledge.extraction_method = extraction.extraction_method
+            knowledge.extraction_status = extraction.extraction_status
+            knowledge.extraction_previews = {"pages": extraction.page_previews[:10]}
+            await session.commit()
 
             chunks = chunk_text(text, source_document=file.filename or "knowledge.pdf")
             if not chunks:

@@ -14,7 +14,20 @@ import { useI18n } from "../i18n";
  * retrieval smoke tests and reports the REAL pass rate.
  */
 
-const STAGE_ORDER = ["extracting", "chunking", "embedding", "indexing", "validating", "ready"] as const;
+const STAGE_ORDER = ["extracting", "extracted", "chunking", "embedding", "indexing", "validating", "ready"] as const;
+
+/** Literal i18n key for each real ingestion stage (keeps `t()` type-safe). */
+function stageLabelKey(s: string) {
+  switch (s) {
+    case "extracting": return "train.extracting" as const;
+    case "extracted": return "train.extracted" as const;
+    case "chunking": return "train.chunking" as const;
+    case "embedding": return "train.embedding" as const;
+    case "indexing": return "train.indexing" as const;
+    case "validating": return "train.validating" as const;
+    default: return "train.trainAgent" as const;
+  }
+}
 
 interface Props {
   agentId: string;
@@ -188,13 +201,17 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
               </div>
             </div>
           )}
-          {STAGE_ORDER.slice(0, 5).map((s, i) => {
+          {STAGE_ORDER.filter((s) => s !== "ready").map((s) => {
+            const i = STAGE_ORDER.indexOf(s);
             const done = stageIdx > i || phase === "validating";
             const active = (stageIdx === i && phase === "processing") || (phase === "validating" && s === "validating");
             return (
               <div key={s} className={`flex items-center gap-2.5 text-[13px] ${done ? "text-emerald-700" : active ? "text-[var(--sky-700)] font-semibold" : "text-[var(--gray-400)]"}`}>
                 {done ? <CheckCircle2 className="w-4 h-4" /> : active ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="w-4 h-4 rounded-full border border-[var(--gray-300)] inline-block" />}
-                <span className="capitalize">{s === "extracting" ? t("train.extracting") : s === "chunking" ? t("train.chunking") : s === "embedding" ? t("train.embedding") : s === "indexing" ? t("train.indexing") : s === "validating" ? t("train.validating") : `${s}…`}</span>
+                <span>{t(stageLabelKey(s))}</span>
+                {s === "extracted" && status?.page_count ? (
+                  <span className="text-[var(--gray-500)]">— {status.page_count} page(s), {status.extracted_word_count?.toLocaleString() ?? 0} words</span>
+                ) : null}
                 {s === "chunking" && status?.chunks ? <span className="text-[var(--gray-500)]">— {status.chunks.toLocaleString()} chunks created</span> : null}
               </div>
             );
@@ -208,7 +225,9 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
           <div className="flex items-center gap-2 text-[13.5px] font-semibold text-emerald-700">
             <CheckCircle2 className="w-4.5 h-4.5" /> Agent ready — knowledge indexed and validated
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            <Stat label="Pages" value={status?.page_count ?? "—"} />
+            <Stat label="Words" value={status?.extracted_word_count?.toLocaleString() ?? "—"} />
             <Stat label="Chunks" value={status?.chunks ?? 0} />
             <Stat label="Document" value={status?.document_name?.slice(0, 18) ?? "—"} />
             <Stat label="Index version" value={`v${status?.document_version ?? 1}`} />

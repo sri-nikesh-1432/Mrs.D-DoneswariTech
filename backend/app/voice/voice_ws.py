@@ -202,6 +202,7 @@ class LatencyTracker:
     """Track latency metrics for the voice pipeline."""
 
     def __init__(self):
+        self.first_audio_played = 0.0
         self.reset()
 
     def reset(self):
@@ -217,6 +218,8 @@ class LatencyTracker:
         self.tts_first_audio = 0.0
         self.tts_end = 0.0
         self.speech_end = 0.0
+        self.first_audio_played = 0.0
+        self.first_audio_played = 0.0
 
     def start_turn(self):
         self.turn_start = time.time()
@@ -256,6 +259,11 @@ class LatencyTracker:
     def end_tts(self):
         self.tts_end = time.time()
 
+    def mark_first_audio_played(self):
+        """Client confirmed the first audio payload actually started playing."""
+        if self.first_audio_played == 0.0:
+            self.first_audio_played = time.time()
+
     def get_metrics(self) -> dict:
         metrics = {}
         if self.stt_start > 0 and self.stt_end > 0:
@@ -276,6 +284,14 @@ class LatencyTracker:
             metrics["ttfa_ms"] = round((self.tts_first_audio - self.speech_end) * 1000)
         if self.turn_start > 0 and self.tts_end > 0:
             metrics["total_turn_ms"] = round((self.tts_end - self.turn_start) * 1000)
+        # The KPI (spec §13): first audible audio MINUS user speech end.
+        # tts_first_audio is the moment the first audio payload left the
+        # server; when the client confirmed actual playback start we use
+        # that instead (includes real network + decode + play time).
+        if self.speech_end > 0 and self.first_audio_played > 0:
+            metrics["response_latency_ms"] = round((self.first_audio_played - self.speech_end) * 1000)
+        elif self.speech_end > 0 and self.tts_first_audio > 0:
+            metrics["response_latency_ms"] = metrics["ttfa_ms"]
         return metrics
 
 
@@ -358,94 +374,6 @@ _language_detector = LanguageDetector()
 # Natural pause calculation (human breathing cadence)
 # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Asynchronous thinking-fillers (spec: "make it talk like human with natural
-# noise" — asynchronous filler pattern).
-#
-# When the real answer needs retrieval/LLM time, the agent INSTANTLY says a
-# short natural acknowledgement ("Hmm, let me check that for you...") so the
-# caller never hears dead air — the human conversational equivalent of a
-# loading indicator. The filler audio is pre-synthesized per language and
-# cached in-memory, so it goes out in ~0 ms after speech end.
-# ---------------------------------------------------------------------------
-
-# Two filler "slots" per language so consecutive slow turns don't repeat the
-# same phrase. One question-type and one neutral ack per slot.
-_FILLER_PHRASES: dict[str, list[list[str]]] = {
-    "English": [
-        ["Hmm, let me check that for you...", "Sure, give me just a second..."],
-        ["Okay, one moment...", "Let me see..."],
-    ],
-    "Telugu": [
-        ["హ్మ్, నేను చూస్తాను...", "క్షణం మాత్రం ఆగండి..."],
-        ["సరే, ఒక్క క్షణం...", "చూడాలి..."],
-    ],
-    "Hindi": [
-        ["ह्म्म, मैं देखता हूँ...", "बस एक सेकंड..."],
-        ["ठीक है, एक मिनट...", "देखते हैं..."],
-    ],
-    "Tamil": [
-        ["ஹ்ம்ம், பார்க்கிறேன்...", "ஒரு நிமிடம்..."],
-        ["சரி, ஒரு கணம்...", "பார்ப்போம்..."],
-    ],
-    "Kannada": [
-        ["ಹ್ಮ್ಮ್, ನೋಡುತ್ತೇನೆ...", "ಒಂದು ಕ್ಷಣ..."],
-        ["ಸರಿ, ಒಂದು ಕ್ಷಣ...", "ನೋಡೋಣ..."],
-    ],
-    "Malayalam": [
-        ["ഹ്മ്മ്, നോക്കാം...", "ഒരു നിമിഷം..."],
-        ["ശരി, ഒരു നിമിഷം...", "നോക്കട്ടെ..."],
-    ],
-}
-
-# Rotating pointer so the same caller doesn't hear the same filler twice in a row.
-_filler_cursor: dict[int, int] = {}
-
-# Pre-synthesized filler audio: (language, slot, phrase_idx) -> base64 MP3
-_filler_audio_cache: dict[tuple[str, int, int], str] = {}
-
-
-def _filler_cache_key(language: str, slot: int, phrase_idx: int) -> tuple[str, int, int]:
-    return (language, slot, phrase_idx)
-
-
-async def _warm_filler_cache() -> None:
-    """Pre-synthesize every filler phrase for every language (called at startup)."""
-    try:
-        from app.tts.edge_tts_service import get_tts_service
-        tts = get_tts_service()
-        if not tts.is_initialized:
-            await tts.initialize()
-        for lang, slots in _FILLER_PHRASES.items():
-            for slot, phrases in enumerate(slots):
-                for i, phrase in enumerate(phrases):
-                    key = _filler_cache_key(lang, slot, i)
-                    if key in _filler_audio_cache:
-                        continue
-                    try:
-                        audio = await tts.synthesize(phrase, language=lang)
-                        if audio:
-                            _filler_audio_cache[key] = base64.b64encode(audio).decode("ascii")
-                    except Exception as e:  # noqa: BLE001 — cache is best-effort
-                        logger.warning("Filler warm failed (%s/%s): %s", lang, phrase, e)
-        logger.info("Filler cache warmed: %d phrases", len(_filler_audio_cache))
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Filler cache warming skipped: %s", e)
-
-
-def _get_cached_filler(language: str) -> tuple[str, str] | None:
-    """Return (text, audio_b64) for the next cached filler, or None (cold cache)."""
-    slots = _FILLER_PHRASES.get(language) or _FILLER_PHRASES["English"]
-    cur = _filler_cursor.get(0, -1)
-    slot = (cur + 1) % len(slots)
-    for i in range(len(slots[slot])):
-        phrase_idx = (i) % len(slots[slot])
-        key = _filler_cache_key(language, slot, phrase_idx)
-        if key in _filler_audio_cache:
-            _filler_cursor[0] = slot
-            return slots[slot][phrase_idx], _filler_audio_cache[key]
-    return None
-
 
 def _natural_pause_ms(sentence: str) -> int:
     """Natural breathing pause after a sentence (used by non-WS callers).
@@ -463,6 +391,14 @@ def _natural_pause_ms(sentence: str) -> int:
     if len(s) < 25:
         return 200 + int(random.random() * 100)
     return 260 + int(random.random() * 120)
+
+
+# ---------------------------------------------------------------------------
+# (Thinking-fillers removed — spec §1/§6: NO prewritten responses, NO fake
+# human behaviour. The first audible audio is always the REAL streamed answer:
+# RAG fires in parallel, the LLM streams, and TTS starts on the first clause.
+# The pipeline itself is the latency strategy — not canned audio.)
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -772,7 +708,7 @@ async def _process_turn(
         latency.start_turn()
 
         turn_start = time.time()
-        ai_state["speaking"] = True
+        ai_state["generating"] = True
         await websocket.send_json({"type": "processing"})
 
         # -- STT (skip when the turn came from typed text) --------------------
@@ -793,7 +729,7 @@ async def _process_turn(
 
         if not user_text:
             logger.info("WS STT empty (conv=%s)", conversation_id)
-            ai_state["speaking"] = False
+            ai_state["generating"] = False
             await websocket.send_json({
                 "type": "turn_done",
                 "ai_response": "",
@@ -802,6 +738,28 @@ async def _process_turn(
             return
 
         # -- Phantom input prevention -----------------------------------------
+        # While the agent's audio is still playing, STT hears that playback
+        # through speaker leakage even with echo cancellation. Treat any
+        # transcript captured during playback as suspect unless it clearly
+        # differs from what the agent is saying (adaptive interruption, spec §5:
+        # distinguish genuine barge-ins from echoes/backchannels).
+        if ai_state.get("playback_active"):
+            last_ai_text = next(
+                (m["content"] for m in reversed(memory) if m.get("role") == "assistant"),
+                "",
+            )
+            if _is_echo(user_text, last_ai_text) or len(user_text.split()) < 2:
+                logger.info(
+                    "Phantom input filtered (agent-echo during playback): %s", user_text[:50]
+                )
+                ai_state["speaking"] = False
+                await websocket.send_json({
+                    "type": "turn_done",
+                    "ai_response": "",
+                    "debug_info": {"stt_ms": round(stt_ms), "filtered": "agent_echo"},
+                })
+                return
+
         last_ai_text = next(
             (m["content"] for m in reversed(memory) if m.get("role") == "assistant"),
             "",
@@ -809,7 +767,7 @@ async def _process_turn(
 
         if _is_noise(user_text):
             logger.info("Phantom input filtered (noise): %s", user_text[:50])
-            ai_state["speaking"] = False
+            ai_state["generating"] = False
             await websocket.send_json({
                 "type": "turn_done",
                 "ai_response": "",
@@ -819,7 +777,7 @@ async def _process_turn(
 
         if _is_backchannel(user_text):
             logger.info("Phantom input filtered (backchannel): %s", user_text[:50])
-            ai_state["speaking"] = False
+            ai_state["generating"] = False
             await websocket.send_json({
                 "type": "turn_done",
                 "ai_response": "",
@@ -829,7 +787,7 @@ async def _process_turn(
 
         if _is_echo(user_text, last_ai_text):
             logger.info("Phantom input filtered (echo): %s", user_text[:50])
-            ai_state["speaking"] = False
+            ai_state["generating"] = False
             await websocket.send_json({
                 "type": "turn_done",
                 "ai_response": "",
@@ -839,7 +797,7 @@ async def _process_turn(
 
         should_process, utterance_id = duplicates.should_process(user_text)
         if not should_process:
-            ai_state["speaking"] = False
+            ai_state["generating"] = False
             await websocket.send_json({
                 "type": "turn_done",
                 "ai_response": "",
@@ -968,28 +926,10 @@ async def _process_turn(
         sentence_count = 0
         first_sentence_text = ""
 
-        # ── Asynchronous thinking-filler ────────────────────────────────────
-        # While the real answer is still generating, instantly send a short
-        # natural ack ("Hmm, let me check that...") from the pre-synthesized
-        # cache so the caller hears a human-like response beat immediately.
-        # The real answer streams in right behind it. Skipped when the full
-        # answer is already cached (that path is instant anyway).
-        if not cached_text:
-            filler = _get_cached_filler(detected_lang)
-            if filler:
-                filler_text, filler_audio = filler
-                try:
-                    latency.mark_tts_first_audio()
-                    await websocket.send_json({
-                        "type": "sentence",
-                        "index": -1,
-                        "text": filler_text,
-                        "audio_data": filler_audio,
-                        "filler": True,
-                    })
-                    logger.info("FILLER | conv=%s sent '%s'", conversation_id, filler_text)
-                except Exception as e:  # noqa: BLE001 — filler is best-effort
-                    logger.warning("Filler send failed (conv=%s): %s", conversation_id, e)
+        # NOTE (spec §1 §3 §6 §14): NO prewritten "thinking filler" is ever
+        # played. The first audible audio is always the REAL streamed answer —
+        # RAG runs in parallel with the LLM stream and TTS starts on the first
+        # short clause. Latency is solved by streaming, not by canned audio.
 
         if cached_text:
             logger.info("Cache HIT for: %.40s", llm_input)
@@ -1121,9 +1061,9 @@ async def _process_turn(
         metrics["detected_language"] = detected_lang
 
         # Persist REAL per-turn latency (spec: 700ms KPI) — measured values
-        # only. ttfa_ms is the measured speech_end → first-audio gap.
+        # only. response_latency_ms = first audible audio − user speech end.
         ai_state["turn_count"] = ai_state.get("turn_count", 0) + 1
-        if metrics.get("ttfa_ms") is not None:
+        if metrics.get("response_latency_ms") is not None:
             from app.rag.latency_recorder import record_turn_latency
             asyncio.create_task(record_turn_latency(
                 call_id=conversation_id,
@@ -1234,7 +1174,13 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
         "conversation_id": conversation_id,
     })
 
-    ai_state: dict = {"speaking": False, "finished_at": 0.0, "last_response": ""}
+    ai_state: dict = {
+        "speaking": False,          # True only while AUDIO IS PLAYING client-side
+        "playback_active": False,   # client-confirmed audio playback (echo window)
+        "generating": False,        # True while STT/RAG/LLM/TTS pipeline is running
+        "finished_at": 0.0,
+        "last_response": "",
+    }
     latency = LatencyTracker()
     duplicates = DuplicateTracker()
     lang_detector = LanguageDetector()
@@ -1335,6 +1281,7 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
     pcm_buffer = bytearray()
     speech_started = False
     utterance_frames = 0
+    barge_in_frames = 0
     max_utterance_frames = int(MAX_UTTERANCE_SECONDS * 1000 / FRAME_MS)
 
     async def _flush_utterance():
@@ -1370,6 +1317,17 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
                     text = str(data.get("text") or "").strip()
                     if text:
                         await utterance_q.put(("text", text))
+                    continue
+                if mtype == "playback_state":
+                    # Client reports REAL playback events: started/stopped
+                    # playing agent audio. Drives the echo-suppression window
+                    # and the playback-active portion of the KPI (spec §13:
+                    # first audible audio, not first audio synthesized).
+                    ai_state["playback_active"] = bool(data.get("active"))
+                    ai_state["speaking"] = bool(data.get("active"))
+                    if data.get("active"):
+                        latency.mark_first_audio_played()
+                    continue
                 continue
 
             # -- Binary PCM frame: VAD -----------------------------------------
@@ -1386,12 +1344,19 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
 
             is_speech = rms > ENERGY_THRESHOLD
 
-            # Barge-in: caller is talking while the agent speaks → cancel the
-            # in-flight turn SERVER-SIDE (LLM + TTS stop generating) and tell
-            # the client to stop playback so the caller can take the floor.
-            if is_speech and ai_state.get("speaking"):
+            # Barge-in: caller is talking over the agent's AUDIO → cancel the
+            # in-flight turn SERVER-SIDE (LLM + TTS stop generating) and tell the
+            # client to stop playback so the caller can take the floor (spec §5).
+            # Adaptive interruption: trigger only after a few consecutive speech
+            # frames (~60ms) so a single noise frame never cuts the agent off.
+            if is_speech:
+                barge_in_frames += 1
+            else:
+                barge_in_frames = 0
+            if barge_in_frames >= 3 and ai_state.get("speaking"):
                 _cancel_current_turn("speech while agent speaking")
                 ai_state["speaking"] = False
+                ai_state["playback_active"] = False
                 try:
                     await websocket.send_json({"type": "speech_start"})
                 except Exception:

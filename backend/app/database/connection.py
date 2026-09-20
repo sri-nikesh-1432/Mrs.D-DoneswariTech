@@ -139,7 +139,8 @@ def _migrate_schema(sync_conn):
             except Exception:
                 pass
 
-    # Knowledge table migrations (spec §48 document versioning)
+    # Knowledge table migrations (spec §48 document versioning + §4 real
+    # extraction metadata columns)
     if "knowledge" in tables:
         cols = {c["name"] for c in inspector.get_columns("knowledge")}
         for col, col_type in {
@@ -147,11 +148,34 @@ def _migrate_schema(sync_conn):
             "is_active": "BOOLEAN DEFAULT 1",
             "ingestion_stage": "VARCHAR(50)",
             "ingestion_error": "TEXT",
+            "page_count": "INTEGER",
+            "extracted_character_count": "INTEGER",
+            "extracted_word_count": "INTEGER",
+            "extraction_method": "VARCHAR(50)",
+            "extraction_status": "VARCHAR(30)",
+            "extraction_previews": "JSON",
         }.items():
             if col not in cols:
                 try:
                     sync_conn.exec_driver_sql(f"ALTER TABLE knowledge ADD COLUMN {col} {col_type}")
                     print(f"Migration: added knowledge.{col}")
+                except Exception:
+                    pass
+
+    # Knowledge chunks table migrations (spec §7): provenance metadata added
+    # after the table was first created.
+    if "knowledge_chunks" in tables:
+        cols = {c["name"] for c in inspector.get_columns("knowledge_chunks")}
+        for col, col_type in {
+            "workspace_id": "INTEGER",
+            "document_version_id": "INTEGER",
+            "character_count": "INTEGER",
+            "embedding_model": "VARCHAR(100)",
+        }.items():
+            if col not in cols:
+                try:
+                    sync_conn.exec_driver_sql(f"ALTER TABLE knowledge_chunks ADD COLUMN {col} {col_type}")
+                    print(f"Migration: added knowledge_chunks.{col}")
                 except Exception:
                     pass
 

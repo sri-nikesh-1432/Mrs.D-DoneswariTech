@@ -41,8 +41,12 @@ async def record_turn_latency(
         response_latency = None
         if speech_end and first_audio and first_audio >= speech_end:
             response_latency = int(first_audio - speech_end)
+        elif metrics.get("response_latency_ms") is not None:
+            # Pre-computed measured speech_end → first-audible-audio gap from
+            # the voice pipeline (server clock, client-confirmed playback).
+            response_latency = int(metrics["response_latency_ms"])
         elif metrics.get("ttfa_ms") is not None:
-            # ttfa_ms is itself the measured speech_end → tts_first_audio gap
+            # ttfa_ms is the measured speech_end → tts_first_audio gap
             response_latency = int(metrics["ttfa_ms"])
 
         async with AsyncSessionLocal() as session:

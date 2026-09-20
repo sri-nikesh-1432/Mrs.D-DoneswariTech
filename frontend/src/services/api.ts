@@ -174,7 +174,18 @@ export interface KnowledgeValidationResult {
   tests_passed: number;
   tests_total: number;
   chunks_sampled: number;
-  tests: Array<{ question: string; retrieved: boolean; source_found: boolean; top_score?: number; error?: string }>;
+  retrieved_anything?: boolean;
+  tests: Array<{
+    question: string;
+    kind?: string;
+    retrieved: boolean;
+    source_found: boolean;
+    top_score?: number;
+    retrieval_scores?: number[];
+    retrieved_chunk_ids?: Array<number | null>;
+    expected_source?: { document?: string | null; page?: number | null; section?: string | null; chunk_id?: number | null };
+    error?: string;
+  }>;
   message: string;
 }
 
@@ -221,10 +232,62 @@ export interface KnowledgeStatus {
   indexed: boolean;
   error?: string | null;
   message: string;
+  // REAL measured extraction facts from the uploaded file (spec §4).
+  page_count?: number | null;
+  extracted_character_count?: number | null;
+  extracted_word_count?: number | null;
+  extraction_method?: string | null;
+  extraction_status?: string | null;
+  extraction_previews?: Array<{ page: number; characters: number; preview: string }>;
+  processing_started_at?: string | null;
+  processing_completed_at?: string | null;
 }
 
 export async function getKnowledgeStatus(agentId: string | number): Promise<KnowledgeStatus> {
   const res = await api.get<KnowledgeStatus>(`/api/agents/${agentId}/knowledge/status`);
+  return res.data;
+}
+
+// ─── Retrieval debug (spec §14) ─────────────────────────────────────
+export interface RetrievalDebugChunk {
+  chunk_id?: number | null;
+  document?: string | null;
+  document_id?: number | null;
+  document_version_id?: number | null;
+  page?: number | null;
+  end_page?: number | null;
+  section?: string | null;
+  score?: number;
+  bm25_rank?: number | null;
+  rerank_score?: number | null;
+  relevance_signals?: Record<string, number> | null;
+  text_preview?: string;
+}
+
+export interface RetrievalDebugResult {
+  agent_id: number;
+  query: string;
+  normalized_query: string;
+  rewritten_query: string;
+  knowledge_ready: boolean;
+  retrieved_count: number;
+  retrieved: RetrievalDebugChunk[];
+  reranked: RetrievalDebugChunk[];
+  reranked_order: Array<number | null>;
+  final_context: string;
+  answer?: string;
+  answer_error?: string;
+  grounded?: boolean;
+}
+
+export async function retrievalDebug(
+  agentId: string | number,
+  question: string,
+  includeAnswer = false,
+): Promise<RetrievalDebugResult> {
+  const res = await api.get<RetrievalDebugResult>(`/api/agents/${agentId}/retrieval-debug`, {
+    params: { q: question, include_answer: includeAnswer },
+  });
   return res.data;
 }
 

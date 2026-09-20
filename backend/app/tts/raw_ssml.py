@@ -134,6 +134,8 @@ class RawSSMLSynth:
     # raises instead of stalling a live call.
     RECV_TIMEOUT = 15.0   # per-frame ceiling (frames normally arrive <1s apart)
     TURN_TIMEOUT = 30.0   # whole-synthesis ceiling
+    MAX_ATTEMPTS = 3      # warm socket + 2 fresh-connection retries
+    RETRY_BACKOFF = 0.4   # seconds; jitterless small backoff between attempts
 
     async def _receive_audio(self) -> bytes:
         """Read frames until turn.end; return concatenated MP3 audio bytes."""
@@ -195,31 +197,16 @@ class RawSSMLSynth:
         Reconnects transparently once if the persistent connection is stale.
         """
         async with self._lock:
-            if self._ws is None or self._ws.closed:
-                await self._connect()
-            try:
-                await asyncio.wait_for(
-                    self._ws.send_str(
-                        ssml_headers_plus_data(
-                            connect_id(), date_to_string(), ssml
-                        )
-                    ),
-                    timeout=self.RECV_TIMEOUT,
-                )
-                return await asyncio.wait_for(
-                    self._receive_audio(), timeout=self.TURN_TIMEOUT
-                )
-            except (
-                asyncio.TimeoutError,
-                aiohttp.ClientResponseError,
-                aiohttp.ClientError,
-                ConnectionError,
-                RuntimeError,
-            ):
-                # Connection likely stale/timed out -> reconnect once, retry once.
-                await self._close_ws()
-                await self._connect()
+            last_err: Optional[Exception] = None
+            for attempt in range(self.MAX_ATTEMPTS):
                 try:
+                    # Prefer the warm persistent socket; if it is stale the
+                    # send/receive below raises and we fall through to a FRESH
+                    # connection (the same path edge_tts.Communicate uses,
+                    # which is far more reliable against Edge's flaky
+                    # "turn.start then close" throttling behaviour).
+                    if self._ws is None or self._ws.closed:
+                        await self._connect()
                     await asyncio.wait_for(
                         self._ws.send_str(
                             ssml_headers_plus_data(
@@ -231,9 +218,22 @@ class RawSSMLSynth:
                     return await asyncio.wait_for(
                         self._receive_audio(), timeout=self.TURN_TIMEOUT
                     )
-                except Exception:
+                except (
+                    asyncio.TimeoutError,
+                    aiohttp.ClientResponseError,
+                    aiohttp.ClientError,
+                    ConnectionError,
+                    RuntimeError,
+                ) as e:
+                    last_err = e
+                    # The persistent socket is suspect — discard it entirely.
+                    # The retry opens a brand-new TLS+WS connection, which
+                    # empirically succeeds where the reused one fails.
                     await self._close_ws()
-                    raise
+                    if attempt + 1 < self.MAX_ATTEMPTS:
+                        await asyncio.sleep(self.RETRY_BACKOFF * (attempt + 1))
+            assert last_err is not None
+            raise last_err
 
     async def close(self) -> None:
         """Close the persistent connection (call on app shutdown)."""

@@ -414,40 +414,92 @@ async def retrieval_debug(
     agent_id: int,
     q: str = Query(..., min_length=2, description="Test question"),
     top_k: int = Query(6, ge=1, le=20),
+    include_answer: bool = Query(False, description="Also run the grounded LLM answer"),
     authorization: str = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
     """
     Internal retrieval/debug view (spec §14): shows exactly what the
     retrieval pipeline does with a question —
-      query → retrieved chunks → similarity scores → reranked → final context.
+      user question → normalized/rewritten query → retrieved chunks
+      (document, page, section, score) → reranked context → final context
+      → (optional) final grounded answer.
     Makes retrieval failures diagnosable without guessing.
     """
-    from app.rag.retriever import retrieve_context, format_context_for_prompt
+    from app.rag.retriever import (
+        retrieve_context, format_context_for_prompt, rewrite_query,
+    )
     from app.rag.reranker import rerank_chunks
 
     user = await get_current_user_optional(authorization, session)
     agent = await session.get(Institute, agent_id)
     await require_ownership(user, agent)
 
+    normalized_query = " ".join(q.split())
+    rewritten_query = rewrite_query(q)
+
     chunks = await retrieve_context(q, top_k=top_k * 2, agent_id=agent_id)
     reranked = rerank_chunks(q, chunks, top_k=top_k)
     final_context = format_context_for_prompt(reranked)
 
-    return {
+    response = {
         "agent_id": agent_id,
         "query": q,
+        "normalized_query": normalized_query,
+        "rewritten_query": rewritten_query,
         "knowledge_ready": bool(chunks),
+        "retrieved_count": len(chunks),
         "retrieved": [
             {
                 "chunk_id": c.get("chunk_id"),
-                "source": c.get("source"),
+                "document": c.get("source") or c.get("document"),
+                "document_id": c.get("document_id"),
+                "document_version_id": c.get("document_version_id"),
+                "page": c.get("page_number"),
+                "end_page": c.get("end_page"),
+                "section": c.get("section"),
                 "score": round(c.get("score", 0), 4),
+                "bm25_rank": c.get("bm25_rank"),
                 "rerank_score": round(c.get("rerank_score", 0), 4) if c.get("rerank_score") else None,
-                "text_preview": (c.get("text") or "")[:200],
+                "text_preview": (c.get("text") or "")[:280],
             }
             for c in chunks
         ],
+        "reranked": [
+            {
+                "chunk_id": c.get("chunk_id"),
+                "document": c.get("source") or c.get("document"),
+                "page": c.get("page_number"),
+                "section": c.get("section"),
+                "rerank_score": c.get("rerank_score"),
+                "relevance_signals": c.get("relevance_signals"),
+                "text_preview": (c.get("text") or "")[:280],
+            }
+            for c in reranked
+        ],
         "reranked_order": [c.get("chunk_id") for c in reranked],
-        "final_context": final_context[:2000],
+        "final_context": final_context[:4000],
     }
+
+    # Optional: run the SAME grounded LLM path used by the live agent so the
+    # debug view can show the final answer, not just the context (spec §14).
+    if include_answer:
+        try:
+            from app.rag.groq_service import stream_chat_fast
+            parts: list = []
+            async for token in stream_chat_fast(
+                q,
+                lang="English",
+                conversation_history=[],
+                context=final_context,
+                agent_name=agent.agent_name,
+                company_name=agent.name,
+                instructions=agent.instructions,
+            ):
+                parts.append(token)
+            response["answer"] = "".join(parts).strip()
+            response["grounded"] = bool(final_context)
+        except Exception as e:
+            response["answer_error"] = str(e)[:300]
+
+    return response

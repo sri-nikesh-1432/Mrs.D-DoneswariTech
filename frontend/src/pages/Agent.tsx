@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 
 import AgentOrb from "../components/AgentOrb";
-import VoiceWaveform from "../components/VoiceWaveform";
+import RealWaveform from "../components/RealWaveform";
 import ListeningPopup from "../components/ListeningPopup";
 import MemoryPanel from "../components/MemoryPanel";
 import ConversationView from "../components/ConversationView";
@@ -15,7 +15,7 @@ import TopBar from "../components/TopBar";
 
 import { voiceWS } from "../services/voiceWebSocket";
 import type { VoiceWSState } from "../services/voiceWebSocket";
-import { getInstitute, publishAgent, initiateTestCall, sendTextMessage } from "../services/api";
+import { getInstitute, publishAgent, startTestCall, getTestCallStatus, sendTextMessage } from "../services/api";
 import type { VoiceState, ConversationMessage, CallerMemory, AgentStatus } from "../types";
 
 // ─── Map WS state → visual state ─────────────────────────────────
@@ -35,14 +35,15 @@ export default function Agent() {
   const navigate = useNavigate();
 
   // ─── Agent meta ─────────────────────────────────────────────────
-  const [agentName, setAgentName] = useState("Mrs.D");
+  const [agentName, setAgentName] = useState("");
   const [instituteName, setInstituteName] = useState("");
   const [agentStatus, setAgentStatus] = useState<AgentStatus>("ready");
   const [loading, setLoading] = useState(true);
 
   // ─── Voice & conversation state ─────────────────────────────────
   const [wsState, setWsState] = useState<VoiceWSState>("disconnected");
-  const [amplitude, setAmplitude] = useState(0);
+  const [amplitude, setAmplitude] = useState(0);        // REAL mic level
+  const [playAmplitude, setPlayAmplitude] = useState(0); // REAL agent audio level
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [partialUser, setPartialUser] = useState("");
   const [partialAgent, setPartialAgent] = useState("");
@@ -59,12 +60,16 @@ export default function Agent() {
   // ─── Test call modal ────────────────────────────────────────────
   const [showCallModal, setShowCallModal] = useState(false);
   const [callPhone, setCallPhone] = useState("");
-  const [callStatus, setCallStatus] = useState<"idle" | "calling" | "called">("idle");
+  const [callStatus, setCallStatus] = useState<"idle" | "calling" | "calling_status" | "called" | "failed">("idle");
+  const [callError, setCallError] = useState("");
+  const [providerStatus, setProviderStatus] = useState<string>("");
+  const [activeCallId, setActiveCallId] = useState<string | null>(null);
 
   // ─── Publish toast ──────────────────────────────────────────────
   const [publishToast, setPublishToast] = useState(false);
+  const [publishError, setPublishError] = useState("");
 
-  // ─── Timer for call simulation ──────────────────────────────────
+  // ─── Timer for call duration (real elapsed seconds once answered) ──
   const [callTimer, setCallTimer] = useState(0);
   const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -77,12 +82,12 @@ export default function Agent() {
     if (!agentId) return;
     getInstitute(agentId)
       .then((profile) => {
-        setAgentName(profile.agent_name || profile.name || "Mrs.D");
+        setAgentName(profile.agent_name || profile.name || "");
         setInstituteName(profile.name || "");
         setAgentStatus(profile.status || "ready");
       })
       .catch(() => {
-        setAgentName("Mrs.D");
+        setAgentName("");
         setAgentStatus("ready");
       })
       .finally(() => setLoading(false));
@@ -110,6 +115,7 @@ export default function Agent() {
           { role: "assistant", content: t, timestamp: now() },
         ]);
       },
+      onPlaybackAmplitude: (a) => setPlayAmplitude(a),
       onMemoryUpdate:      (m) => setMemory((prev) => ({ ...prev, ...m })),
       onLeadScoreUpdate:   (s) => {
         setInterestScore(s.interest);
@@ -178,33 +184,79 @@ export default function Agent() {
       setAgentStatus("published");
       setPublishToast(true);
       setTimeout(() => setPublishToast(false), 3000);
-    } catch {
-      // silently fail for demo
-      setAgentStatus("published");
-      setPublishToast(true);
-      setTimeout(() => setPublishToast(false), 3000);
+    } catch (err: unknown) {
+      // REAL error only — never fake a published status (spec §14).
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setPublishError(typeof detail === "string" ? detail : "Publish failed — upload and process a knowledge document first.");
+      setTimeout(() => setPublishError(""), 5000);
     }
   };
 
   // ─── Test call ──────────────────────────────────────────────────
+  // REAL telephony: the call is placed through the provider and its status
+  // is polled from REAL call events. No simulated "Connected" state — if
+  // the call fails, the modal shows the actual error (spec §14 §34).
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const activeCallIdRef = useRef<string | null>(null);
+  useEffect(() => { activeCallIdRef.current = activeCallId; }, [activeCallId]);
+
+  useEffect(() => {
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, []);
+
+  // Duration timer runs only while the call is REALly in progress.
+  useEffect(() => {
+    if (callStatus === "called") {
+      setCallTimer(0);
+      if (callTimerRef.current) clearInterval(callTimerRef.current);
+      callTimerRef.current = setInterval(() => setCallTimer((t) => t + 1), 1000);
+    }
+  }, [callStatus]);
+
   const handleTestCall = async () => {
     if (!callPhone.trim() || !agentId) return;
+    setCallError("");
     setCallStatus("calling");
     try {
-      await initiateTestCall(agentId, callPhone.trim());
-    } catch {
-      // demo: simulate anyway
+      const res = await startTestCall(agentId, callPhone.trim());
+      setActiveCallId(res.call_id);
+      setCallStatus("calling_status");
+      // Poll REAL provider events for the true call status.
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(async () => {
+        if (!activeCallIdRef.current) return;
+        try {
+          const st = await getTestCallStatus(agentId, activeCallIdRef.current);
+          setProviderStatus(st.provider_status || st.call_status);
+          if (["completed", "failed", "no-answer", "busy", "canceled"].includes(st.call_status)) {
+            clearInterval(pollRef.current!);
+            pollRef.current = null;
+            setCallStatus(st.call_status === "completed" ? "called" : "failed");
+            if (st.call_status !== "completed") {
+              setCallError(`Call ended: ${st.call_status}`);
+            }
+          } else if (["in-progress", "answered"].includes(st.call_status)) {
+            setCallStatus("called");
+          }
+        } catch { /* transient — keep polling */ }
+      }, 2500);
+    } catch (err: unknown) {
+      // Show the REAL error — never simulate a successful call.
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setCallError(typeof detail === "string" ? detail : "Call failed — telephony may not be configured (set TWILIO_* env vars).");
+      setCallStatus("failed");
     }
-    setCallStatus("called");
-    // start timer
-    setCallTimer(0);
-    callTimerRef.current = setInterval(() => setCallTimer((t) => t + 1), 1000);
   };
 
   const handleEndCall = () => {
     if (callTimerRef.current) clearInterval(callTimerRef.current);
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = null;
     setCallStatus("idle");
     setCallTimer(0);
+    setCallError("");
+    setProviderStatus("");
+    setActiveCallId(null);
     setShowCallModal(false);
     setCallPhone("");
   };
@@ -248,9 +300,13 @@ export default function Agent() {
               </div>
             </div>
 
-            {/* Waveform strip */}
+            {/* REAL waveform strip — actual audio energy, flat when silent */}
             <div className="w-full max-w-sm px-4">
-              <VoiceWaveform state={visualState} amplitude={amplitude} barCount={32} height={36} />
+              {wsState === "speaking" || wsState === "greeting" ? (
+                <RealWaveform source="playback" amplitude={playAmplitude} active={playAmplitude > 0.01} height={36} barCount={32} color="#8b5cf6" />
+              ) : (
+                <RealWaveform source="mic" amplitude={amplitude} active={wsState === "listening"} height={36} barCount={32} color="#0ea5e9" />
+              )}
             </div>
           </div>
 
@@ -401,12 +457,26 @@ export default function Agent() {
                 </div>
               )}
 
+              {callStatus === "calling_status" && (
+                <div className="text-center py-4">
+                  <motion.div
+                    animate={{ scale: [1, 1.1, 1] }}
+                    transition={{ duration: 1.2, repeat: Infinity }}
+                    className="w-14 h-14 rounded-full mx-auto mb-3 flex items-center justify-center bg-sky-100"
+                  >
+                    <Phone size={22} className="text-sky-500" />
+                  </motion.div>
+                  <p className="text-sm font-semibold text-gray-700">{providerStatus || "Ringing"}…</p>
+                  <p className="text-xs text-gray-400 mt-1">Live provider status — no simulation</p>
+                </div>
+              )}
+
               {callStatus === "called" && (
                 <div className="text-center py-2">
                   <div className="w-14 h-14 rounded-full mx-auto mb-3 flex items-center justify-center bg-emerald-100">
                     <Phone size={22} className="text-emerald-500" />
                   </div>
-                  <p className="text-sm font-bold text-gray-800 mb-1">Connected</p>
+                  <p className="text-sm font-bold text-gray-800 mb-1">Call answered</p>
                   <p className="text-2xl font-mono font-bold text-sky-600 mb-4">{fmtTimer(callTimer)}</p>
                   <motion.button
                     whileTap={{ scale: 0.97 }}
@@ -418,12 +488,28 @@ export default function Agent() {
                   </motion.button>
                 </div>
               )}
+
+              {callStatus === "failed" && (
+                <div className="text-center py-4">
+                  <div className="w-14 h-14 rounded-full mx-auto mb-3 flex items-center justify-center bg-red-100">
+                    <X size={22} className="text-red-500" />
+                  </div>
+                  <p className="text-sm font-bold text-gray-800 mb-1">Call failed</p>
+                  <p className="text-xs text-red-600 mt-1 px-2">{callError}</p>
+                  <button
+                    onClick={() => { setCallStatus("idle"); setCallError(""); }}
+                    className="mt-4 w-full h-11 rounded-xl text-sm font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  >
+                    Try again
+                  </button>
+                </div>
+              )}
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Publish toast */}
+      {/* Publish toast / error */}
       <AnimatePresence>
         {publishToast && (
           <motion.div
@@ -434,6 +520,17 @@ export default function Agent() {
           >
             <Check size={16} className="text-emerald-500" />
             Agent published and is now live!
+          </motion.div>
+        )}
+        {publishError && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-5 py-3 rounded-2xl shadow-lg text-sm font-semibold text-red-700 bg-red-50 border border-red-200"
+          >
+            <X size={16} className="text-red-500" />
+            {publishError}
           </motion.div>
         )}
       </AnimatePresence>

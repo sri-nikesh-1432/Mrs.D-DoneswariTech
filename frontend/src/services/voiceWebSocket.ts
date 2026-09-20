@@ -60,7 +60,7 @@ class VoiceWebSocket {
 
   // Playback queue
   private playCtx: AudioContext | null = null;
-  private playQueue: Array<{ text: string; buffer: AudioBuffer; isFiller?: boolean }> = [];
+  private playQueue: Array<{ text: string; buffer: AudioBuffer }> = [];
   private currentSource: AudioBufferSourceNode | null = null;
   private playing = false;
   private playbackDone = true;
@@ -267,15 +267,12 @@ class VoiceWebSocket {
       case "sentence": {
         const text = String(msg.text ?? "");
         const audioB64 = msg.audio_data as string | null;
-        // Thinking-fillers ("Hmm, let me check that...") play instantly but are
-        // NOT appended to the transcript — the real answer follows right behind.
-        const isFiller = msg.filler === true;
-        if (!isFiller) {
-          this.agentTextBuffer += (this.agentTextBuffer ? " " : "") + text;
-        }
+        // Every sentence that arrives is REAL agent speech streamed from the
+        // server — there are no prewritten fillers (spec §1 §3 §6 §14).
+        this.agentTextBuffer += (this.agentTextBuffer ? " " : "") + text;
         this.callbacks.onAgentPartial?.(text);
         if (audioB64) {
-          this._enqueueAudio(text, audioB64, isFiller);
+          this._enqueueAudio(text, audioB64);
         } else {
           // No audio for this sentence — show text immediately
           this.callbacks.onAgentFinal?.(text);
@@ -328,7 +325,7 @@ class VoiceWebSocket {
   }
 
   // ─── Audio playback queue ─────────────────────────────────────
-  private async _enqueueAudio(text: string, audioB64: string, isFiller = false): Promise<void> {
+  private async _enqueueAudio(text: string, audioB64: string): Promise<void> {
     try {
       if (!this.playCtx) {
         this.playCtx = new AudioContext();
@@ -345,9 +342,15 @@ class VoiceWebSocket {
       for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
 
       const buffer = await this.playCtx.decodeAudioData(bytes.buffer);
+      const wasIdle = !this.playing && this.playQueue.length === 0;
       this.playQueue.push({ text, buffer });
       this._setState("speaking");
       this.callbacks.onSpeakingChange?.(true);
+      if (wasIdle) {
+        // First audible audio of this turn — report to the server BEFORE the
+        // buffer starts so the KPI includes real playback time.
+        this._reportPlaybackState(true);
+      }
       if (!this.playing) this._playNext();
     } catch (e) {
       console.warn("[VoiceWS] audio decode failed", e);
@@ -361,6 +364,7 @@ class VoiceWebSocket {
       this.playing = false;
       this.playbackDone = true;
       this.callbacks.onSpeakingChange?.(false);
+      this._reportPlaybackState(false);
       if (this.state === "speaking") this._setState(this.micActive ? "listening" : "connected");
       return;
     }
@@ -380,14 +384,21 @@ class VoiceWebSocket {
       if (this.intentionalClose) return;
       // Natural inter-sentence breath — varied like real speech rhythm
       // (spec §37): shorter between related thoughts, a thinking beat after
-      // questions. Fillers get almost no gap — the real answer chases them.
-      // Skipped instantly when barged in.
+      // questions. Skipped instantly when barged in.
       const t = item.text?.trim() ?? "";
-      const breath = item.isFiller ? 40 : t.endsWith("?") ? 340 : t.endsWith("!") ? 260 : 220;
+      const breath = t.endsWith("?") ? 340 : t.endsWith("!") ? 260 : 220;
       setTimeout(() => { if (!this.intentionalClose) this._playNext(); }, breath);
     };
     this.currentSource = source;
     source.start();
+  }
+
+  /** Tell the server when agent audio ACTUALLY plays — drives the server's
+   *  echo-suppression window and the first-audible-audio KPI (spec §13). */
+  private _reportPlaybackState(active: boolean): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try { this.ws.send(JSON.stringify({ type: "playback_state", active })); } catch { /* best effort */ }
+    }
   }
 
   private _stopPlayback(): void {
@@ -397,6 +408,7 @@ class VoiceWebSocket {
       this.currentSource = null;
     }
     this.callbacks.onPlaybackAmplitude?.(0);
+    this._reportPlaybackState(false);
     if (this.playing || !this.playbackDone) {
       this.playing = false;
       this.playbackDone = true;

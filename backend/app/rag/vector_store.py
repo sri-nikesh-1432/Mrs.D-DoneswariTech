@@ -70,11 +70,24 @@ class VectorStore:
         for i, idx in enumerate(indices[0]):
             if idx < len(self.chunks):
                 chunk = self.chunks[idx]
+                # Full provenance travels with every hit (spec §7 §14): the
+                # debug view and the LLM context must be able to show exactly
+                # which document / page / section a fact came from.
                 results.append({
                     "text": chunk["text"],
                     "chunk_id": chunk.get("chunk_id", idx),
+                    "chunk_index": chunk.get("chunk_id", idx),
                     "source": chunk.get("source", "unknown"),
+                    "document": chunk.get("source", "unknown"),
+                    "document_id": chunk.get("document_id"),
+                    "document_version_id": chunk.get("document_version_id"),
+                    "page_number": chunk.get("page_number"),
+                    "end_page": chunk.get("end_page"),
+                    "section": chunk.get("section"),
+                    "token_count": chunk.get("token_count"),
+                    "character_count": chunk.get("character_count"),
                     "agent_id": self.agent_id,
+                    "workspace_id": chunk.get("workspace_id"),
                     "score": float(scores[0][i]),
                 })
         return results
