@@ -8,6 +8,8 @@ Tests for the Roman Telugu & speech-normalization module:
 import sys
 from pathlib import Path
 
+import pytest
+
 # Make `backend` importable (tests run from the backend directory).
 BACKEND_DIR = Path(__file__).parent.parent
 if str(BACKEND_DIR) not in sys.path:
@@ -133,6 +135,40 @@ def test_clean_tts_text_rejects_debug_payloads():
     # Legitimate institute answers are untouched.
     ok = clean_tts_text("మా college లో hostel fee ఒక లక్ష రూపాయలు ఉంది. మీకు ఫీజు కావాలా?")
     assert "లక్ష" in ok and "రూపాయలు" in ok and "కావాలా" in ok
+
+
+# ── Roman-Telugu understanding (spec §8 §9) ──────────────────────────────────
+# These are the exact student phrasings the counsellor must understand as
+# Telugu; each is a REAL student utterance, not a synthetic one.
+ROMAN_TELUGU_EXAMPLES = (
+    "Nenu MPC teesukovali anukuntunnanu",
+    "fees entha",
+    "hostel undha",
+    "admission process enti",
+    "engineering ki vellali",
+    "college ekkada undi",
+    "nenu next year join avvali",
+    "maatladu telugu lo",
+    "hostel kavali",
+    "fee ekkuva",
+)
+
+
+@pytest.mark.parametrize("example", ROMAN_TELUGU_EXAMPLES)
+
+def test_looks_roman_telugu_recognises_real_student_phrases(example):
+    assert looks_roman_telugu(example), example
+
+
+@pytest.mark.parametrize("english", [
+    "I want to know about the hostel",
+    "What is the fee structure?",
+    "Is there a bus facility from my area?",
+    "Can you tell me about admissions",
+    "I am interested in the MPC group",
+])
+def test_plain_english_is_never_roman_telugu(english):
+    assert not looks_roman_telugu(english), english
 
 
 def test_normalize_abbreviation_mpc():

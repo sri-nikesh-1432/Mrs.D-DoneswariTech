@@ -126,11 +126,14 @@ export default function Agent() {
     });
   }, [agentId]);
 
-  // Connect on mount
+  // IMPORTANT: We do NOT connect on mount. Connecting on mount made the page
+  // greet the moment it loaded while the mic was still off — the agent talked
+  // but never listened until a second click. The socket is opened by the first
+  // orb click together with the mic. Cleanup still tears down on unmount.
   useEffect(() => {
-    connectWS();
     return () => voiceWS.disconnect();
-  }, [connectWS]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ─── Mic handlers ───────────────────────────────────────────────
   const handleMicStart = async () => {
@@ -166,9 +169,14 @@ export default function Agent() {
   };
 
   // ─── Start Call (orb click) ──────────────────────────────────────
+  // The FIRST click both connects the voice socket AND starts the mic in the
+  // SAME user gesture. Previously the first click only connected (so the
+  // agent greeted while the mic stayed off) and a second click was needed to
+  // listen — users saw the agent "speaking but not hearing" them.
   const handleOrbClick = () => {
     if (wsState === "disconnected" || wsState === "error") {
       connectWS();
+      void handleMicStart(); // waits for the socket to open internally
     } else if (isMicActive) {
       handleMicStop();
     } else {

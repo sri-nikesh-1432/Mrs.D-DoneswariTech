@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     
     # AI / Groq
     GROQ_API_KEY: str = Field(default="", env="GROQ_API_KEY")
+    # llama-3.1-8b-instant is Groq's fastest hosted model — lowest TTFT — which
+    # is what keeps a voice turn inside the <700ms response-latency KPI. The
+    # GPT-OSS models are kept as fallbacks for better quality when rate limits
+    # kick in (free tier caps tokens per model per day).
     GROQ_MODEL: str = Field(default="llama-3.1-8b-instant", env="GROQ_MODEL")
     # Whisper model for the real-time VAD → MediaRecorder → STT pipeline.
     # whisper-large-v3-turbo auto-detects Telugu/Hindi/Tamil/Kannada/Malayalam
@@ -38,7 +42,7 @@ class Settings(BaseSettings):
     # (Groq's free tier caps tokens per DAY per model — a 429 on one model
     # must not end the call; the next model keeps Mrs. D talking).
     GROQ_FALLBACK_MODELS: list = Field(
-        default=["llama-3.3-70b-versatile", "llama3-8b-8192", "gemma2-9b-it"],
+        default=["openai/gpt-oss-20b", "llama-3.3-70b-versatile", "llama3-8b-8192", "gemma2-9b-it"],
         env="GROQ_FALLBACK_MODELS",
     )
     
@@ -75,7 +79,7 @@ class Settings(BaseSettings):
     # te-IN-ShrutiNeural is the Telugu female voice. Rate +10% ≈ 1.1x for a
     # natural, calm counsellor pace (not robotic, not rushed).
     TTS_VOICE: str = Field(default="te-IN-ShrutiNeural", env="TTS_VOICE")
-    TTS_RATE: str = Field(default="+10%", env="TTS_RATE")
+    TTS_RATE: str = Field(default="+14%", env="TTS_RATE")
     TTS_VOLUME: str = Field(default="+0%", env="TTS_VOLUME")
     MAX_CONCURRENT_CALLS: int = Field(default=1, env="MAX_CONCURRENT_CALLS")
     CALL_RETRY_ATTEMPTS: int = Field(default=3, env="CALL_RETRY_ATTEMPTS")

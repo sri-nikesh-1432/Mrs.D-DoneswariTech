@@ -61,7 +61,13 @@ def test_json_greeting_matches_language():
     from app.rag.json_retriever import JSONRetriever
 
     retriever = JSONRetriever("institute.json")
-    assert "Hi!" in retriever.get_greeting("English")
+    # The opener is an OUTBOUND greeting: introduce, then ask permission. It
+    # must never ask the caller "how can I help you?" — the agent called them.
+    english = retriever.get_greeting("English")
+    assert english.startswith("Hi")
+    assert "good time" in english.lower()
+    assert "how may i help" not in english.lower()
+    assert "how can i help" not in english.lower()
     # Telugu greeting contains Telugu script characters
     telugu_greeting = retriever.get_greeting("Telugu")
     assert any("\u0c00" <= ch <= "\u0c7f" for ch in telugu_greeting)
@@ -74,4 +80,6 @@ def test_json_greeting_accepts_iso_code_and_falls_back():
     # ISO codes are normalized to display names
     assert retriever.get_greeting("te") == retriever.get_greeting("Telugu")
     # Unknown languages fall back to the default English greeting
-    assert "Hi!" in retriever.get_greeting("Klingon")
+    fallback = retriever.get_greeting("Klingon")
+    assert fallback.startswith("Hi")
+    assert "good time" in fallback.lower()

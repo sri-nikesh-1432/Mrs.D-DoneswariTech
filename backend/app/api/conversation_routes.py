@@ -256,9 +256,12 @@ async def stream_conversation(
                         # may be a RateLimitError, not a ValueError — the
                         # greeting must never take the call down.
                         logger.warning("Greeting LLM failed, using fallback: %s", e)
+                        # Outbound opener: introduce, then ask PERMISSION. The
+                        # agent placed the call, so it never asks "how can I
+                        # help you?".
                         ai_response = (
-                            f"Hi! I'm the AI admissions counsellor calling from {institute_name}. "
-                            f"How may I help you today?"
+                            f"Hi, this is the admissions counsellor calling from {institute_name}. "
+                            f"Is this a good time for a quick conversation?"
                         )
             else:
                 _r0 = time.time()
@@ -1055,7 +1058,10 @@ Generate ONLY the greeting text, no additional commentary."""
             except ValueError as e:
                 # Fallback greeting if Groq API key is not configured
                 logger.warning(f"Groq API not configured, using fallback greeting: {e}")
-                ai_response = f"Hi! I'm the AI admissions counsellor calling from {institute_name}. How may I help you today?"
+                ai_response = (
+                    f"Hi, this is the admissions counsellor calling from {institute_name}. "
+                    "Is this a good time for a quick conversation?"
+                )
             llm_time = (time.time() - llm_start) * 1000
 
             # Add greeting to conversation memory so follow-up turns have context

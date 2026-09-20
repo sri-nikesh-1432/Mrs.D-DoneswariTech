@@ -116,6 +116,8 @@ async def _preload_common_questions() -> None:
     from app.tts.edge_tts_service import get_tts_service
     from app.voice.voice_ws import _audio_key, _audio_cache_put
 
+    from app.database.models import Institute
+
     async with AsyncSessionLocal() as session:
         row = (
             await session.execute(
@@ -125,11 +127,17 @@ async def _preload_common_questions() -> None:
                 .limit(1)
             )
         ).scalar_one_or_none()
+        # The preloaded answers must speak as THIS agent (name/company), never
+        # as a generic default persona.
+        agent_row = await session.get(Institute, row.institute_id) if row else None
     if not row:
         logger.info("Common-question preload skipped: no READY knowledge base")
         return
 
     agent_id = row.institute_id
+    agent_name = (agent_row.agent_name if agent_row else None) or "the counsellor"
+    company_name = (agent_row.name if agent_row else None) or "the organization"
+    instructions = agent_row.instructions if agent_row else None
     tts = get_tts_service()
     preloaded = 0
     for q in COMMON_QUESTIONS:
@@ -137,12 +145,22 @@ async def _preload_common_questions() -> None:
             chunks = await retrieve_context(q, top_k=4, agent_id=agent_id)
             context = format_context_for_prompt(chunks)
             parts: list[str] = []
-            async for delta in stream_chat_fast(q, context=context):
+            async for delta in stream_chat_fast(
+                q,
+                context=context,
+                agent_name=agent_name,
+                company_name=company_name,
+                instructions=instructions,
+            ):
                 parts.append(delta)
             answer = " ".join("".join(parts).split())
             if not answer:
                 continue
-            await cache_response(q, agent_id, answer)
+            # Strip any passive "anything else?" ask before it is cached —
+            # repeat questions must still get a real counselling question.
+            from app.conversation.counsellor import strip_passive_phrases
+            answer = strip_passive_phrases(answer) or answer
+            await cache_response(q, agent_id, answer, "English")
             # Cache the first-sentence audio for instant playback
             first_sentence = answer.split(". ")[0]
             if not first_sentence.endswith("."):
@@ -150,7 +168,7 @@ async def _preload_common_questions() -> None:
             audio = await tts.synthesize(first_sentence, language="English")
             if audio:
                 import base64 as _b64
-                _audio_cache_put(_audio_key(q, agent_id), _b64.b64encode(audio).decode("utf-8"))
+                _audio_cache_put(_audio_key(q, agent_id, "English"), _b64.b64encode(audio).decode("utf-8"))
             preloaded += 1
         except Exception as e:
             logger.debug("Preload failed for %r: %s", q, e)

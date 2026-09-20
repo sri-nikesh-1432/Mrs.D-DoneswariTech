@@ -143,13 +143,15 @@ async def initiate_single_call(
             )
         except ValueError as e:
             logger.warning("Groq API not configured, using fallback greeting: %s", e)
+            # OUTBOUND openers: introduce the agent, then ask permission — never
+            # "how may I help you?" (the agent placed this call).
             _FALLBACK_GREETINGS = {
-                "English": "Hi! I'm Mrs.D, AI Admission Counsellor of {}. How may I help you today?",
-                "Telugu": "నమస్కారం! నేను Mrs. D ని, {} నుండి. మీకు ఎలా సహాయం చేయగలను?",
-                "Hindi": "नमस्ते! मैं Mrs. D हूँ, {} से। आपकी कैसे मदद कर सकती हूँ?",
-                "Tamil": "வணக்கம்! நான் Mrs. D, {} இலிருந்து. உங்களுக்கு எப்படி உதவலாம்?",
-                "Kannada": "ನಮಸ್ಕಾರ! ನಾನು Mrs. D, {} ಇಂದ. ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಬಹುದು?",
-                "Malayalam": "നമസ്കാരം! ഞാൻ Mrs. D ആണ്, {} ൽ നിന്ന്. എനിക്ക് നിങ്ങളെ എങ്ങനെ സഹായിക്കാനാകും?",
+                "English": "Hi, this is the admissions counsellor calling from {}. Is this a good time for a quick conversation?",
+                "Telugu": "నమస్కారం, నేను {} నుంచి మాట్లాడుతున్నాను. ఇప్పుడు రెండు నిమిషాలు మాట్లాడొచ్చా?",
+                "Hindi": "नमस्ते, मैं {} से बोल रही हूँ। अभी दो मिनट बात कर सकते हैं?",
+                "Tamil": "வணக்கம், நான் {} இலிருந்து பேசுகிறேன். இப்போது இரண்டு நிமிடம் பேசலாமா?",
+                "Kannada": "ನಮಸ್ಕಾರ, ನಾನು {} ಇಂದ ಮಾತನಾಡುತ್ತಿದ್ದೇನೆ. ಈಗ ಎರಡು ನಿಮಿಷ ಮಾತನಾಡಬಹುದಾ?",
+                "Malayalam": "നമസ്കാരം, ഞാൻ {} ൽ നിന്ന് സംസാരിക്കുന്നു. ഇപ്പോൾ രണ്ട് മിനിറ്റ് സംസാരിക്കാമോ?",
             }
             template = _FALLBACK_GREETINGS.get(language or "English", _FALLBACK_GREETINGS["English"])
             greeting = template.format(institute.name)

@@ -3,14 +3,14 @@
   "campus_name": "Narayana IIT Olympiad School, Jubilee Hills",
   "board": "CBSE",
   "school_type": "Day Boarding School (Co-Ed)",
-  "greeting": "Hi! I'm Mrs.D, AI Admission Counsellor of Narayana Junior College. How may I help you today?",
+  "greeting": "Hi, this is Mrs. D calling from Narayana Junior College. Is this a good time for a quick conversation?",
   "greetings": {
-    "English": "Hi! I'm Mrs.D, AI Admission Counsellor of Narayana Junior College. How may I help you today?",
-    "Telugu": "నమస్కారం! నేను Mrs. D ని, నారాయణ జూనియర్ కళాశాల నుండి. మీకు ఎలా సహాయం చేయగలను?",
-    "Hindi": "नमस्ते! मैं Mrs. D हूँ, नारायण जूनियर कॉलेज से। आपकी कैसे मदद कर सकती हूँ?",
-    "Tamil": "வணக்கம்! நான் Mrs. D, நாராயண ஜூனியர் கல்லூரியில் இருந்து. உங்களுக்கு எப்படி உதவலாம்?",
-    "Kannada": "ನಮಸ್ಕಾರ! ನಾನು Mrs. D, ನಾರಾಯಣ ಜೂನಿಯರ್ ಕಾಲೇಜಿನಿಂದ. ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಬಹುದು?",
-    "Malayalam": "നമസ്കാരം! ഞാൻ Mrs. D ആണ്, നാരായണ ജൂനിയർ കോളേജിൽ നിന്ന്. എനിക്ക് നിങ്ങളെ എങ്ങനെ സഹായിക്കാനാകും?"
+    "English": "Hi, this is Mrs. D calling from Narayana Junior College. Is this a good time for a quick conversation?",
+    "Telugu": "నమస్కారం, నేను నారాయణ జూనియర్ కళాశాల నుంచి Mrs. D మాట్లాడుతున్నాను. ఇప్పుడు రెండు నిమిషాలు మాట్లాడొచ్చా?",
+    "Hindi": "नमस्ते, मैं नारायण जूनियर कॉलेज से Mrs. D बोल रही हूँ। अभी दो मिनट बात कर सकते हैं?",
+    "Tamil": "வணக்கம், நான் நாராயண ஜூனியர் கல்லூரியில் இருந்து Mrs. D பேசுகிறேன். இப்போது இரண்டு நிமிடம் பேசலாமா?",
+    "Kannada": "ನಮಸ್ಕಾರ, ನಾನು ನಾರಾಯಣ ಜೂನಿಯರ್ ಕಾಲೇಜಿನಿಂದ Mrs. D ಮಾತನಾಡುತ್ತಿದ್ದೇನೆ. ಈಗ ಎರಡು ನಿಮಿಷ ಮಾತನಾಡಬಹುದಾ?",
+    "Malayalam": "നമസ്കാരം, ഞാൻ നാരായണ ജൂനിയർ കോളേജിൽ നിന്ന് Mrs. D സംസാരിക്കുന്നു. ഇപ്പോൾ രണ്ട് മിനിറ്റ് സംസാരിക്കാമോ?"
   },
   "knowledge": [
     {

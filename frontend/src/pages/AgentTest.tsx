@@ -50,10 +50,9 @@ export default function AgentTest() {
       .catch(() => setAgentName("Aadhya"));
   }, [agentId]);
 
-  // Connect WS on mount, disconnect on unmount
+  // Do NOT auto-connect on mount: the greeting would play before the user
+  // pressed Start (mic still off). The socket is opened by startConversation.
   useEffect(() => {
-    if (!agentId) return;
-    connect();
     return () => voiceWS.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId]);

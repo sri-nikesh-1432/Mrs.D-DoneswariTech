@@ -61,6 +61,9 @@ from app.voice.voice_ws import (  # noqa: E402
     ENERGY_THRESHOLD, FRAME_SAMPLES, MIN_UTTERANCE_MS, MAX_UTTERANCE_SECONDS,
     TurnDetector, _is_noise, _is_backchannel, _is_echo,
 )
+from app.conversation.counsellor import (  # noqa: E402
+    ConversationState, enforce_follow_up, outbound_greeting, response_has_question,
+)
 
 import numpy as np  # noqa: E402
 
@@ -82,6 +85,10 @@ class TelephonyVoiceSession:
         self.voice: Optional[str] = None
         self.language = "English"
         self.instructions: Optional[str] = None
+
+        # Live counselling state: the phone agent drives the call exactly like
+        # the browser preview (same stage flow, same language lock).
+        self.conversation = ConversationState()
 
         self.memory: List[Dict] = []
         self.turn_latencies: List[Dict] = []
@@ -106,6 +113,12 @@ class TelephonyVoiceSession:
             self.voice = self.agent.voice
             self.language = self.agent.language or "en"
             self.instructions = self.agent.instructions
+            # The agent's configured language only SEEDS the call; once the
+            # student states a preference the conversation locks to it.
+            self.conversation = ConversationState(
+                agent_name=self.agent_name,
+                company_name=self.company_name,
+            )
 
             res = await session.execute(
                 select(CallHistory).where(CallHistory.call_id == self.call_id)
@@ -125,16 +138,24 @@ class TelephonyVoiceSession:
         context = format_context_for_prompt(chunks)
         retrieval_ms = round((time.time() - t0) * 1000, 1)
 
+        # Language lock + fact extraction happen BEFORE generation so the
+        # answer, the acknowledgement and the next question all use the
+        # language the student asked for.
+        self.conversation.observe(user_text, student_asked_question=response_has_question(user_text))
+        lang_name = self.conversation.resolve_language(user_text, self._language_name())
+        self.language = lang_name
+
         t1 = time.time()
         parts: List[str] = []
         async for delta in stream_chat_fast(
             user_text,
-            lang=self.language.capitalize() if len(self.language) <= 3 else self.language,
+            lang=lang_name,
             conversation_history=self.memory[-8:],
             context=context,
             agent_name=self.agent_name,
             company_name=self.company_name,
             instructions=self.instructions,
+            state_prompt=self.conversation.prompt_block(),
         ):
             parts.append(delta)
         reply = " ".join("".join(parts).split())
@@ -145,7 +166,24 @@ class TelephonyVoiceSession:
                 "I don't have the exact information available right now. "
                 "I can help with what I have, or arrange for a counsellor to provide the exact details."
             )
+
+        # The CALLER drives the call: if this turn asked nothing, the next
+        # relevant counselling question is appended before it is spoken.
+        follow_up = enforce_follow_up(self.conversation, reply)
+        if follow_up:
+            reply = f"{reply} {follow_up}"
+
         return {"text": reply, "retrieval_ms": retrieval_ms, "llm_ms": llm_ms}
+
+    def _language_name(self) -> str:
+        """Agent language code ("en") -> display name ("English")."""
+        code = (self.language or "en").strip()
+        if len(code) > 3:
+            return code.capitalize()
+        return {
+            "en": "English", "te": "Telugu", "hi": "Hindi",
+            "ta": "Tamil", "kn": "Kannada", "ml": "Malayalam",
+        }.get(code.lower(), "English")
 
     async def persist_turn(self, speaker: str, text: str, language: Optional[str] = None, latency_ms: Optional[int] = None) -> None:
         """Persist one transcript message immediately (real data, spec §36)."""
@@ -448,10 +486,19 @@ async def twilio_media_stream(websocket: WebSocket, call_id: str):
         worker_task = asyncio.create_task(_worker())
 
         # --- greeting (real configured greeting) ---
-        greeting = (session.agent.greeting_message or "").strip() or (
-            f"Hi, this is {session.agent_name} from {session.company_name}. "
-            "Is this a good time for a quick conversation?"
-        )
+        # OUTBOUND opener: introduce, then ask permission. If the tenant's
+        # script doesn't ask anything, the permission question is appended so
+        # the call never opens like a customer-support chatbot.
+        greeting = (session.agent.greeting_message or "").strip()
+        if not greeting:
+            greeting = outbound_greeting(session.agent_name, session.company_name, session.language)
+        elif not response_has_question(greeting):
+            greeting = (
+                f"{greeting.rstrip()} "
+                f"{outbound_greeting(session.agent_name, session.company_name, session.language).split('. ', 1)[-1]}"
+            )
+        session.conversation.language = session.language
+        session.conversation.stage = "PERMISSION"
         await session.persist_turn("agent", greeting, language=session.language)
         session.memory.append({"role": "assistant", "content": greeting})
         await _speak_text(greeting)

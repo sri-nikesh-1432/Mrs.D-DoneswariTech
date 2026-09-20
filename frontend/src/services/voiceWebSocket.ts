@@ -127,12 +127,30 @@ class VoiceWebSocket {
   // ─── Mic Control (streams PCM16 frames to server) ─────────────
   async startMic(): Promise<void> {
     if (this.micActive) return;
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    if (!this.ws) {
       this.callbacks.onError?.("Not connected");
       return;
     }
+    // The socket may still be handshaking when the user clicks. Waiting here
+    // (instead of bailing out) is what actually lets the first click start
+    // the microphone — the old code errored out whenever the WS wasn't open,
+    // so the mic never turned on for a fresh conversation.
+    if (this.ws.readyState !== WebSocket.OPEN) {
+      try {
+        await this._waitForOpen(5000);
+      } catch {
+        this.callbacks.onError?.("Not connected");
+        return;
+      }
+    }
     try {
-      this.micStream = await navigator.mediaDevices.getUserMedia({
+      const devices = navigator.mediaDevices;
+      if (!devices?.getUserMedia) {
+        this.callbacks.onError?.("Microphone not supported in this browser.");
+        this._setState("error");
+        return;
+      }
+      this.micStream = await devices.getUserMedia({
         audio: {
           channelCount: 1,
           echoCancellation: true,   // prevents the agent hearing itself
@@ -141,8 +159,11 @@ class VoiceWebSocket {
         },
       });
 
-      // Shared AudioContext for capture (16 kHz target)
+      // Shared AudioContext for capture. Some browsers ignore the requested
+      // sampleRate (reporting the device rate instead), so we capture at the
+      // context's REAL rate and resample every frame to 16 kHz before sending.
       this.audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+      const captureRate = this.audioCtx.sampleRate || SAMPLE_RATE;
       this.sourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
 
       // Amplitude meter for the visualizer
@@ -155,7 +176,13 @@ class VoiceWebSocket {
       this.processor = this.audioCtx.createScriptProcessor(FRAME_SAMPLES, 1, 1);
       this.processor.onaudioprocess = (e) => {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-        const f32 = e.inputBuffer.getChannelData(0);
+        let f32: Float32Array = e.inputBuffer.getChannelData(0);
+        // Resample to the wire format (16 kHz) when the context differs —
+        // otherwise the server reads 48 kHz audio as 16 kHz and hears
+        // garbled, sped-up speech (STT "wrong responses").
+        if (captureRate !== SAMPLE_RATE) {
+          f32 = this._resampleLinear(f32, captureRate, SAMPLE_RATE);
+        }
         // Convert float32 [-1,1] → int16
         const pcm = new Int16Array(f32.length);
         for (let i = 0; i < f32.length; i++) {
@@ -204,6 +231,44 @@ class VoiceWebSocket {
     };
     if (this.playbackAmpFrame) cancelAnimationFrame(this.playbackAmpFrame);
     this.playbackAmpFrame = requestAnimationFrame(tick);
+  }
+
+  private _waitForOpen(timeoutMs: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (!this.ws) return reject(new Error("no socket"));
+      if (this.ws.readyState === WebSocket.OPEN) return resolve();
+      const start = Date.now();
+      const timer = setInterval(() => {
+        if (!this.ws || this.intentionalClose) {
+          clearInterval(timer);
+          reject(new Error("no socket"));
+        } else if (this.ws.readyState === WebSocket.OPEN) {
+          clearInterval(timer);
+          resolve();
+        } else if (Date.now() - start > timeoutMs) {
+          clearInterval(timer);
+          reject(new Error("timeout"));
+        }
+      }, 50);
+    });
+  }
+
+  // Linear-interpolation resampler used to downconvert captured audio to the
+  // 16 kHz wire format. Cheap (a few k samples per 20 ms frame) and keeps
+  // STT accurate when the browser ignores the requested AudioContext rate.
+  private _resampleLinear(src: Float32Array, fromRate: number, toRate: number): Float32Array {
+    if (fromRate === toRate) return src;
+    const ratio = fromRate / toRate;
+    const out = new Float32Array(Math.max(1, Math.round(src.length / ratio)));
+    for (let i = 0; i < out.length; i++) {
+      const pos = i * ratio;
+      const idx = Math.floor(pos);
+      const frac = pos - idx;
+      const a = src[Math.min(idx, src.length - 1)];
+      const b = src[Math.min(idx + 1, src.length - 1)];
+      out[i] = a + (b - a) * frac;
+    }
+    return out;
   }
 
   private _stopMic(): void {

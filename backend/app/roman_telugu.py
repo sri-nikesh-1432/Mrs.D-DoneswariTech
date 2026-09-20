@@ -57,6 +57,21 @@ _ROMAN_TELUGU_STRONG = {
     "alaanti", "veedu", "vaadu", "vaallu", "vallu", "maree",
     "inkem", "inkemi", "vere", "veredhi", "antava", "ante", "antey",
     "maku", "maku", "clg", "clz", "clgg", "collag",
+
+    # First-person / intent vocabulary. These are the Roman-Telugu forms
+    # students actually type and speak (spec §9): "nenu MPC teesukovali
+    # anukuntunnanu", "nenu next year join avvali". A single hit is decisive,
+    # exactly like the other STRONG words — none of them exist in English.
+    "nenu", "teesukovali", "tisukovali", "teesukovalanu", "tisukovalanu",
+    "teesukovalo", "tisukovalo", "anukuntunnanu", "anukuntunna",
+    "anukuntunnaru", "anukuntunnam", "vellali", "vellalanu", "vellali",
+    "chadivali", "chaduvutunnanu", "chaduvutunnaru", "avvali", "avvali",
+    "avvalanukuntunnanu", "maatladu", "matladu", "maatladandi", "matladandi",
+    "ledu", "ledhu", "vaddu", "vadhu", "sare", "sarey", "edade", "edadi",
+    "peru", "nunchi", "nundi", "daggara", "chudali", "chuddam", "cheptha",
+    "cheptanu", "kuduruthunda", "vasthunnanu", "vastanu", "untanu", "telsu",
+    # Objection / comparison vocabulary ("fee ekkuva", "dooram undi").
+    "ekkuva", "ekkuv", "kharchu", "kharchulu", "dhooram", "dooram", "duram",
 }
 
 # Shared English/Telugu words: only count as supporting evidence alongside a
@@ -81,6 +96,14 @@ _ROMAN_TELUGU_PREFIXES = {
     "avutu", "avuth", "padutu", "chesth", "undach",
     "konc", "chaal", "bagun", "aipo", "avvali", "raava",
 }
+
+
+# Distinctive Telugu verb/declension endings used to catch inflected forms
+# that are not listed explicitly (see `looks_roman_telugu`).
+_ROMAN_TELUGU_SUFFIXES = (
+    "tunnanu", "tunnaru", "tunna", "tunnam", "kovali", "kovalanu",
+    "nunchi", "nundi", "ledu", "ledhu", "gurinchi", "chuddam",
+)
 
 
 def looks_roman_telugu(text: str) -> bool:
@@ -108,6 +131,11 @@ def looks_roman_telugu(text: str) -> bool:
         elif tok in _ROMAN_TELUGU_WEAK:
             score += 1
         elif any(tok.startswith(p) for p in _ROMAN_TELUGU_PREFIXES):
+            score += 1
+        elif len(tok) > 6 and tok.endswith(_ROMAN_TELUGU_SUFFIXES):
+            # Inflected verb forms ("-tunnanu", "-kovali", "-nunchi") are
+            # distinctive enough to be evidence on their own. English words
+            # essentially never end this way.
             score += 1
 
     # A single unambiguous Roman-Telugu word is decisive ("idhi enti",

@@ -191,6 +191,31 @@ class RawSSMLSynth:
             raise RuntimeError("No audio received")
         return bytes(audio)
     # -- public API --------------------------------------------------------
+    async def synthesize_fast(self, ssml: str, timeout: float = 6.0) -> Optional[bytes]:
+        """ONE quick attempt over the warm persistent socket.
+
+        This is the low-latency path for live speech: no retry back-offs, no
+        per-sentence TLS+WS handshake. A stale socket or a throttled Edge
+        response returns None quickly instead of stalling a voice turn, so the
+        caller can fall back to a fresh `edge_tts.Communicate` connection.
+        """
+        async with self._lock:
+            if self._ws is None or self._ws.closed:
+                await self._connect()
+            try:
+                await asyncio.wait_for(
+                    self._ws.send_str(
+                        ssml_headers_plus_data(connect_id(), date_to_string(), ssml)
+                    ),
+                    timeout=self.RECV_TIMEOUT,
+                )
+                return await asyncio.wait_for(self._receive_audio(), timeout=timeout)
+            except Exception:
+                # The persistent socket is suspect — discard it so the next
+                # call reconnects cleanly.
+                await self._close_ws()
+                return None
+
     async def synthesize(self, ssml: str) -> bytes:
         """Send one raw SSML fragment; return MP3 audio bytes.
 

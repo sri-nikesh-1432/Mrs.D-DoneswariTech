@@ -47,6 +47,13 @@ from app.rag.json_retriever import get_json_retriever
 from app.tts.edge_tts_service import get_tts_service
 from app.roman_telugu import looks_roman_telugu, transliterate_roman_telugu
 from app.reports.call_report_service import generate_report_data
+from app.conversation.counsellor import (
+    ConversationState,
+    enforce_follow_up,
+    outbound_greeting,
+    response_has_question,
+    strip_passive_phrases,
+)
 
 logger = get_logger(__name__)
 
@@ -146,9 +153,11 @@ _AUDIO_CACHE: dict = {}
 _AUDIO_CACHE_MAX = 200
 
 
-def _audio_key(query: str, institute_id: int) -> str:
+def _audio_key(query: str, institute_id: int, language: str = "English") -> str:
+    # Language is part of the key so pre-synthesised audio can never cross
+    # languages (an English clip must never play in a Telugu conversation).
     normalized = " ".join(query.lower().split())[:120]
-    return f"{institute_id}:{normalized}"
+    return f"{institute_id}:{(language or 'English').lower()}:{normalized}"
 
 
 def _audio_cache_get(key: str) -> Optional[str]:
@@ -471,9 +480,9 @@ FRAME_SAMPLES = int(SAMPLE_RATE * FRAME_MS / 1000)  # 320 samples
 # noise triggering phantom turns.
 ENERGY_THRESHOLD = 0.008
 
-SILENCE_FRAMES_SHORT = 25   # ~500ms - short utterances
-SILENCE_FRAMES_MEDIUM = 40  # ~800ms - normal pauses
-SILENCE_FRAMES_LONG = 60    # ~1200ms - thinking pauses
+SILENCE_FRAMES_SHORT = 20   # ~400ms - short utterances
+SILENCE_FRAMES_MEDIUM = 30  # ~600ms - normal pauses
+SILENCE_FRAMES_LONG = 45    # ~900ms - thinking pauses
 
 MAX_UTTERANCE_SECONDS = 30  # hard cap
 PRE_SPEECH_MS = 200
@@ -572,17 +581,23 @@ async def _send_greeting(
     language: str,
     memory: list,
     persona: Optional[dict] = None,
+    state: Optional[ConversationState] = None,
 ):
     """Send the initial greeting over WebSocket (streams sentence audio).
 
     Persona is resolved from the agent DB row so the greeting uses the
     agent's OWN name, company, greeting script and TTS voice — never the
     hardcoded Mrs. D default.
+
+    This is an OUTBOUND call: the opener introduces the agent and asks
+    PERMISSION. It never asks "how can I help you?" — the agent already knows
+    why it called.
     """
     persona = persona or {}
     agent_name = persona.get("agent_name") or "Aadhya"
     company_name = persona.get("company_name") or "Doneswari"
     voice = persona.get("voice")
+    speed = persona.get("voice_speed")
     try:
         turn_start = time.time()
         logger.info("WS_GREETING | stage=start mode=%s agent=%d persona=%s", mode, institute_id, agent_name)
@@ -605,10 +620,10 @@ async def _send_greeting(
                 )
                 context_text = format_context_for_prompt(retrieved_chunks)
                 greeting_prompt = (
-                    f"You are {agent_name}, a warm admissions counsellor calling on behalf of {company_name}. "
-                    f"In {language}, greet the caller warmly in ONE short sentence, introduce yourself as "
-                    f"{agent_name} from {company_name}, and ask how you can help with admissions. "
-                    f"Maximum 2 sentences. Sound like a real person on a phone call."
+                    f"You are {agent_name}, a warm OUTBOUND admissions counsellor calling on behalf of {company_name}. "
+                    f"In {language}, open the call in ONE short sentence: introduce yourself as {agent_name} from "
+                    f"{company_name} and ask whether it is a good time for a quick conversation. "
+                    f"Do NOT ask how you can help — you placed this call and you know why. Maximum 2 sentences."
                 )
                 ai_response = await generate_response(
                     conversation_history=[],
@@ -618,11 +633,21 @@ async def _send_greeting(
             except Exception as e:
                 logger.warning("Greeting LLM failed, using fallback: %s", e)
 
+        # The tenant's configured greeting is respected, but an outbound opener
+        # must ask permission — if their script doesn't, we add the question
+        # instead of falling back to a customer-support style greeting.
+        if ai_response and not response_has_question(ai_response):
+            ai_response = f"{ai_response.rstrip()} {outbound_greeting(agent_name, company_name, language).split('. ', 1)[-1]}"
+
         if not ai_response:
-            ai_response = (
-                f"Hi! I'm {agent_name} from {company_name}. "
-                f"How may I help you today?"
-            )
+            ai_response = outbound_greeting(agent_name, company_name, language)
+
+        # This turn is the PERMISSION step of the counselling flow. The
+        # greeting asks "is this a good time?", so the first question after the
+        # student answers is the discovery question from the flow.
+        if state is not None:
+            state.language = state.language or language
+            state.stage = "PERMISSION"
 
         memory.append({"role": "assistant", "content": ai_response})
 
@@ -630,8 +655,7 @@ async def _send_greeting(
         tts = get_tts_service()
         logger.info("WS_GREETING | stage=tts_stream_begin agent=%s voice=%s", agent_name, voice or "auto")
         async for chunk in tts.stream_sentences(
-            ai_response, language=language, voice=voice,
-            speed=(persona or {}).get("voice_speed"),
+            ai_response, language=language, voice=voice, speed=speed,
         ):
             if chunk.get("audio_data"):
                 await websocket.send_json({
@@ -655,9 +679,7 @@ async def _send_greeting(
 
     except Exception as e:
         logger.error("WS greeting failed: %s", e)
-        fallback = (
-            f"Hello! I'm {agent_name} from {company_name}. How can I help you today?"
-        )
+        fallback = outbound_greeting(agent_name, company_name, language)
         memory.append({"role": "assistant", "content": fallback})
         try:
             await websocket.send_json({
@@ -694,6 +716,7 @@ async def _process_turn(
     text_override: Optional[str] = None,
     institute_id: int = 1,
     persona: Optional[dict] = None,
+    state: Optional[ConversationState] = None,
 ):
     """Process one turn end-to-end and stream sentences back over the WS.
 
@@ -701,12 +724,18 @@ async def _process_turn(
     input that skips STT) must be provided. `persona` carries the agent's
     name/company/instructions/voice so replies speak as THAT agent, and
     RAG retrieval is bound to that agent's isolated FAISS store.
+
+    `state` is the live counselling state: it locks the spoken language,
+    records what the student told us, and makes sure the agent keeps asking
+    the next relevant question instead of turning into a Q&A chatbot.
     """
     persona = persona or {}
     agent_name = persona.get("agent_name") or "Aadhya"
     company_name = persona.get("company_name") or "Doneswari"
     agent_voice = persona.get("voice")
     agent_speed = persona.get("voice_speed")
+    if state is None:
+        state = ConversationState(agent_name, company_name)
     try:
         latency.reset()
         latency.start_turn()
@@ -816,7 +845,24 @@ async def _process_turn(
             "utterance_id": utterance_id,
         })
 
-        detected_lang = lang_detector.detect(user_text, stt_language=detected_lang_code)
+        # LANGUAGE LOCK (spec §6 §7 §10): the spoken language is resolved from
+        # the conversation state — an explicit request locks it, and it never
+        # drifts because a sentence came out in English or because the
+        # retrieved knowledge happens to be written in English.
+        detected_lang_name = lang_detector.detect(user_text, stt_language=detected_lang_code)
+        detected_lang = state.resolve_language(user_text, detected_lang_name)
+
+        # Fold the student's answer into the counselling state (group, career
+        # interest, joining year, hostel, location, objections, interest).
+        state.observe(user_text, student_asked_question=response_has_question(user_text))
+        state.mark_question_asked(
+            next((m["content"] for m in reversed(memory) if m.get("role") == "assistant"), "")
+        )
+        logger.info(
+            "COUNSELLING | conv=%s lang=%s stage=%s slots=%s",
+            conversation_id, detected_lang, state.stage, state.slots,
+        )
+
         llm_input = transliterate_roman_telugu(user_text)
 
         # ── PARALLEL: RAG retrieval (fires immediately, does NOT block LLM start) ──
@@ -838,7 +884,11 @@ async def _process_turn(
 
         # Check audio cache BEFORE hitting the LLM at all
         from app.rag.response_cache import get_cached_response, cache_response
-        cached_text = await get_cached_response(llm_input, institute_id)
+        cached_text = await get_cached_response(llm_input, institute_id, detected_lang)
+        if cached_text:
+            # Never replay a passive chatbot ask from the cache; the counselling
+            # state supplies the real next question at the end of the turn.
+            cached_text = strip_passive_phrases(cached_text) or cached_text
 
         rag_future = asyncio.create_task(_rag_task())
 
@@ -882,6 +932,7 @@ async def _process_turn(
                     agent_name=agent_name,
                     company_name=company_name,
                     instructions=persona.get("instructions"),
+                    state_prompt=state.prompt_block(),
                 ):
                     if not ai_parts:
                         latency.mark_llm_first_token()
@@ -937,7 +988,7 @@ async def _process_turn(
 
         if cached_text:
             logger.info("Cache HIT for: %.40s", llm_input)
-            ak = _audio_key(llm_input, institute_id)
+            ak = _audio_key(llm_input, institute_id, detected_lang)
             cached_audio = _audio_cache_get(ak)
             latency.start_tts()
             if cached_audio:
@@ -992,6 +1043,10 @@ async def _process_turn(
                         break
 
                     _idx, payload = kind[1], kind[2]
+                    # Passive chatbot asks are removed BEFORE they are spoken
+                    # (spec §4 §29) — the real next question is supplied by the
+                    # counselling state at the end of the turn.
+                    payload = strip_passive_phrases(payload)
                     if not payload or not payload.strip():
                         continue
 
@@ -1013,7 +1068,7 @@ async def _process_turn(
                         if sentence_count == 0 and not first_sentence_text:
                             first_sentence_text = chunk["text"]
                             # Cache the first-sentence audio for instant repeat playback
-                            _audio_cache_put(_audio_key(llm_input, institute_id), audio)
+                            _audio_cache_put(_audio_key(llm_input, institute_id, detected_lang), audio)
                         sentence_count += 1
             finally:
                 if not llm_task.done():
@@ -1026,12 +1081,40 @@ async def _process_turn(
 
             ai_response = " ".join(p.strip() for p in ai_parts if p.strip())
 
-            # Cache the response for next time
+            # Cache the response for next time (language-scoped, and without
+            # any passive "anything else?" ask the LLM may have produced).
             if ai_response and len(ai_response) < 400:
-                asyncio.create_task(cache_response(llm_input, institute_id, ai_response))
+                asyncio.create_task(
+                    cache_response(
+                        llm_input, institute_id,
+                        strip_passive_phrases(ai_response) or ai_response,
+                        detected_lang,
+                    )
+                )
 
         if not cached_text:
             ai_response = " ".join(p.strip() for p in ai_parts if p.strip())
+
+        # ── Drive the counselling conversation forward (spec §3 §4 §12 §21) ──
+        # The agent is the CALLER: if the reply answered but asked nothing, the
+        # next relevant question is spoken now. Without this guard the model
+        # silently degrades into "answer, wait, answer" chatbot behaviour.
+        if ai_response:
+            follow_up = enforce_follow_up(state, ai_response)
+            if follow_up:
+                logger.info("COUNSELLING | conv=%s follow-up question: %.60s", conversation_id, follow_up)
+                async for chunk in tts.stream_sentences(
+                    follow_up, language=detected_lang, voice=agent_voice, speed=agent_speed
+                ):
+                    if chunk.get("audio_data"):
+                        await websocket.send_json({
+                            "type": "sentence",
+                            "index": sentence_count,
+                            "text": chunk["text"],
+                            "audio_data": chunk["audio_data"],
+                        })
+                        sentence_count += 1
+                ai_response = f"{ai_response.strip()} {follow_up}".strip()
 
         # Graceful spoken fallback so the call never goes silent.
         if not ai_response:
@@ -1069,6 +1152,10 @@ async def _process_turn(
         metrics["first_sentence_text"] = first_sentence_text[:120]
         metrics["llm_error"] = llm_error
         metrics["detected_language"] = detected_lang
+        # The live counselling state travels with the turn so the debug view
+        # can show the real stage / collected facts / language lock.
+        metrics["counselling"] = state.snapshot()
+        state.stage = state.current_stage()
 
         # Persist REAL per-turn latency (spec: 700ms KPI) — measured values
         # only. response_latency_ms = first audible audio − user speech end.
@@ -1233,11 +1320,21 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
     except Exception as e:
         logger.warning("WS persona resolution failed: %s", e)
 
+    # -- Live counselling state (spec: outbound counsellor) --------------------
+    # One state per call: it locks the spoken language, remembers every fact
+    # the student gives (group, career, year, hostel, location, objections) and
+    # decides the next question. Created before the greeting so the opener
+    # opens the PERMISSION stage.
+    state = ConversationState(
+        agent_name=persona.get("agent_name") or "Aadhya",
+        company_name=persona.get("company_name") or "Doneswari",
+    )
+
     # -- Greeting --------------------------------------------------------------
     try:
         await _send_greeting(
             websocket, mode, knowledge_file, institute_id, language, memory,
-            persona=persona,
+            persona=persona, state=state,
         )
     except Exception as e:
         logger.error("WS greeting send failed: %s", e)
@@ -1269,14 +1366,14 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
                         websocket, conversation_id, mode, knowledge_file,
                         language, memory, ai_state, latency, duplicates,
                         lang_detector, text_override=payload,
-                        institute_id=institute_id, persona=persona,
+                        institute_id=institute_id, persona=persona, state=state,
                     )
                 else:
                     coro = _process_turn(
                         websocket, conversation_id, mode, knowledge_file,
                         language, memory, ai_state, latency, duplicates,
                         lang_detector, pcm_bytes=payload,
-                        institute_id=institute_id, persona=persona,
+                        institute_id=institute_id, persona=persona, state=state,
                     )
                 current_turn_task["task"] = asyncio.create_task(coro)
                 try:

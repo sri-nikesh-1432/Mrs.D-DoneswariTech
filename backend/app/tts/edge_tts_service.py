@@ -56,7 +56,7 @@ class EdgeTTSService:
             "Malayalam-Alt": "ml-IN-MidhunNeural",   # Malayalam male
         }
         self.voice = os.getenv("TTS_VOICE", "en-IN-NeerjaExpressiveNeural")
-        self.rate = os.getenv("TTS_RATE", "+10%")  # ~1.1x speed, calm counsellor pace
+        self.rate = os.getenv("TTS_RATE", "+14%")  # ~1.14x speed, lively phone pace
         self.pitch = os.getenv("TTS_PITCH", "+0Hz")
         self.is_initialized = False
     
@@ -301,7 +301,7 @@ class EdgeTTSService:
     #   - Long sentences : a touch slower     (clear, unhurried information)
     # All deltas are deliberately small — big swings are what make TTS sound
     # robotic or theatrical.
-    _BASE_RATE = os.getenv("TTS_RATE", "+10%")  # slightly faster for natural phone pace
+    _BASE_RATE = os.getenv("TTS_RATE", "+14%")  # lively, natural phone pace
     _BASE_PITCH = os.getenv("TTS_PITCH", "+1Hz")  # slight warmth boost
     _BASE_VOLUME = os.getenv("TTS_VOLUME", "+2%")  # confident, clear voice
 
@@ -351,13 +351,18 @@ class EdgeTTSService:
           * Jitter is tiny (±1). Wide randomness is exactly what makes TTS
             sound unstable — real people do not randomly change pace mid-answer.
         """
-        # Per-agent speed wins over the env default when configured.
+        # Per-agent speed wins over the env default ONLY when it is actually
+        # configured away from neutral. Every agent stores voice_speed=1.0 by
+        # default; applying it literally turned TTS_RATE's +10% into +0% and
+        # made the agent speak noticeably slower than intended.
         base_rate = self._parse_pct(self._BASE_RATE)
         if speed is not None:
             try:
-                base_rate = int(round((float(speed) - 1.0) * 100))
+                applied = float(speed)
             except (TypeError, ValueError):
-                pass
+                applied = 1.0
+            if abs(applied - 1.0) >= 0.05:
+                base_rate = int(round((applied - 1.0) * 100))
         base_pitch = self._parse_hz(self._BASE_PITCH)
         base_volume = self._parse_pct(self._BASE_VOLUME, default=0)
         s = sentence.strip()
@@ -455,13 +460,33 @@ class EdgeTTSService:
         """
         Synthesize ONE complete sentence as audio bytes.
 
-        Uses edge_tts.Communicate directly. (The raw-SSML persistent-socket
-        path was removed after live testing showed the free Edge endpoint
-        intermittently drops raw-SSML turns after turn.start — every such
-        turn silently degraded to this same Communicate path anyway, but
-        only after wasting retries. Communicate opens a fresh connection
-        per sentence and is empirically reliable.)
+        Fast path first: the shared persistent SSML socket (no per-sentence
+        TLS+WS handshake — the single biggest TTFA lever). If that returns
+        nothing quickly, fall back to edge_tts.Communicate, which opens a
+        fresh connection and is empirically the most reliable route.
         """
+        xml_lang = _xml_lang_for(voice)
+        escaped = html.escape(spoken, quote=False)
+        ssml = (
+            "<speak version='1.0' "
+            "xmlns='http://www.w3.org/2001/10/synthesis' "
+            f"xml:lang='{xml_lang}'>"
+            f"<voice name='{voice}'>"
+            f"<prosody pitch='{pitch}' rate='{rate}' volume='{volume}'>"
+            f"{escaped}"
+            "</prosody>"
+            "</voice>"
+            "</speak>"
+        )
+        try:
+            from app.tts.raw_ssml import get_raw_synth
+            fast_audio = await get_raw_synth().synthesize_fast(ssml, timeout=6.0)
+            if fast_audio:
+                return fast_audio
+            logger.debug("raw-ssml fast path empty; falling back to Communicate")
+        except Exception as e:
+            logger.debug("raw-ssml fast path failed (%s); falling back to Communicate", e)
+
         try:
             import edge_tts
             communicate = edge_tts.Communicate(

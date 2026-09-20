@@ -38,9 +38,16 @@ _TTL_SECONDS = 3600  # 1 hour
 _lock = asyncio.Lock()
 
 
-def _make_key(query: str, institute_id: int) -> str:
+def _make_key(query: str, institute_id: int, language: str = "English") -> str:
+    """Cache key = (query, agent, LANGUAGE).
+
+    The language is part of the key on purpose: a cached English answer must
+    never be served into a Telugu conversation (that was a real bug — the
+    student asked for Telugu and heard an English reply).
+    """
     normalized = " ".join(query.lower().split())[:120]
-    return hashlib.md5(f"{institute_id}:{normalized}".encode()).hexdigest()
+    lang = (language or "English").strip().lower()
+    return hashlib.md5(f"{institute_id}:{lang}:{normalized}".encode()).hexdigest()
 
 
 def _evict_if_needed():
@@ -55,11 +62,13 @@ def _evict_if_needed():
         del _CACHE[lru]
 
 
-async def get_cached_response(query: str, institute_id: int) -> Optional[str]:
-    """Return cached response text or None."""
+async def get_cached_response(
+    query: str, institute_id: int, language: str = "English"
+) -> Optional[str]:
+    """Return cached response text or None (language-scoped)."""
     if not query or not query.strip():
         return None
-    key = _make_key(query, institute_id)
+    key = _make_key(query, institute_id, language)
     async with _lock:
         entry = _CACHE.get(key)
         if entry is None:
@@ -74,11 +83,13 @@ async def get_cached_response(query: str, institute_id: int) -> Optional[str]:
         return entry.text
 
 
-async def cache_response(query: str, institute_id: int, text: str) -> None:
-    """Store a response in the cache."""
+async def cache_response(
+    query: str, institute_id: int, text: str, language: str = "English"
+) -> None:
+    """Store a response in the cache (language-scoped)."""
     if not query or not text:
         return
-    key = _make_key(query, institute_id)
+    key = _make_key(query, institute_id, language)
     async with _lock:
         _evict_if_needed()
         _CACHE[key] = _CacheEntry(text)
@@ -106,9 +117,11 @@ async def warm_tts_cache(tts_service, max_entries: int = 2) -> None:
     call gets sub-100ms TTS for those phrases.
     Kept intentionally short to avoid starving Edge-TTS on startup.
     """
+    # Neutral warm-up lines only. They exist to open the TTS socket, never to
+    # be spoken to a student (the agent must not use chatbot asks).
     warm_phrases = [
-        "Hello! How can I help you today?",
-        "Sure, let me check that for you.",
+        "Sure, one moment please.",
+        "Alright, let me check that for you.",
     ]
     warmed = 0
     for phrase in warm_phrases[:max_entries]:
