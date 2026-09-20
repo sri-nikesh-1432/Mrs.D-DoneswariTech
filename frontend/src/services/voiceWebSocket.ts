@@ -10,7 +10,13 @@
  * server) stops playback instantly so the caller can take the floor.
  */
 
-const BASE_WS = import.meta.env.VITE_WS_URL ?? "ws://localhost:8000";
+// Same-host by default (dev: Vite proxies /ws → the backend; deployed:
+// wss://<API_ORIGIN>). Set VITE_WS_URL to override explicitly.
+const API_BASE = (import.meta.env.VITE_API_URL ?? "").replace(/\/+$/, "");
+const BASE_WS = import.meta.env.VITE_WS_URL
+  ?? (API_BASE
+    ? API_BASE.replace(/^http/, "ws")
+    : `${location.protocol === "https:" ? "wss://" : "ws://"}${location.host}`);
 
 const SAMPLE_RATE = 16000;
 const FRAME_MS = 20; // match server FRAME_MS
