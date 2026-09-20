@@ -1,6 +1,8 @@
 """
 Embedding Generator — Creates vector embeddings from text chunks.
-Uses Sentence Transformers (all-MiniLM-L6-v2) for local embedding generation.
+Uses FastEmbed (ONNX Runtime, no torch) for local embedding generation so the
+service runs comfortably inside small/512MB containers. Model stays the same
+all-MiniLM-L6-v2 (384-d, L2-normalized) so existing vector stores keep working.
 """
 
 from typing import List, Dict, Optional
@@ -13,13 +15,41 @@ logger = get_logger(__name__)
 _model = None
 
 
+class _FastEmbedEncoder:
+    """Adapter exposing fastembed's TextEmbedding via the old .encode() API,
+    returning L2-normalized float32 arrays of shape (n, dim)."""
+
+    def __init__(self, backend):
+        self._backend = backend
+
+    def encode(
+        self,
+        texts,
+        batch_size: int = 16,
+        show_progress_bar: bool = False,
+        convert_to_numpy: bool = True,
+        normalize_embeddings: bool = True,
+    ) -> np.ndarray:
+        if isinstance(texts, str):
+            texts = [texts]
+        vectors = list(self._backend.embed(list(texts), batch_size=batch_size))
+        arr = np.vstack(vectors).astype(np.float32).reshape(len(texts), -1)
+        if normalize_embeddings:
+            norms = np.linalg.norm(arr, axis=1, keepdims=True)
+            arr = arr / np.maximum(norms, 1e-12)
+        return arr
+
+
 def _get_model():
-    """Lazy-load the Sentence Transformer model."""
+    """Lazy-load the FastEmbed model for all-MiniLM-L6-v2 (ONNX, no torch)."""
     global _model
     if _model is None:
         logger.info("Loading embedding model: %s", settings.EMBEDDING_MODEL)
-        from sentence_transformers import SentenceTransformer
-        _model = SentenceTransformer(settings.EMBEDDING_MODEL)
+        from fastembed import TextEmbedding
+        model_name = settings.EMBEDDING_MODEL
+        if model_name == "all-MiniLM-L6-v2":
+            model_name = "sentence-transformers/all-MiniLM-L6-v2"
+        _model = _FastEmbedEncoder(TextEmbedding(model_name=model_name))
         logger.info("Embedding model loaded successfully")
     return _model
 

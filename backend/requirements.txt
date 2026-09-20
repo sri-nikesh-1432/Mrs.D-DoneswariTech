@@ -27,8 +27,8 @@ python-docx>=1.1.0
 pandas>=2.2.0
 openpyxl>=3.1.0
 
-# RAG / Embeddings
-sentence-transformers>=3.0.0
+# RAG / Embeddings (FastEmbed = ONNX Runtime, no torch — runs in 512MB containers)
+fastembed>=0.3.0
 faiss-cpu>=1.8.0
 numpy>=1.26.0
 

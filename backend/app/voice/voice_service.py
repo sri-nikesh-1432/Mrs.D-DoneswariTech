@@ -5,7 +5,6 @@ Uses Edge-TTS for TTS and Whisper for STT.
 
 import asyncio
 import edge_tts
-import whisper
 from typing import Optional
 from pathlib import Path
 import tempfile
@@ -30,6 +29,7 @@ class VoiceService:
         """Lazy-load Whisper model for STT."""
         if self.whisper_model is None:
             logger.info("Loading Whisper model for speech-to-text...")
+            import whisper
             self.whisper_model = whisper.load_model("base")
             logger.info("Whisper model loaded successfully")
         return self.whisper_model

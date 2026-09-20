@@ -222,7 +222,7 @@ async def lifespan(app: FastAPI):
             await asyncio.wait_for(_warmup_tts(), timeout=45)
         except Exception as e:
             logger.warning("TTS warmup stopped (non-fatal): %s", e)
-        # Warm the SentenceTransformer embedding model OFF the event loop.
+        # Warm the embedding model (FastEmbed/ONNX) OFF the event loop.
         # Loading it lazily on the first voice turn blocks the whole loop for
         # ~10s (websocket pings time out and clients disconnect).
         try:
