@@ -18,7 +18,7 @@ import type {
   AgentCallRecord,
 } from "../types";
 
-const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const BASE = import.meta.env.VITE_API_URL ?? "";
 
 // ─── Auth token handling ───────────────────────────────────────────
 const TOKEN_KEY = "doneswari_token";

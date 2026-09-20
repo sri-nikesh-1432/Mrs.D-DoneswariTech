@@ -29,7 +29,9 @@ export default function Signup() {
       navigate("/agents");
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      setError(detail || "Signup failed. Try again.");
+      const code = (err as { response?: { status?: number } })?.response?.status;
+      console.error("[Signup]", err);
+      setError(detail || (code ? `Signup failed (${code}). Try again.` : "Signup failed. Check that the backend is running on localhost:8000."));
     } finally {
       setLoading(false);
     }

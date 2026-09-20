@@ -46,7 +46,7 @@ export default function Campaign() {
       // Labelled DRY-RUN (spec §55): the agent's REAL runtime (real RAG + real
       // LLM + real transcript) with an LLM role-playing the student. Never
       // presented as a real phone call.
-      const res = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:8000"}/api/agents/${agentId}/students?call_status=Pending&limit=1`);
+      const res = await fetch(`${import.meta.env.VITE_API_URL ?? ""}/api/agents/${agentId}/students?call_status=Pending&limit=1`);
       const json = await res.json();
       const first: { id: number; name: string } | undefined = json.students?.[0];
       if (!first) {
