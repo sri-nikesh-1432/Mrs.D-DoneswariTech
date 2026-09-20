@@ -86,12 +86,81 @@ class TestExpressiveSSML:
             assert _re.match(r"[+-]\d+%$", rate), rate
             assert _re.match(r"[+-]\d+Hz$", pitch), pitch
             assert _re.match(r"[+-]\d+%$", volume), volume
-            # _prosody_for clamps to rate [0,30], pitch [-8,12], volume [-5,10]
-            # so even the widest jitter + sentence modifiers stay in a sane
-            # human range and never sound robotic or cartoonish.
-            assert 0 <= int(rate[:-1]) <= 30
-            assert -8 <= int(pitch[:-2]) <= 12
-            assert -5 <= int(volume[:-1]) <= 10
+            # _prosody_for clamps to rate [-12,25], pitch [-6,10],
+            # volume [-3,8] so even the widest jitter + sentence modifiers
+            # stay in a sane human range and never sound robotic or cartoonish.
+            assert -12 <= int(rate[:-1]) <= 25
+            assert -6 <= int(pitch[:-2]) <= 10
+            assert -3 <= int(volume[:-1]) <= 8
+
+
+class TestNaturalVoice:
+    """The voice must sound human AND follow the tenant's voice settings."""
+
+    def test_agent_voice_speed_is_actually_applied(self):
+        """The agent's configured pace must change the spoken rate.
+
+        Regression guard: `voice_speed` was stored and shown in the UI but
+        ignored by TTS, so every agent sounded identical.
+        """
+        from app.tts.edge_tts_service import EdgeTTSService
+
+        service = EdgeTTSService()
+        sentence = "The annual tuition is around forty five thousand a year."
+        slow = int(service._prosody_for(sentence, speed=0.9)[0][:-1])
+        normal = int(service._prosody_for(sentence, speed=1.0)[0][:-1])
+        fast = int(service._prosody_for(sentence, speed=1.2)[0][:-1])
+        assert slow < normal < fast
+
+    def test_prosody_stays_inside_a_human_range(self):
+        from app.tts.edge_tts_service import EdgeTTSService
+
+        service = EdgeTTSService()
+        sentences = (
+            "Yeah, sure!",
+            "MPC is basically Maths, Physics and Chemistry.",
+            "Would you like to hear the admission details?",
+            "Hmm... let me see.",
+            "Okay.",
+            "Well, the hostel and the transport are billed separately, so it depends.",
+        )
+        for speed in (0.85, 1.0, 1.15, 1.3):
+            for index, sentence in enumerate(sentences):
+                rate, pitch, volume = service._prosody_for(
+                    sentence, index=index, total=len(sentences), speed=speed
+                )
+                assert -12 <= int(rate[:-1]) <= 25, (speed, sentence, rate)
+                assert -6 <= int(pitch[:-2]) <= 10, (speed, sentence, pitch)
+                assert -3 <= int(volume[:-1]) <= 8, (speed, sentence, volume)
+
+    def test_configured_voice_wins_when_it_matches_the_script(self):
+        """A tenant's Telugu MALE voice must not be replaced by the default
+        female Telugu voice just because the text is Telugu."""
+        from app.tts.edge_tts_service import EdgeTTSService
+
+        service = EdgeTTSService()
+        telugu = "MPC అంటే మ్యాథ్స్, ఫిజిక్స్, కెమిస్ట్రీ."
+        assert service._pick_voice(telugu, voice="te-IN-MohanNeural") == "te-IN-MohanNeural"
+        # No configured voice -> the language default is used.
+        assert service._pick_voice(telugu) == "te-IN-ShrutiNeural"
+        # English text + configured English voice is honoured as well.
+        assert (
+            service._pick_voice("Sure, MPC is Maths.", voice="en-IN-PrabhatNeural")
+            == "en-IN-PrabhatNeural"
+        )
+
+    def test_every_pickable_english_voice_is_a_real_edge_voice(self):
+        """Guards the UI picker: a nonexistent voice name returns NO audio,
+        which makes the agent silently mute."""
+        from app.tts.edge_tts_service import EdgeTTSService
+
+        known = set(EdgeTTSService().voices.values())
+        for voice in (
+            "en-IN-NeerjaExpressiveNeural", "en-IN-NeerjaNeural", "en-IN-PrabhatNeural",
+            "te-IN-ShrutiNeural", "te-IN-MohanNeural", "hi-IN-SwaraNeural", "hi-IN-MadhurNeural",
+            "ta-IN-PallaviNeural", "kn-IN-SapnaNeural", "ml-IN-SobhanaNeural",
+        ):
+            assert voice in known, f"{voice} is not a validated Edge voice"
 
 
 class TestRawSynthStructure:

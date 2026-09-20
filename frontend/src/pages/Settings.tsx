@@ -15,8 +15,8 @@ const DEFAULT_SETTINGS: AgentSettings = {
   business_name: "My Institution",
   phone_number: "",
   supported_languages: ["English", "Telugu", "Hindi"],
-  voice: "en-IN-NeerjaNeural",
-  voice_speed: 1.2,
+  voice: "en-IN-NeerjaExpressiveNeural",
+  voice_speed: 1.1,
   background_ambience: false,
   greeting: "Hi, this is {agent_name} from {business_name}. How can I help you today?",
   knowledge_file: null,
@@ -24,12 +24,19 @@ const DEFAULT_SETTINGS: AgentSettings = {
   published_version: null,
 };
 
+// Only voices that ACTUALLY exist on the Edge neural endpoint are listed —
+// an unknown voice name makes synthesis return no audio (a silent agent).
 const VOICES = [
-  { value: "en-IN-NeerjaNeural",  label: "Neerja (English, India) — Warm, Professional" },
-  { value: "en-IN-AaravNeural",   label: "Aarav (English, India) — Clear, Friendly" },
+  { value: "en-IN-NeerjaExpressiveNeural", label: "Neerja Expressive (English, India) — Warm, Conversational" },
+  { value: "en-IN-NeerjaNeural",  label: "Neerja (English, India) — Clear, Professional" },
+  { value: "en-IN-PrabhatNeural", label: "Prabhat (English, India) — Male, Friendly" },
   { value: "te-IN-ShrutiNeural",  label: "Shruti (Telugu) — Natural, Native" },
+  { value: "te-IN-MohanNeural",   label: "Mohan (Telugu) — Male" },
   { value: "hi-IN-SwaraNeural",   label: "Swara (Hindi) — Warm, Conversational" },
+  { value: "hi-IN-MadhurNeural",  label: "Madhur (Hindi) — Male" },
   { value: "ta-IN-PallaviNeural", label: "Pallavi (Tamil) — Professional" },
+  { value: "kn-IN-SapnaNeural",   label: "Sapna (Kannada) — Natural" },
+  { value: "ml-IN-SobhanaNeural", label: "Sobhana (Malayalam) — Natural" },
 ];
 
 const LANGUAGES = ["English", "Telugu", "Hindi", "Tamil"];
@@ -325,11 +332,11 @@ export default function Settings() {
                 options={VOICES}
               />
             </Field>
-            <Field label="Voice Speed" hint={`${settings.voice_speed}x — Natural conversational pace`}>
+            <Field label="Voice Speed" hint={`${settings.voice_speed}x — a human call sits between 0.9x and 1.2x`}>
               <div className="flex items-center gap-3">
                 <input
                   type="range"
-                  min={0.8} max={1.5} step={0.05}
+                  min={0.85} max={1.3} step={0.05}
                   value={settings.voice_speed}
                   onChange={(e) => update({ voice_speed: parseFloat(e.target.value) })}
                   className="flex-1 accent-sky-500"

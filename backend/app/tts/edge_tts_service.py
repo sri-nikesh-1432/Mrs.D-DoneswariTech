@@ -42,6 +42,7 @@ class EdgeTTSService:
         # Main + Alt entries so voice rotation never picks a nonexistent voice.
         self.voices = {
             "English": "en-IN-NeerjaExpressiveNeural",   # Indian English female, expressive variant
+            "English-Clear": "en-IN-NeerjaNeural",      # Indian English female, neutral/clear
             "English-Alt": "en-IN-PrabhatNeural",        # Indian English male
             "Telugu": "te-IN-ShrutiNeural",          # Telugu female
             "Telugu-Alt": "te-IN-MohanNeural",       # Telugu male
@@ -79,7 +80,8 @@ class EdgeTTSService:
         self,
         text: str,
         voice: Optional[str] = None,
-        language: Optional[str] = None
+        language: Optional[str] = None,
+        speed: Optional[float] = None,
     ) -> Optional[bytes]:
         """
         Synthesize text to audio.
@@ -88,6 +90,7 @@ class EdgeTTSService:
             text: Text to synthesize
             voice: Voice to use (default from env or language)
             language: Language for automatic voice selection
+            speed: Agent's configured speaking pace (1.0 = neutral)
         
         Returns:
             Audio bytes (MP3 format) or None if synthesis fails
@@ -122,13 +125,18 @@ class EdgeTTSService:
             # English reply onto a Telugu voice.
             voice_to_use = self._pick_voice(text, language=language, voice=voice)
             logger.debug(f"Synthesizing: {spoken_text[:50]}... with voice: {voice_to_use}")
-            
+
+            # Same natural-prosody engine the streaming path uses, so a
+            # one-shot synthesis sounds like the same person speaking.
+            rate, pitch, volume = self._prosody_for(text, index=0, total=1, speed=speed)
+
             # Create communicate object
             communicate = edge_tts.Communicate(
                 spoken_text,
                 voice_to_use,
-                rate=self.rate,
-                pitch=self.pitch
+                rate=rate,
+                pitch=pitch,
+                volume=volume,
             )
             
             # Generate audio by iterating over async generator
@@ -152,6 +160,7 @@ class EdgeTTSService:
         voice: Optional[str] = None,
         language: Optional[str] = None,
         max_sentences: int = 20,
+        speed: Optional[float] = None,
     ) -> list:
         """
         Synthesize text sentence-by-sentence.
@@ -184,13 +193,17 @@ class EdgeTTSService:
         # creation for long replies).
         sem = asyncio.Semaphore(4)
 
-        async def _synth(sentence: str):
+        total_sentences = len(sentences)
+
+        async def _synth(index: int, sentence: str):
             async with sem:
                 try:
                     spoken = clean_tts_text(normalize_for_speech(sentence))
                     if not spoken:
                         return {"text": sentence, "audio_data": None}
-                    rate, pitch, volume = self._prosody_for(sentence)
+                    rate, pitch, volume = self._prosody_for(
+                        sentence, index=index, total=total_sentences, speed=speed
+                    )
                     audio = await self._synthesize_one(
                         sentence, spoken, voice_to_use, rate, pitch, volume
                     )
@@ -202,7 +215,7 @@ class EdgeTTSService:
                     logger.error("Sentence TTS failed: %s", e)
                     return {"text": sentence, "audio_data": None}
 
-        results = await asyncio.gather(*[_synth(s) for s in sentences])
+        results = await asyncio.gather(*[_synth(i, s) for i, s in enumerate(sentences)])
 
         # Keep only sentences that produced audio; mark the rest so the
         # frontend can skip gracefully without breaking the queue.
@@ -222,6 +235,7 @@ class EdgeTTSService:
         voice: Optional[str] = None,
         language: Optional[str] = None,
         max_sentences: int = 20,
+        speed: Optional[float] = None,
     ):
         """
         Async generator that yields each sentence's audio IN ORDER as soon as
@@ -240,13 +254,17 @@ class EdgeTTSService:
         # 4 parallel sentences produced "No audio was received" errors.
         sem = asyncio.Semaphore(2)
 
+        total_sentences = len(all_sentences)
+
         async def _synth(index: int, sentence: str):
             async with sem:
                 try:
                     spoken = clean_tts_text(normalize_for_speech(sentence))
                     if not spoken:
                         return index, sentence, None
-                    rate, pitch, volume = self._prosody_for(sentence)
+                    rate, pitch, volume = self._prosody_for(
+                        sentence, index=index, total=total_sentences, speed=speed
+                    )
                     audio = await self._synthesize_one(
                         sentence, spoken, voice_to_use, rate, pitch, volume
                     )
@@ -309,134 +327,121 @@ class EdgeTTSService:
         except ValueError:
             return default
 
-    def _prosody_for(self, sentence: str) -> tuple:
+    def _prosody_for(
+        self,
+        sentence: str,
+        index: Optional[int] = None,
+        total: Optional[int] = None,
+        speed: Optional[float] = None,
+    ) -> tuple:
         """
-        Return (rate, pitch, volume) for a single sentence so the whole reply
-        does not sound equally timed and pitched — the heart of the "human
-        engine". The deltas create real prosodic variation:
-          - Questions slow slightly + pitch rise (real question intonation)
-          - Short acks are brisk + higher pitch ("సరే, ...")
-          - Long info is calm + slightly quieter (clear, unhurried)
-          - Each sentence gets organic jitter so no two are identical
+        Return (rate, pitch, volume) for ONE sentence.
+
+        Naturalness rules — why this sounds like a person, not a wobbling TTS:
+          * The persona baseline is STABLE. The agent's configured
+            `voice_speed` drives the rate (1.0 = neutral, 1.15 = +15%), so a
+            tenant's pace setting is actually audible and consistent instead
+            of being replaced by per-sentence randomness.
+          * Expression comes from INTENT (question / exclamation / trailing
+            thought / short acknowledgement) and from POSITION in the reply
+            (the opening ack is brisk and engaged, the closing question is
+            allowed to land).
+          * Punctuation drives the rhythm: clause-rich sentences are read a
+            touch slower so the commas are audible as micro-pauses.
+          * Jitter is tiny (±1). Wide randomness is exactly what makes TTS
+            sound unstable — real people do not randomly change pace mid-answer.
         """
+        # Per-agent speed wins over the env default when configured.
         base_rate = self._parse_pct(self._BASE_RATE)
+        if speed is not None:
+            try:
+                base_rate = int(round((float(speed) - 1.0) * 100))
+            except (TypeError, ValueError):
+                pass
         base_pitch = self._parse_hz(self._BASE_PITCH)
         base_volume = self._parse_pct(self._BASE_VOLUME, default=0)
         s = sentence.strip()
+        lower = s.lower()
 
         rate_delta = 0
         pitch_delta = 0
         volume_delta = 0
 
-        # ── Sentence type modifiers ──
+        # ── Intent: how the sentence ends ──
         if s.endswith("?"):
-            pitch_delta += 4          # question rise — sounds like a question
-            rate_delta -= 1           # slightly slower for clarity
+            pitch_delta += 3          # real question intonation
+            rate_delta -= 1           # questions land better just slightly slower
         elif s.endswith("!"):
-            pitch_delta += 3          # emphasis
-            volume_delta += 5         # a touch louder
-        elif s.endswith("..."):
-            # Thought trailing off — slower, softer, lower pitch
-            rate_delta -= 3
+            pitch_delta += 2          # emphasis
+            volume_delta += 3         # a touch louder
+        elif s.endswith(("...", "…")):
+            rate_delta -= 3           # thought trailing off
             pitch_delta -= 2
-            volume_delta -= 4
+            volume_delta -= 3
 
-        # ── Length modifiers ──
-        length = len(s)
-        if length < 20:
-            rate_delta += 4           # short, brisk acknowledgement
-            pitch_delta += 1          # slightly higher (warmth)
-        elif length > 130:
-            rate_delta -= 2           # long sentence: calm, clear
-            volume_delta -= 3         # a touch quieter (intimate)
-        elif length > 80:
-            rate_delta -= 1           # mid-length: slightly slower for clarity
+        # ── Rhythm: commas are micro-pauses, not speed bumps ──
+        if s.count(",") >= 2:
+            rate_delta -= 1
 
-        # ── Content-aware tweaks ──
-        # Fillers at the start of a sentence ("Hmm...", "సరే...") are slower
-        if s.lower().startswith(("hmm", "సరే", "okay", "well", "sure")):
-            rate_delta -= 2           # natural thinking pace
-            pitch_delta -= 1          # slightly lower (thinking)
+        # ── Length ──
+        words = len(s.split())
+        if words <= 3:
+            rate_delta += 2           # brisk, warm acknowledgement
+            pitch_delta += 1
+        elif len(s) > 140:
+            rate_delta -= 2           # long info: calm and clear
+            volume_delta -= 2
+        elif len(s) > 90:
+            rate_delta -= 1
 
-        # ── Content-aware enthusiasm tweaks ──
-        # When Mrs. D is excited about something (scholarships, great results,
-        # strong programmes), she speaks a bit faster and louder — like a real
-        # person sharing good news.
-        if any(word in s.lower() for word in ["scholarship", "excellent", "top rank", "iit", "neet", "best"]):
-            rate_delta += 2           # excited pace
-            pitch_delta += 2          # higher (enthusiasm)
-            volume_delta += 2         # a touch louder
+        # ── Position in the reply ──
+        if index == 0:
+            rate_delta += 1           # engaged opening ack
+        if index is not None and total and index == total - 1 and s.endswith("?"):
+            rate_delta -= 1           # the closing question is not rushed
 
-        # ── Warm-acknowledgement / reassurance tweaks ──
-        # Short reassuring phrases should feel bright and calm, not flat.
+        # ── Warm acknowledgement openers feel bright, not flat ──
         warm_openers = (
-            "avunu", "sare", "okay", "sure", "absolutely", "yes", "definitely",
-            "got it", "perfect", "great", "nice", "certainly", "of course",
-            "నమస్కారం", "సరే", "అవును", "అలాగే", "బెసరగా",
+            "yes", "yeah", "yep", "sure", "absolutely", "definitely", "of course",
+            "got it", "okay", "right", "perfect", "great", "nice", "certainly",
+            "avunu", "sare", "sari", "alage", "నమస్కారం", "సరే", "అవును", "అలాగే",
         )
-        if s.lower().startswith(warm_openers):
-            rate_delta += 2
+        if lower.startswith(warm_openers):
+            rate_delta += 1
+            pitch_delta += 1
+
+        # ── Thinking markers are unhurried ──
+        if lower.startswith(("hmm", "well", "let me see", "ఊ")):
+            rate_delta -= 1
+            pitch_delta -= 1
+
+        # ── Enthusiasm: genuinely positive news is delivered with energy ──
+        if any(w in lower for w in (
+            "great", "excellent", "congratulations", "absolutely", "definitely",
+            "best", "top rank", "scholarship", "iit", "neet",
+        )):
+            rate_delta += 1
             pitch_delta += 1
             volume_delta += 1
 
-        # ── Closing / next-step questions: slightly slower, warmer, lower ──
-        # Questions that invite action ("Would you like to visit?", "Shall I book it?") 
-        # should not sound hurried — they are the conversational close.
-        if s.endswith("?") and any(
-            w in s.lower() for w in ["visit", "callback", "come", "arrange", "schedule", "book", "sit", "meet"]
-        ):
-            rate_delta -= 2
-            pitch_delta -= 1
-            volume_delta -= 1
+        # ── Organic micro-jitter (±1) ──
+        rate_delta += random.randint(-1, 1)
+        pitch_delta += random.randint(-1, 1)
+        volume_delta += random.randint(-1, 1)
 
-        # ── Organic jitter (±4 rate, ±3 pitch, ±3 volume) ──
-        # Wide jitter — real people never say two sentences with identical
-        # prosody. The variation is what makes it feel alive. Each sentence
-        # sounds slightly different even with the same text.
-        rate_delta += random.randint(-4, 4)
-        pitch_delta += random.randint(-3, 3)
-        volume_delta += random.randint(-3, 3)
-
-        # Clamp prosody to a sane human range so we never sound robotic or 
-        # cartoonish. Larger swings destroy naturalness.
-        rate = max(0, min(30, base_rate + rate_delta))
-        pitch = max(-8, min(12, base_pitch + pitch_delta))
-        volume = max(-5, min(10, base_volume + volume_delta))
+        # Tight clamps: everything stays inside a warm, human range. Anything
+        # wider starts to sound theatrical. The rate floor is deliberately
+        # NEGATIVE so a tenant who configures a slower pace (voice_speed < 1.0)
+        # actually hears it instead of being clamped back to normal speed.
+        rate = max(-12, min(25, base_rate + rate_delta))
+        pitch = max(-6, min(10, base_pitch + pitch_delta))
+        volume = max(-3, min(8, base_volume + volume_delta))
         return f"{rate:+d}%", f"{pitch:+d}Hz", f"{volume:+d}%"
 
-    # Natural breathing-cadence pause AFTER a sentence, in milliseconds. Humans
-    # do not pause the same length after every sentence — questions get a
-    # thinking beat, exclamations an emphasis beat, a long thought a deeper
-    # breath. These pauses are played by the FRONTEND between audio clips (this
-    # free Edge endpoint rejects <break>/mstts:silence), giving one continuous
-    # speaker with a natural breathing rhythm.
-    @staticmethod
-    def _silence_for(sentence: str) -> int:
-        """Breathing pause after a sentence (ms), played by the frontend.
-        Tuned for natural human conversation cadence (spec §37): short beats
-        between related thoughts, a thinking beat before questions. Not too
-        long — long gaps make the agent sound detached or laggy."""
-        s = sentence.strip()
-        if s.endswith("?"):
-            return 420
-        if s.endswith("!"):
-            return 340
-        if len(s) > 140:
-            return 460
-        if len(s) < 20:
-            return 220
-        return 300
-
-    # Expressive mode. IMPORTANT FINDING: the free Edge endpoint silently
-    # returns ZERO audio for <mstts:express-as>, <mstts:silence> AND <break>
-    # on every voice (te/en/hi verified) — the old "express-as" path was
-    # actually producing 20-40s of escaped-tag speech garbage. What the
-    # endpoint DOES accept is <voice><prosody rate/pitch/volume>text</prosody>.
-    # So "expressive" here means: true per-sentence SSML prosody sent over a
-    # persistent websocket (no reconnect per sentence) + natural punctuation
-    # + the frontend breathing cadence. ON by default; TTS_EXPRESSIVE=0 opts out
-    # to the plain Communicate path.
-    _EXPRESSIVE = os.getenv("TTS_EXPRESSIVE", "1").lower() in ("1", "true", "yes")
+    # NOTE: inter-sentence breathing pauses are played by the CLIENT between
+    # audio clips (the free Edge endpoint rejects <break>/<mstts:silence> and
+    # returns zero audio for them). The pause lengths live next to the audio
+    # queue that plays them, so the pacing is tuned where it is audible.
 
     async def _synthesize_one(
         self,
@@ -501,14 +506,19 @@ class EdgeTTSService:
         """
         if text:
             script_checks = [
-                (r"[\u0C00-\u0C7F]", "Telugu"),
-                (r"[\u0900-\u097F]", "Hindi"),
-                (r"[\u0B80-\u0BFF]", "Tamil"),
-                (r"[\u0C80-\u0CFF]", "Kannada"),
-                (r"[\u0D00-\u0D7F]", "Malayalam"),
+                (r"[\u0C00-\u0C7F]", "Telugu", "te-IN"),
+                (r"[\u0900-\u097F]", "Hindi", "hi-IN"),
+                (r"[\u0B80-\u0BFF]", "Tamil", "ta-IN"),
+                (r"[\u0C80-\u0CFF]", "Kannada", "kn-IN"),
+                (r"[\u0D00-\u0D7F]", "Malayalam", "ml-IN"),
             ]
-            for pattern, lang_name in script_checks:
+            for pattern, lang_name, locale in script_checks:
                 if re.search(pattern, text):
+                    # The tenant's own choice wins when that voice can already
+                    # read this script (e.g. a Telugu MALE voice for Telugu) —
+                    # otherwise the configured voice would be silently ignored.
+                    if voice and voice.startswith(locale):
+                        return voice
                     script_voice = self.voices.get(lang_name)
                     if script_voice:
                         logger.debug(
@@ -527,6 +537,7 @@ class EdgeTTSService:
         text: str,
         voice: Optional[str] = None,
         language: Optional[str] = None,
+        speed: Optional[float] = None,
     ) -> Optional[bytes]:
         """
         Synthesize text to raw PCM16 @16 kHz mono (telephony path).
@@ -543,12 +554,15 @@ class EdgeTTSService:
             voice_to_use = self._pick_voice(text, language=language, voice=voice)
             xml_lang = _xml_lang_for(voice_to_use)
             escaped = html.escape(spoken, quote=False)
+            # Same prosody engine as the web path so the phone call is the
+            # same voice, pace and warmth as the browser preview (spec §12).
+            rate, pitch, volume = self._prosody_for(text, index=0, total=1, speed=speed)
             ssml = (
                 "<speak version='1.0' "
                 "xmlns='http://www.w3.org/2001/10/synthesis' "
                 f"xml:lang='{xml_lang}'>"
                 f"<voice name='{voice_to_use}'>"
-                f"<prosody rate='{self.rate}'>"
+                f"<prosody pitch='{pitch}' rate='{rate}' volume='{volume}'>"
                 f"{escaped}"
                 "</prosody>"
                 "</voice>"

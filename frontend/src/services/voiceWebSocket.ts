@@ -378,15 +378,36 @@ class VoiceWebSocket {
     }
     const source = this.playCtx.createBufferSource();
     source.buffer = item.buffer;
-    source.connect(this.playAnalyser ?? this.playCtx.destination);
+
+    // Smooth the joins. A short fade-in and a slightly longer fade-out remove
+    // the click at each clip boundary and make the streamed sentences sound
+    // like ONE continuous voice instead of stitched MP3s.
+    const gain = this.playCtx.createGain();
+    const dur = item.buffer.duration;
+    const fadeIn = Math.min(0.012, dur / 4);
+    const fadeOut = Math.min(0.035, dur / 4);
+    const t0 = this.playCtx.currentTime;
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(1, t0 + fadeIn);
+    gain.gain.setValueAtTime(1, Math.max(t0 + fadeIn, t0 + dur - fadeOut));
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    source.connect(gain);
+    gain.connect(this.playAnalyser ?? this.playCtx.destination);
+
     source.onended = () => {
       this.currentSource = null;
       if (this.intentionalClose) return;
-      // Natural inter-sentence breath — varied like real speech rhythm
-      // (spec §37): shorter between related thoughts, a thinking beat after
-      // questions. Skipped instantly when barged in.
+      // Natural inter-sentence breath (spec §37): humans barely pause between
+      // related thoughts, take a moment after a question, and run a short
+      // acknowledgement straight into the answer. Each clip already carries
+      // its own trailing silence, so these gaps stay short on purpose.
+      // Skipped instantly when barged in.
       const t = item.text?.trim() ?? "";
-      const breath = t.endsWith("?") ? 340 : t.endsWith("!") ? 260 : 220;
+      const breath = t.endsWith("...") || t.endsWith("…") ? 280
+        : t.endsWith("?") ? 220
+        : t.endsWith("!") ? 140
+        : t.length <= 24 ? 70
+        : 130;
       setTimeout(() => { if (!this.intentionalClose) this._playNext(); }, breath);
     };
     this.currentSource = source;

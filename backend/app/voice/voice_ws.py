@@ -629,7 +629,10 @@ async def _send_greeting(
         sentence_idx = 0
         tts = get_tts_service()
         logger.info("WS_GREETING | stage=tts_stream_begin agent=%s voice=%s", agent_name, voice or "auto")
-        async for chunk in tts.stream_sentences(ai_response, language=language, voice=voice):
+        async for chunk in tts.stream_sentences(
+            ai_response, language=language, voice=voice,
+            speed=(persona or {}).get("voice_speed"),
+        ):
             if chunk.get("audio_data"):
                 await websocket.send_json({
                     "type": "sentence",
@@ -703,6 +706,7 @@ async def _process_turn(
     agent_name = persona.get("agent_name") or "Aadhya"
     company_name = persona.get("company_name") or "Doneswari"
     agent_voice = persona.get("voice")
+    agent_speed = persona.get("voice_speed")
     try:
         latency.reset()
         latency.start_turn()
@@ -949,7 +953,9 @@ async def _process_turn(
                 first_sentence_text = cached_text
             else:
                 # Synthesize the cached response (already a finished string)
-                async for chunk in tts.stream_sentences(cached_text, language=detected_lang, voice=agent_voice):
+                async for chunk in tts.stream_sentences(
+                    cached_text, language=detected_lang, voice=agent_voice, speed=agent_speed
+                ):
                     audio = chunk.get("audio_data")
                     if not audio:
                         continue
@@ -991,7 +997,9 @@ async def _process_turn(
 
                     # Synthesize this sentence immediately (do NOT await — it
                     # runs concurrently with the LLM still streaming later sentences)
-                    async for chunk in tts.stream_sentences(payload, language=detected_lang, voice=agent_voice):
+                    async for chunk in tts.stream_sentences(
+                        payload, language=detected_lang, voice=agent_voice, speed=agent_speed
+                    ):
                         audio = chunk.get("audio_data")
                         if not audio:
                             continue
@@ -1036,7 +1044,9 @@ async def _process_turn(
                 if detected_lang == "Telugu"
                 else "Sorry, could you say that again?"
             )
-            async for chunk in tts.stream_sentences(ai_response, language=detected_lang, voice=agent_voice):
+            async for chunk in tts.stream_sentences(
+                ai_response, language=detected_lang, voice=agent_voice, speed=agent_speed
+            ):
                 if chunk.get("audio_data"):
                     await websocket.send_json({
                         "type": "sentence",
@@ -1193,6 +1203,7 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
         "greeting_message": None,
         "instructions": None,
         "voice": None,
+        "voice_speed": 1.0,
     }
     try:
         db_agent_id = int(agent_id) if str(agent_id).isdigit() else institute_id
@@ -1208,6 +1219,10 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
                     "greeting_message": agent_row.greeting_message,
                     "instructions": agent_row.instructions,
                     "voice": agent_row.voice or None,
+                    # The agent's configured speaking pace is actually applied
+                    # to TTS so the tenant's voice setting is audible and
+                    # consistent turn after turn.
+                    "voice_speed": agent_row.voice_speed or 1.0,
                 }
                 logger.info(
                     "WS persona resolved: agent=%s company=%s voice=%s",
