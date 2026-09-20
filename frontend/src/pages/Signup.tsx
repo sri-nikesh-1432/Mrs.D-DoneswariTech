@@ -31,7 +31,7 @@ export default function Signup() {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       const code = (err as { response?: { status?: number } })?.response?.status;
       console.error("[Signup]", err);
-      setError(detail || (code ? `Signup failed (${code}). Try again.` : "Signup failed. Check that the backend is running on localhost:8000."));
+      setError(detail || (code ? `Signup failed (${code}). Try again.` : "Can't reach the server. Check your connection and try again in a moment."));
     } finally {
       setLoading(false);
     }

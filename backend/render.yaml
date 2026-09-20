@@ -8,6 +8,8 @@ services:
     envVars:
       - key: GROQ_API_KEY
         sync: false
+      - key: EMBEDDING_WARMUP
+        value: 'false'
       - key: ALLOWED_ORIGINS
         value: '["https://dtechp1.netlify.app"]'
       - key: DATABASE_URL

@@ -223,18 +223,22 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("TTS warmup stopped (non-fatal): %s", e)
         # Warm the embedding model (FastEmbed/ONNX) OFF the event loop.
-        # Loading it lazily on the first voice turn blocks the whole loop for
-        # ~10s (websocket pings time out and clients disconnect).
-        try:
-            await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(
-                    None, lambda: __import__("app.rag.embeddings", fromlist=["_get_model"])._get_model()
-                ),
-                timeout=120,
-            )
-            logger.info("Embedding model warmed up")
-        except Exception as e:
-            logger.warning("Embedding warmup stopped (non-fatal): %s", e)
+        # Disabled on small containers (EMBEDDING_WARMUP=false): the ONNX model
+        # download+load at boot spikes memory and OOMs a 512MB instance. When
+        # skipped, the model loads lazily on the first RAG/embedding use.
+        if settings.EMBEDDING_WARMUP:
+            try:
+                await asyncio.wait_for(
+                    asyncio.get_event_loop().run_in_executor(
+                        None, lambda: __import__("app.rag.embeddings", fromlist=["_get_model"])._get_model()
+                    ),
+                    timeout=120,
+                )
+                logger.info("Embedding model warmed up")
+            except Exception as e:
+                logger.warning("Embedding warmup stopped (non-fatal): %s", e)
+        else:
+            logger.info("Embedding warmup skipped (EMBEDDING_WARMUP=false) - will load lazily")
         try:
             from app.rag.response_cache import warm_tts_cache
             from app.tts.edge_tts_service import get_tts_service
@@ -246,10 +250,13 @@ async def lifespan(app: FastAPI):
         # the streaming pipeline (parallel RAG + streaming LLM/TTS).
         # Preload the most common admissions questions (text + first-sentence
         # audio) so the highest-traffic questions answer in <100ms TTFA.
-        try:
-            await asyncio.wait_for(_preload_common_questions(), timeout=240)
-        except Exception as e:
-            logger.warning("Common-question preload stopped (non-fatal): %s", e)
+        # Skipped on small containers: embedding the preload questions would
+        # load the ONNX model at boot anyway.
+        if settings.EMBEDDING_WARMUP:
+            try:
+                await asyncio.wait_for(_preload_common_questions(), timeout=240)
+            except Exception as e:
+                logger.warning("Common-question preload stopped (non-fatal): %s", e)
 
     asyncio.create_task(_warmup_background())
     logger.info("Backend ready at http://%s:%d", settings.HOST, settings.PORT)

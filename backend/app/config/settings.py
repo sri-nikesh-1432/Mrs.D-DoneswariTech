@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     
     # RAG / Embeddings
     EMBEDDING_MODEL: str = Field(default="all-MiniLM-L6-v2", env="EMBEDDING_MODEL")
+    EMBEDDING_WARMUP: bool = Field(default=True, env="EMBEDDING_WARMUP")
     CHUNK_SIZE: int = Field(default=800, env="CHUNK_SIZE")  # Spec: 700-900 characters
     CHUNK_OVERLAP: int = Field(default=150, env="CHUNK_OVERLAP")  # Spec: 150 characters
     TOP_K_RESULTS: int = Field(default=5, env="TOP_K_RESULTS")
