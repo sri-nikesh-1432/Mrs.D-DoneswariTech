@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import { I18nProvider } from "./i18n";
+import { startKeepAlive } from "./services/api";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -27,3 +28,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     </I18nProvider>
   </React.StrictMode>
 );
+
+// Keep the Render backend warm while this tab is open so auth + voice calls
+// never hit a cold start (fires an immediate ping, then every 4 minutes).
+startKeepAlive();

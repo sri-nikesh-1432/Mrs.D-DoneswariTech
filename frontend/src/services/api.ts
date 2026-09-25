@@ -40,6 +40,47 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// ─── Backend keep-alive ────────────────────────────────────────────
+// The Render free tier sleeps after ~15 min idle; the first signin/signup
+// then eats a ~60s cold start. Pinging /health keeps the instance awake
+// while the site is open, and an immediate first ping wakes it the moment
+// the page loads — before the user even finishes typing credentials.
+const KEEPALIVE_INTERVAL_MS = 4 * 60 * 1000; // <15 min idle threshold
+let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+
+export function pingHealth(): Promise<boolean> {
+  return fetch(`${BASE}/health`, { headers: { "Cache-Control": "no-cache" } })
+    .then((r) => r.ok)
+    .catch(() => false);
+}
+
+export function startKeepAlive(intervalMs: number = KEEPALIVE_INTERVAL_MS): void {
+  if (keepaliveTimer !== null) return;
+  keepaliveTimer = setInterval(() => { void pingHealth(); }, intervalMs);
+}
+
+// ─── Cold-start resilient POST for auth ────────────────────────────
+// A sleeping Render instance can drop the first request (connect timeout).
+// Retry a couple of times on network/5xx errors so signin/signup eventually
+// succeeds instead of dying in a loud red error.
+async function postWithRetry<T>(url: string, payload: unknown, attempts = 3): Promise<T> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (attempt > 1) await new Promise((r) => setTimeout(r, 3000 * (attempt - 1)));
+    try {
+      const res = await api.post<T>(url, payload);
+      return res.data;
+    } catch (err) {
+      lastError = err;
+      const anyErr = err as { response?: { status?: number }; request?: unknown };
+      const networkFailure = !anyErr.response && !!anyErr.request;
+      const serverError = (anyErr.response?.status ?? 0) >= 500;
+      if (!networkFailure && !serverError) throw err;
+    }
+  }
+  throw lastError;
+}
+
 // ─── Auth ──────────────────────────────────────────────────────────
 export async function signup(
   email: string,
@@ -47,20 +88,20 @@ export async function signup(
   fullName: string,
   companyName?: string
 ): Promise<AuthResponse> {
-  const res = await api.post<AuthResponse>("/api/auth/signup", {
+  const data = await postWithRetry<AuthResponse>("/api/auth/signup", {
     email,
     password,
     full_name: fullName,
     company_name: companyName,
   });
-  setToken(res.data.token);
-  return res.data;
+  setToken(data.token);
+  return data;
 }
 
 export async function login(email: string, password: string): Promise<AuthResponse> {
-  const res = await api.post<AuthResponse>("/api/auth/login", { email, password });
-  setToken(res.data.token);
-  return res.data;
+  const data = await postWithRetry<AuthResponse>("/api/auth/login", { email, password });
+  setToken(data.token);
+  return data;
 }
 
 export async function getMe(): Promise<MeResponse> {
