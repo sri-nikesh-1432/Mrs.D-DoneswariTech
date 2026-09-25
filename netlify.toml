@@ -6,6 +6,12 @@
 [build.environment]
   NODE_VERSION = "20"
 
+# Production build must talk to the Render backend (REST + WebSocket). This is
+# baked in at BUILD time by Vite (VITE_API_URL / VITE_WS_URL in api.ts). If you
+# override it from the Netlify UI, that value wins.
+[context.production.environment]
+  VITE_API_URL = "https://d-tech-pid6.onrender.com"
+
 # SPA fallback: all client-side routes (e.g. /signup, /agents) serve index.html.
 [[redirects]]
   from = "/*"

@@ -5,6 +5,11 @@ services:
     repo: https://github.com/sri-nikesh-1432/Mrs.D-DoneswariTech.git
     plan: free
     dockerfilePath: ./backend/Dockerfile
+    # NOTE: Render free tier sleeps after ~15 min idle and takes ~60s to cold
+    # start, which violates the 700ms voice KPI on the first turn. Upgrade to
+    # Starter/Pro or ping it (curl /health keeps it awake) for always-on voice.
+    healthCheckPath: /health
+    healthCheckTimeout: 120
     envVars:
       - key: GROQ_API_KEY
         sync: false

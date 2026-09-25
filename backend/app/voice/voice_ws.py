@@ -480,9 +480,13 @@ FRAME_SAMPLES = int(SAMPLE_RATE * FRAME_MS / 1000)  # 320 samples
 # noise triggering phantom turns.
 ENERGY_THRESHOLD = 0.008
 
-SILENCE_FRAMES_SHORT = 20   # ~400ms - short utterances
-SILENCE_FRAMES_MEDIUM = 30  # ~600ms - normal pauses
-SILENCE_FRAMES_LONG = 45    # ~900ms - thinking pauses
+# Retell-style snappy turn-taking (spec §13: <=700ms E2E): keep the silence
+# window short so the answer starts almost on top of the caller's last word —
+# 10/16/26 frames = 200/320/520ms. Short questions reply fastest, long
+# utterances get a hair more room so a mid-thought pause does not cut them off.
+SILENCE_FRAMES_SHORT = 10   # ~200ms - short utterances
+SILENCE_FRAMES_MEDIUM = 16  # ~320ms - normal pauses
+SILENCE_FRAMES_LONG = 26    # ~520ms - thinking pauses
 
 MAX_UTTERANCE_SECONDS = 30  # hard cap
 PRE_SPEECH_MS = 200
@@ -1400,6 +1404,9 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
         """Cut the current utterance and queue it for processing."""
         nonlocal pcm_buffer, speech_started, utterance_frames
         turn_detector.reset()
+        # Mark the user's LAST AUDIBLE word here — the real turn boundary used
+        # to compute the KPI response_latency_ms (speech_end -> first audio).
+        latency.mark_speech_end()
         if len(pcm_buffer) >= int(MIN_UTTERANCE_MS / FRAME_MS) * FRAME_SAMPLES * 2:
             pcm_copy = bytes(pcm_buffer)
             await utterance_q.put(("audio", pcm_copy))

@@ -474,11 +474,11 @@ class VoiceWebSocket {
       // its own trailing silence, so these gaps stay short on purpose.
       // Skipped instantly when barged in.
       const t = item.text?.trim() ?? "";
-      const breath = t.endsWith("...") || t.endsWith("…") ? 280
-        : t.endsWith("?") ? 220
-        : t.endsWith("!") ? 140
-        : t.length <= 24 ? 70
-        : 130;
+      const breath = t.endsWith("...") || t.endsWith("…") ? 180
+        : t.endsWith("?") ? 140
+        : t.endsWith("!") ? 90
+        : t.length <= 24 ? 40
+        : 90;
       setTimeout(() => { if (!this.intentionalClose) this._playNext(); }, breath);
     };
     this.currentSource = source;
