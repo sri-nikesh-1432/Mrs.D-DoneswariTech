@@ -21,7 +21,9 @@ from app.rag.response_cache import find_cached_response, get_cached_audio
 from app.rag.chunker import chunk_text
 from app.rag.embeddings import generate_embeddings
 from app.rag.json_retriever import get_json_retriever
-from app.tts.edge_tts_service import EdgeTTSService
+from app.tts.elevenlabs_service import get_elevenlabs_service, ElevenLabsTTSService
+from app.tts.dynamic_tts import DynamicTTSService, get_tts_service
+from app.config.settings import settings
 from app.stt.groq_stt import transcribe_audio as groq_transcribe_audio
 from app.logs.logger import get_logger
 from app.roman_telugu import looks_roman_telugu, transliterate_roman_telugu
@@ -34,7 +36,57 @@ router = APIRouter(prefix="/api/conversation", tags=["Conversation"])
 # In production, this would be per-call memory managed by CallHandler
 conversation_memory = {}
 
-tts_service = EdgeTTSService()
+async def resolve_tts_service(persona: dict = None):
+    """Switch the underlying TTS engine to match the agent's voice config."""
+    return await _tts_service.set_agent(persona)
+
+
+class DynamicTTSService:
+    """Dynamic TTS service that routes to Edge TTS or ElevenLabs based on the
+    agent's configured voice. When the agent's voice is a premade ElevenLabs
+    id (or Janaki), use ElevenLabs; otherwise fall back to Edge TTS.""",
+
+    def __init__(self):
+        self._service = EdgeTTSService()
+
+    async def set_agent(self, persona: dict = None):
+        """Switch the underlying TTS engine to match the agent's voice."""
+        persona = persona or {}
+        voice = persona.get("voice")
+        if not voice:
+            self._service = EdgeTTSService()
+            return
+        # ElevenLabs premade ids are ~11-30 chars, no dashes/dots.
+        # Edge-TTS names always contain '-' (e.g. en-IN-NeerjaNeural).
+        if len(voice) >= 11 and len(voice) <= 30 and '-' not in voice and '.' not in voice:
+            if settings.elevenlabs_enabled:
+                try:
+                    self._service = await get_tts_service()
+                    return
+                except Exception:
+                    pass
+            self._service = EdgeTTSService()
+        else:
+            self._service = EdgeTTSService()
+
+    async def synthesize(self, text: str, language: str = None, voice=None, speed=None):
+        return await self._service.synthesize(text, language=language, voice=voice, speed=speed)
+
+    async def synthesize_sentences(self, text: str, language=None, voice=None, speed=None):
+        return await self._service.synthesize_sentences(text, language=language, voice=voice, speed=speed)
+
+    async def stream_sentences(self, text: str, language=None, voice=None, speed=None):
+        return self._service.stream_sentences(text, language=language, voice=voice, speed=speed)
+
+    async def initialize(self):
+        await self._service.initialize()
+
+
+# We cannot hold a live DynamicTTSService here because the factory function
+# (get_tts_service) is defined in the tts package and may not be importable
+# at module load time; callers must use resolve_tts_service() to swap engines
+# for a specific agent persona.
+_tts_service = DynamicTTSService()
 
 
 LANGUAGE_INSTRUCTION = (
@@ -297,7 +349,7 @@ async def stream_conversation(
                         logger.info("CACHE+AUDIO HIT: %s (%.0fms)", llm_input[:60], first_sentence_ms)
                     else:
                         _t0 = time.time()
-                        async for chunk in tts_service.stream_sentences(
+                        async for chunk in _tts_service.stream_sentences(
                             cached, language=synth_lang
                         ):
                             if chunk.get("audio_data") is None:
@@ -370,7 +422,7 @@ async def stream_conversation(
                             # Complete sentence ready → synthesize & emit NOW
                             _idx, payload = kind[1], kind[2]
                             _s0 = time.time()
-                            async for chunk in tts_service.stream_sentences(
+                            async for chunk in _tts_service.stream_sentences(
                                 payload, language=synth_lang
                             ):
                                 if chunk.get("audio_data") is None:
@@ -417,7 +469,7 @@ async def stream_conversation(
                                 if detected_lang != "Telugu"
                                 else "క్షమించండి, ఇప్పుడు కొంచెం ఇబ్బంది వస్తోంది — మళ్లీ చెబుతారా?"
                             )
-                            async for chunk in tts_service.stream_sentences(
+                            async for chunk in _tts_service.stream_sentences(
                                 ai_response, language=synth_lang
                             ):
                                 if chunk.get("audio_data"):
@@ -446,7 +498,7 @@ async def stream_conversation(
                 synth_lang = language
                 count = 0
                 _t0 = time.time()
-                async for chunk in tts_service.stream_sentences(
+                async for chunk in _tts_service.stream_sentences(
                     ai_response, language=synth_lang
                 ):
                     if chunk.get("audio_data") is None:
@@ -676,7 +728,7 @@ async def process_test_conversation(
                 tts_start = time.time()
                 # Greeting language (detected from the hint) matches the JSON
                 # greeting, so it is used directly for voice selection.
-                sentence_audios = await tts_service.synthesize_sentences(
+                sentence_audios = await _tts_service.synthesize_sentences(
                     greeting, language=language
                 )
                 # Backwards-compatible full blob = concatenation of sentence blobs.
@@ -728,9 +780,7 @@ async def process_test_conversation(
             tts_time = 0
             if include_audio:
                 tts_start = time.time()
-                sentence_audios = await tts_service.synthesize_sentences(
-                    ai_response, language=detected_lang
-                )
+
                 all_audio = b"".join(
                     base64.b64decode(s["audio_data"]) for s in sentence_audios if s.get("audio_data")
                 )
@@ -800,12 +850,12 @@ async def process_test_conversation(
         sentence_audios = []
         if include_audio:
             tts_start = time.time()
-            # Use the INTERNALLY detected language (which may differ from the
-            # caller's hint — e.g. hint="English" but a Telugu reply) so the
-            # voice can actually read the response text.
-            sentence_audios = await tts_service.synthesize_sentences(
-                ai_response, language=detected_lang
-            )
+    # Use the INTERNALLY detected language (which may differ from the
+    # caller's hint — e.g. hint="English" but a Telugu reply) so the
+    # voice can actually read the response text.
+    sentence_audios = await _tts_service.synthesize_sentences(
+        ai_response, language=detected_lang
+    )
             # Backwards-compatible full blob = concatenation of sentence blobs.
             all_audio = b"".join(
                 base64.b64decode(s["audio_data"]) for s in sentence_audios if s.get("audio_data")
@@ -1158,7 +1208,7 @@ Generate ONLY the greeting text, no additional commentary."""
             # Use the internally detected language (which may differ from the
             # frontend hint) so the voice matches the response's actual script.
             synth_lang = detected_lang if not is_greeting else language
-            sentence_audios = await tts_service.synthesize_sentences(
+            sentence_audios = await _tts_service.synthesize_sentences(
                 ai_response, language=synth_lang
             )
             # Backwards-compatible full blob = concatenation of sentence blobs.

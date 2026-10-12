@@ -25,18 +25,16 @@ from app.database.connection import get_database
 from app.database.models import Institute, Knowledge, KnowledgeStatus, CallHistory, CallStatus
 from app.rag.retriever import retrieve_context, format_context_for_prompt, is_knowledge_ready
 from app.rag.groq_service import generate_response
-from app.tts.edge_tts_service import get_tts_service
+from app.tts.dynamic_tts import DynamicTTSService, get_tts_service
+from app.config.settings import settings
 from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api/single-call", tags=["Single Call"])
+router = APIRouter(prefix="/api/single-call", tags=["Single Call"])    # Per-call conversation memory (same in-memory pattern as conversation_routes).
+    # Created when a call starts and deleted when the call ends.
+    _call_memory: dict = {}
 
-# Per-call conversation memory (same in-memory pattern as conversation_routes).
-# Created when a call starts and deleted when the call ends.
-_call_memory: dict = {}
-
-_tts_service = get_tts_service()
 
 LANGUAGE_INSTRUCTION = (
     "Respond in the SAME language the student used ({language}). "
@@ -58,8 +56,15 @@ def _get_memory(call_id: str) -> list:
 
 
 async def _speak(text: str, language: str) -> Optional[str]:
-    """Synthesize speech via Edge-TTS and return base64-encoded MP3 (or None)."""
-    audio_bytes = await _tts_service.synthesize(text, language=language)
+    """Synthesize speech via the dynamic TTS service (Edge or ElevenLabs).
+    
+    The dynamic TTS service automatically routes to:
+      - ElevenLabs (premium, selected voice) when the agent's voice is an
+        ElevenLabs id, OR
+      - Edge-TTS (with regional voice per language) otherwise.
+    """
+    tts = await get_tts_service()
+    audio_bytes = await tts.synthesize(text, language=language)
     return base64.b64encode(audio_bytes).decode("utf-8") if audio_bytes else None
 
 

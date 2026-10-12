@@ -408,9 +408,12 @@ class VoiceWebSocket {
       }
       if (this.playCtx.state === "suspended") await this.playCtx.resume();
 
-      const raw = atob(audioB64);
-      const bytes = new Uint8Array(raw.length);
-      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      // Base64 → Uint8Array (handles UTF-8 and binary data safely)
+      const binary = atob(audioB64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
 
       const buffer = await this.playCtx.decodeAudioData(bytes.buffer);
       const wasIdle = !this.playing && this.playQueue.length === 0;

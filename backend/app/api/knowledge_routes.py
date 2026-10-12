@@ -32,12 +32,18 @@ router = APIRouter(prefix="/api/knowledge", tags=["Knowledge"])
 async def upload_knowledge(
     institute_id: Optional[int] = Form(None),
     file: UploadFile = File(...),
-    session: AsyncSession = Depends(get_database)
+    session: AsyncSession = Depends(get_database),
+    background_tasks: BackgroundTasks,
 ):
     """
     Upload institute knowledge document.
     Supports: PDF, DOCX, TXT, CSV
-    Processing happens synchronously to ensure completion.
+
+    The heavy pipeline (extract → chunk → embed → index) runs in a BACKGROUND
+    task after this response is sent. A large document used to hold the HTTP
+    request open for minutes, which blew past the client axios timeout and
+    Render's per-request timeout ("Training Failed: timeout of 120000ms").
+    The UI follows REAL progress through GET /knowledge/status.
     """
     try:
         # If no institute_id provided, create a default institute
@@ -52,29 +58,29 @@ async def upload_knowledge(
             await session.refresh(institute)
             institute_id = institute.id
             logger.info(f"Created default institute {institute_id} for knowledge upload")
-        
+
         # Get institute
         result = await session.execute(
             select(Institute).where(Institute.id == institute_id)
         )
         institute = result.scalar_one_or_none()
-        
+
         if not institute:
             raise HTTPException(status_code=404, detail="Institute not found")
-        
+
         # Read file content
         file_content = await file.read()
-        
+
         # Validate file
         document_service = DocumentService()
         is_valid, error_message = await document_service.validate_file(file_content, file.filename)
-        
+
         if not is_valid:
             raise HTTPException(status_code=400, detail=error_message)
-        
+
         # Save file
         file_path = await document_service.save_file(file_content, file.filename)
-        
+
         # Create knowledge record
         knowledge = Knowledge(
             institute_id=institute_id,
@@ -87,22 +93,28 @@ async def upload_knowledge(
         session.add(knowledge)
         await session.commit()
         await session.refresh(knowledge)
-        
-        logger.info(f"Document upload initiated for {file.filename}, processing synchronously")
-        
-        # Process document synchronously - wait for completion
-        await process_document(session, knowledge, file_path)
-        
-        logger.info(f"Document processing complete for {file.filename}")
-        
+
+        # Start the REAL ingestion pipeline in the background so this request
+        # returns immediately. The client times out waiting for the synchronous
+        # process_document() call below.
+        background_tasks.add_task(
+            process_document, session, knowledge, file_path
+        )
+
+        logger.info(f"Document upload initiated for {file.filename}, processing in background")
+
+        # Return the same shape the new agent document endpoint returns: the
+        # request itself is done; progress is tracked by /knowledge/status.
         return {
-            "message": "Document uploaded and processed successfully",
+            "message": "Knowledge document uploaded — processing started",
+            "document_name": file.filename,
             "knowledge_id": knowledge.id,
             "institute_id": institute_id,
             "institute_name": institute.name,
-            "status": knowledge.status.value
+            "chunks_count": 0,
+            "status": "processing",
         }
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -113,18 +125,18 @@ async def upload_knowledge(
 async def process_document_background(knowledge_id: int, file_path):
     """Process document in background task."""
     from app.database.connection import AsyncSessionLocal
-    
+
     async with AsyncSessionLocal() as session:
         from app.database.models import Knowledge
         result = await session.execute(
             select(Knowledge).where(Knowledge.id == knowledge_id)
         )
         knowledge = result.scalar_one_or_none()
-        
+
         if not knowledge:
             logger.error(f"Knowledge {knowledge_id} not found for background processing")
             return
-        
+
         await process_document(session, knowledge, file_path)
 
 
@@ -132,31 +144,31 @@ async def process_document(session: AsyncSession, knowledge: Knowledge, file_pat
     """Process document: extract text, chunk, embed, and build vector store (optimized for speed)."""
     try:
         logger.info(f"=== RAG PIPELINE START: Processing document {knowledge.document_name} ===")
-        
+
         # IMPORTANT: agent-isolated vector store (spec §2 §9). Every rebuild
         # targets THIS agent's store only — never a shared/global store.
         agent_store = vector_store_manager.get_store(knowledge.institute_id)
         logger.info(f"Rebuilding isolated vector store for agent {knowledge.institute_id}...")
-        
+
         # Update status to processing
         knowledge.status = KnowledgeStatus.PROCESSING
         knowledge.processing_started_at = datetime.now(timezone.utc)
         await session.commit()
-        
+
         # Extract text + REAL metadata
         logger.info("Extracting text...")
         extraction = extract_text_detailed(str(file_path), knowledge.document_name)
         text = extraction.text
-        
+
         if not text or not text.strip():
             logger.error("Extracted text is empty")
             knowledge.status = KnowledgeStatus.ERROR
             knowledge.error_message = "Extracted text is empty"
             await session.commit()
             return
-        
+
         logger.info(f"Extracted {len(text)} characters")
-        
+
         # Persist real extraction facts (spec §4)
         knowledge.page_count = extraction.page_count
         knowledge.extracted_character_count = extraction.extracted_character_count
@@ -165,7 +177,7 @@ async def process_document(session: AsyncSession, knowledge: Knowledge, file_pat
         knowledge.extraction_status = extraction.extraction_status
         knowledge.extraction_previews = {"pages": extraction.page_previews[:10]}
         await session.commit()
-        
+
         # Idempotent re-index: clear this agent's previous chunk rows + caches
         await session.execute(
             sa_delete(KnowledgeChunk).where(KnowledgeChunk.agent_id == knowledge.institute_id)
@@ -183,7 +195,7 @@ async def process_document(session: AsyncSession, knowledge: Knowledge, file_pat
         knowledge.ingestion_stage = "chunking"
         await session.commit()
         chunks = chunk_text(text, source_document=knowledge.document_name)
-        
+
         if not chunks or len(chunks) == 0:
             logger.error("No chunks generated")
             knowledge.status = KnowledgeStatus.ERROR
@@ -192,7 +204,7 @@ async def process_document(session: AsyncSession, knowledge: Knowledge, file_pat
             knowledge.ingestion_error = "Chunking produced zero chunks — document has no usable content"
             await session.commit()
             raise HTTPException(status_code=400, detail="Chunking produced zero chunks — document has no usable content")
-        
+
         logger.info(f"Generated {len(chunks)} chunks")
 
         # Stamp full provenance on every chunk (spec §7).
@@ -203,26 +215,26 @@ async def process_document(session: AsyncSession, knowledge: Knowledge, file_pat
             c["document_id"] = knowledge.id
             c["document_version_id"] = knowledge.id
             c["embedding_model"] = settings.EMBEDDING_MODEL
-        
+
         # Update status to embedding
         knowledge.status = KnowledgeStatus.EMBEDDING
         knowledge.ingestion_stage = "embedding"
         await session.commit()
-        
+
         # Generate embeddings (simplified - no quality gate for speed)
         logger.info("Generating embeddings...")
         embeddings = generate_embeddings(chunks)
-        
+
         logger.info(f"Generated {embeddings.shape[0]} embeddings")
-        
+
         # Build the AGENT-SCOPED vector store (spec §9)
         logger.info("Building vector store...")
         knowledge.ingestion_stage = "indexing"
         await session.commit()
         agent_store.build_index(chunks, embeddings)
-        
+
         logger.info(f"Vector store ready with {len(agent_store.chunks)} chunks")
-        
+
         # Persist to the standard agent path so restarts reload THIS agent's index
         save_path = settings.BASE_DIR / "knowledge" / f"agent_{knowledge.institute_id}" / "index"
         agent_store.save(str(save_path))
@@ -245,7 +257,7 @@ async def process_document(session: AsyncSession, knowledge: Knowledge, file_pat
                 embedding_model=settings.EMBEDDING_MODEL,
             ))
         await session.flush()
-        
+
         # Update knowledge record
         knowledge.status = KnowledgeStatus.READY
         knowledge.ingestion_stage = "ready"
@@ -253,11 +265,11 @@ async def process_document(session: AsyncSession, knowledge: Knowledge, file_pat
         knowledge.chunks_count = len(chunks)
         knowledge.processing_completed_at = datetime.now(timezone.utc)
         await session.commit()
-        
+
         logger.info(f"=== RAG PIPELINE COMPLETE: Knowledge base ready for institute {knowledge.institute_id} ===")
         logger.info(f"Total chunks: {len(chunks)}")
         logger.info(f"Processing time: {(knowledge.processing_completed_at - knowledge.processing_started_at).total_seconds():.2f} seconds")
-    
+
     except Exception as e:
         logger.error(f"RAG PIPELINE FAILED: Error processing document: {e}")
         logger.error(f"Error type: {type(e).__name__}")
@@ -267,76 +279,3 @@ async def process_document(session: AsyncSession, knowledge: Knowledge, file_pat
         knowledge.ingestion_error = str(e)[:1000]
         await session.commit()
         raise
-
-
-@router.get("/status/{institute_id}")
-async def get_knowledge_status(
-    institute_id: int,
-    session: AsyncSession = Depends(get_database)
-):
-    """Get knowledge base status for an institute."""
-    try:
-        # Only ONE active knowledge base per institute — pick the latest upload.
-        # Old rows stay in the DB for history, but the current active one is always the newest.
-        result = await session.execute(
-            select(Knowledge)
-            .where(Knowledge.institute_id == institute_id)
-            .order_by(Knowledge.id.desc())
-            .limit(1)
-        )
-        knowledge = result.scalar_one_or_none()
-        
-        if not knowledge:
-            return {
-                "institute_id": institute_id,
-                "status": "not_uploaded"
-            }
-        
-        return {
-            "knowledge_id": knowledge.id,
-            "institute_id": institute_id,
-            "document_name": knowledge.document_name,
-            "status": knowledge.status.value,
-            "chunks_count": knowledge.chunks_count,
-            "uploaded_at": knowledge.uploaded_at.isoformat() if knowledge.uploaded_at else None,
-            "error_message": knowledge.error_message
-        }
-    
-    except Exception as e:
-        logger.error(f"Error getting knowledge status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.delete("/{knowledge_id}")
-async def delete_knowledge(
-    knowledge_id: int,
-    session: AsyncSession = Depends(get_database)
-):
-    """Delete knowledge base."""
-    try:
-        result = await session.execute(
-            select(Knowledge).where(Knowledge.id == knowledge_id)
-        )
-        knowledge = result.scalar_one_or_none()
-        
-        if not knowledge:
-            raise HTTPException(status_code=404, detail="Knowledge not found")
-        
-        # Delete file
-        document_service = DocumentService()
-        await document_service.delete_file(knowledge.file_path)
-        
-        # Clear THIS agent's isolated store only (spec §2 §9)
-        vector_store_manager.get_store(knowledge.institute_id).clear()
-        
-        # Delete database record
-        await session.delete(knowledge)
-        await session.commit()
-        
-        return {"message": "Knowledge deleted successfully"}
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting knowledge: {e}")
-        raise HTTPException(status_code=500, detail=str(e))

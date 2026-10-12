@@ -44,8 +44,9 @@ from app.logs.logger import get_logger
 from app.rag.groq_service import generate_response, stream_chat_fast
 from app.rag.retriever import retrieve_context, format_context_for_prompt
 from app.rag.json_retriever import get_json_retriever
-from app.tts.edge_tts_service import get_tts_service
-from app.tts.elevenlabs_service import get_elevenlabs_service
+from app.tts.edge_tts_service import EdgeTTSService, get_tts_service
+from app.tts.dynamic_tts import DynamicTTSService, get_tts_service as get_dynamic_tts_service
+from app.tts.elevenlabs_service import get_elevenlabs_service, ElevenLabsTTSService
 from app.roman_telugu import looks_roman_telugu, transliterate_roman_telugu
 from app.reports.call_report_service import generate_report_data
 from app.conversation.counsellor import (
@@ -59,6 +60,17 @@ from app.conversation.counsellor import (
 logger = get_logger(__name__)
 
 router = APIRouter(tags=["Voice WebSocket"])
+
+
+# Dynamic TTS service router for the WebSocket pipeline.
+# When the agent's voice is a premade ElevenLabs id, route to ElevenLabs;
+# otherwise fall back to Edge-TTS with regional voice per language.
+_ws_tts = DynamicTTSService()
+
+
+async def resolve_ws_tts(persona: dict = None):
+    """Switch the underlying TTS engine to match the agent's voice config."""
+    return await _ws_tts.set_agent(persona)
 
 
 # ---------------------------------------------------------------------------
@@ -657,7 +669,11 @@ async def _send_greeting(
         memory.append({"role": "assistant", "content": ai_response})
 
         sentence_idx = 0
-        tts = get_tts_service()
+        # Use the dynamic TTS service configured for THIS agent's voice.
+        # If the agent's voice is a premade ElevenLabs id, ElevenLabs is
+        # used; otherwise Edge-TTS with regional voice per language is used.
+        await resolve_ws_tts({"voice": voice, "voice_speed": speed})
+        tts = _ws_tts
         logger.info("WS_GREETING | stage=tts_stream_begin agent=%s voice=%s", agent_name, voice or "auto")
         async for chunk in tts.stream_sentences(
             ai_response, language=language, voice=voice, speed=speed,
@@ -981,8 +997,9 @@ async def _process_turn(
                 latency.end_llm()
                 await sentence_q.put(("end", None))
 
-        # If there's a cached audio response, play it instantly (~0ms)
-        tts = get_tts_service()
+        # Use dynamic TTS for this agent's voice
+        await resolve_ws_tts({"voice": agent_voice, "voice_speed": agent_speed})
+        tts = _ws_tts
         sentence_count = 0
         first_sentence_text = ""
 

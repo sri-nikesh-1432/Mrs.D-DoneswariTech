@@ -35,13 +35,41 @@ export function setToken(token: string | null): void {
   else localStorage.removeItem(TOKEN_KEY);
 }
 
+// ─── UI font & metric helpers ──────────────────────────────────────
+/** Apple-style type scale for the whole app (tiny → display). */
+export function uiTypography(key: "xs" | "sm" | "base" | "lg" | "xl" | "2xl"): string {
+  switch (key) {
+    case "xs": return "11px";
+    case "sm": return "13px";
+    case "base": return "15px";
+    case "lg": return "18px";
+    case "xl": return "22px";
+    case "2xl": return "28px";
+    default: return "15px";
+  }
+}
+
+export function uiFontSans(): string {
+  return "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+}
+
+export function uiFontMono(): string {
+  return "'SF Mono', 'Fira Code', 'Cascadia Code', monospace";
+}
+
+export function uiFontDisplay(): string {
+  return "'Instrument Serif', Georgia, 'Times New Roman', serif";
+}
+
 const api = axios.create({ baseURL: BASE, timeout: 120_000 });
 
 /** Long-running endpoints: knowledge validation runs real retrieval smoke
  *  tests and can be slow on a cold/small backend instance. Uploading now
  *  returns immediately (server-side background ingestion), but validation and
  *  the readiness gate still do real work — give them a generous ceiling. */
-const HEAVY_TIMEOUT_MS = 600_000;
+// Raised from 120s to 300s so slow ingestions don't fail client-side;
+// the UI polls /knowledge/status for real progress instead of waiting.
+const HEAVY_TIMEOUT_MS = 300_000;
 
 api.interceptors.request.use((config) => {
   const token = getToken();

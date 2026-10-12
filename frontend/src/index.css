@@ -2,52 +2,64 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ═══ Design Tokens — ElevenLabs × Apple ══════════════════════
-   Warm cream/beige light surfaces, frosted-glass panels,
-   cool sky-blue accent, near-black warm ink text. */
+/* ═══ Apple-Style Design System ══════════════════════════════
+   Clean, generous spacing, warm cream/beige surfaces,
+   a single cool sky-blue accent, near-black warm ink text.
+   Typography: Inter (SF Pro numeric) + Instrument Serif for display.
+   Glass surfaces with blur, subtle borders, soft shadows. */
 :root {
-  /* Sky accent — the one saturated cool note */
-  --sky-50:  #eef7ff;
-  --sky-100: #def0fe;
-  --sky-200: #b9e2fd;
-  --sky-300: #83cdfa;
-  --sky-400: #3fb1f5;
-  --sky-500: #0e93e8;
-  --sky-600: #0773c2;
-  --sky-700: #0a5c9c;
+  /* Color tokens — warm cream/beige, frosted glass, cool accent */
+  --bg-base:       #f8f6f1;
+  --bg-surface:    #ffffff;
+  --surface-1:     #ffffff;
+  --surface-2:     #f5f3ee;
+  --surface-3:     #ece8df;
+  --bg-hover:      #eef1ef;
+  --bg-active:     #e2e7de;
 
-  /* Warm neutral ink scale (ElevenLabs warmth) */
-  --gray-50: #fbfaf7;
-  --gray-100:#f5f3ee;
-  --gray-200:#e9e6dd;
-  --gray-300:#d6d1c4;
-  --gray-400:#a9a394;
-  --gray-500:#807b6e;
-  --gray-600:#5d594f;
-  --gray-700:#3b3931;
-  --gray-800:#22211c;
-  --gray-900:#16150f;
+  --text-primary:  #1c1917;
+  --text-secondary:#46423f;
+  --text-tertiary: #6b645c;
+  --text-inverse:  #ffffff;
 
-  --white:   #ffffff;
-  --beige:   #f4f0e7;
-  --cream:   #fbf9f4;
+  --accent:        #0e93e8;
+  --accent-soft:   #eef6ff;
+  --accent-glow:   rgba(14,147,232,.18);
 
-  --accent:       var(--sky-500);
-  --accent-light: var(--sky-200);
+  --green:         #068a48;
+  --green-soft:    #e9f7ee;
+  --red:           #b03030;
+  --red-soft:      #fdecec;
+  --amber:         #97750c;
+  --amber-soft:    #fef6d8;
 
-  /* Apple-like larger radii */
+  /* Apple-radius is larger for modern UI */
   --radius-sm: 10px;
   --radius-md: 16px;
   --radius-lg: 22px;
   --radius-xl: 30px;
   --radius-full: 9999px;
 
-  /* Soft, diffused shadows */
+  /* Soft, diffused shadows — Apple-style */
   --shadow-sm: 0 1px 2px rgba(22,21,15,0.03), 0 2px 10px rgba(22,21,15,0.04);
-  --shadow-md: 0 2px 6px rgba(22,21,15,0.04), 0 14px 40px rgba(22,21,15,0.08);
-  --shadow-lg: 0 4px 12px rgba(22,21,15,0.05), 0 24px 70px rgba(22,21,15,0.12);
-  --shadow-glow: 0 0 44px rgba(63,177,245,0.28);
+  --shadow-md: 0 4px 14px rgba(22,21,15,0.06), 0 14px 40px rgba(22,21,15,0.08);
+  --shadow-lg: 0 8px 26px rgba(22,21,15,0.08), 0 24px 70px rgba(22,21,15,0.12);
+  --shadow-glow: 0 0 32px rgba(14,147,232,0.25), 0 0 64px rgba(14,147,232,0.10);
+
+  /* Focus ring on accent, like macOS focus ring */
+  --focus-ring: 2px solid var(--accent);
+  --focus-ring-offset: 2px;
 }
+
+/* ═══ Typography ─────────────────────────────────────────────── */
+/* Inter for UI, Instrument Serif for display headings */
+:root {
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: 'Instrument Serif', Georgia, serif;
+  --font-mono: 'SF Mono', 'Fira Code', monospace;
+}
+
+/* ═══════════════════════════════════════════════════════════ */
 
 /* ═══ Base ══════════════════════════════════════════════════ */
 *, *::before, *::after { box-sizing: border-box; }
@@ -56,18 +68,21 @@ html, body, #root {
   height: 100%;
   margin: 0;
   padding: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-feature-settings: "cv11", "ss01", "cv02";
+  font-family: var(--font-ui);
+  font-feature-settings: "cv11", "ss01", "cv02", "pnum", "onum";
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  background: var(--bg-base, var(--beige));
-  color: var(--gray-800);
+  background: var(--bg-base);
+  color: var(--text-primary);
 }
 
 body { overflow-x: hidden; }
 
 /* Display / serif numerals for hero headings & big numbers */
-.font-display { font-family: 'Instrument Serif', Georgia, serif; }
+.font-display { font-family: var(--font-display); }
+
+/* Mono for code & timestamps */
+.font-mono { font-family: var(--font-mono); }
 
 /* ═══ Ambient app background (Apple-style floating orbs) ═══ */
 .bg-app {
@@ -206,6 +221,198 @@ body { overflow-x: hidden; }
   background-size: 200% 200%;
   animation: gradient-x 3s ease infinite;
 }
+
+
+/* ═══════════════════════════════════════════════════════════
+   Glass Surfaces (Apple-frosted)
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── Base glass — frosted, lighter tint, subtle border ── */
+.glass {
+  background: rgba(255,255,255,0.68);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  border: 1px solid rgba(186,230,253,0.45);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), var(--shadow-sm);
+}
+
+/* ── Glass strong — denser frost, deeper tint ── */
+.glass-strong {
+  background: rgba(255,255,255,0.80);
+  backdrop-filter: blur(30px) saturate(1.5);
+  -webkit-backdrop-filter: blur(30px) saturate(1.5);
+  border: 1px solid rgba(186,230,253,0.55);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), var(--shadow-md);
+}
+
+/* ── Surface — solid cool-tinted ── */
+.surface {
+  background: var(--surface-1);
+  border-color: rgba(186,230,253,0.35);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ── Paper — clean off-white, minimal ── */
+.paper {
+  background: var(--bg-surface);
+  border-color: var(--bg-base);
+}
+
+/* ── Borderless ── */
+.borderless {
+  border-color: transparent !important;
+}
+
+/* ── Hairline ── extremely subtle text border */
+.hairline {
+  border-color: rgba(186,230,253,0.30) !important;
+}
+
+/* ── Border reduced ── */
+.border-reduced {
+  border-color: rgba(186,230,253,0.20) !important;
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   Inputs — frosted text fields, Apple-like
+   ═══════════════════════════════════════════════════════════ */
+
+input[type="text"], input[type="email"], input[type="tel"], input[type="number"],
+textarea, select, [contenteditable] {
+  background: rgba(255,255,255,0.78);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(186,230,253,0.35);
+  box-shadow: inset 0 1px 2px rgba(22,21,15,0.03);
+  color: var(--text-primary);
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+
+input:focus, textarea:focus, select:focus, [contenteditable]:focus {
+  border-color: var(--accent);
+  box-shadow: inset 0 1px 2px rgba(22,21,15,0.03), 0 0 0 3px rgba(14,147,232,0.12);
+  outline: none;
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--text-tertiary);
+  opacity: 0.7;
+}
+
+/* ── Select dropdown ▸ ── */
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2346423F'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px;
+}
+
+/* ── Button ── */
+button {
+  font-family: var(--font-ui);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s, box-shadow 0.15s;
+}
+button:hover:not(:disabled) { transform: translateY(-1px); }
+button:active:not(:disabled) { transform: translateY(0); }
+button:disabled { cursor: not-allowed; opacity: 0.55; }
+
+/* ── Pill button — for chips / badges ── */
+.pill {
+  padding: 7px 16px;
+  border-radius: var(--radius-full);
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid rgba(186,230,253,0.35);
+  background: rgba(255,255,255,0.78);
+  backdrop-filter: blur(12px);
+  color: var(--text-primary);
+}
+.pill:hover { background: rgba(255,255,255,0.9);
+  border-color: rgba(186,230,253,0.5); }
+
+/* ── Toolbar button groups ── */
+.toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.toolbar button {
+  padding: 10px 16px;
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: var(--radius-md);
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(186,230,253,0.35);
+  color: var(--text-primary);
+}
+.toolbar button:hover { background: rgba(255,255,255,0.95); }
+.toolbar button.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.toolbar button:disabled { opacity: 0.45; }
+
+
+/* ═══════════════════════════════════════════════════════════
+   Status badges (Apple-style colored pills)
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── Life state chips ── */
+.life-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid rgba(186,230,253,0.35);
+  background: rgba(255,255,255,0.78);
+  backdrop-filter: blur(12px);
+  color: var(--text-secondary);
+}
+.life-chip .pulse-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor;
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+.life-chip.greeting { border-color: rgba(14,147,232,0.35); color: var(--accent); }
+.life-chip.listening { border-color: rgba(6,138,72,0.35); color: var(--green); }
+.life-chip.thinking { border-color: rgba(14,147,232,0.35); color: var(--accent); }
+.life-chip.speaking { border-color: rgba(6,138,72,0.35); color: var(--green); }
+.life-chip.error { border-color: rgba(176,48,48,0.35); color: var(--red); }
+.life-chip.idle { border-color: rgba(107,100,92,0.35); color: var(--text-tertiary); }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   Scrollbar — macOS-ish thin scrollbar
+   ═══════════════════════════════════════════════════════════ */
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(107,100,92,0.24);
+  border-radius: var(--radius-full);
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(107,100,92,0.38); }
+
+
+/* ═══════════════════════════════════════════════════════════
+   Selection — macOS blue
+   ═══════════════════════════════════════════════════════════ */
+
+::selection { background: rgba(14,147,232,0.22); }
 
 /* ═══ Skeleton shimmer ══════════════════════════════════════ */
 .skeleton {
