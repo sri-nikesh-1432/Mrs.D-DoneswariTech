@@ -23,6 +23,7 @@ from app.rag.embeddings import generate_embeddings
 from app.rag.json_retriever import get_json_retriever
 from app.tts.elevenlabs_service import get_elevenlabs_service, ElevenLabsTTSService
 from app.tts.dynamic_tts import DynamicTTSService, get_tts_service
+from app.tts.edge_tts_service import EdgeTTSService
 from app.config.settings import settings
 from app.stt.groq_stt import transcribe_audio as groq_transcribe_audio
 from app.logs.logger import get_logger
@@ -850,12 +851,12 @@ async def process_test_conversation(
         sentence_audios = []
         if include_audio:
             tts_start = time.time()
-    # Use the INTERNALLY detected language (which may differ from the
-    # caller's hint — e.g. hint="English" but a Telugu reply) so the
-    # voice can actually read the response text.
-    sentence_audios = await _tts_service.synthesize_sentences(
-        ai_response, language=detected_lang
-    )
+            # Use the INTERNALLY detected language (which may differ from the
+            # caller's hint — e.g. hint="English" but a Telugu reply) so the
+            # voice can actually read the response text.
+            sentence_audios = await _tts_service.synthesize_sentences(
+                ai_response, language=detected_lang
+            )
             # Backwards-compatible full blob = concatenation of sentence blobs.
             all_audio = b"".join(
                 base64.b64decode(s["audio_data"]) for s in sentence_audios if s.get("audio_data")

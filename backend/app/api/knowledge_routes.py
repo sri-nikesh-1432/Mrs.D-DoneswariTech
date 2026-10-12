@@ -33,7 +33,7 @@ async def upload_knowledge(
     institute_id: Optional[int] = Form(None),
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_database),
-    background_tasks: BackgroundTasks,
+    background_tasks: BackgroundTasks = None,
 ):
     """
     Upload institute knowledge document.
