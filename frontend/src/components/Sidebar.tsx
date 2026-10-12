@@ -36,16 +36,15 @@ export default function Sidebar({ workspaceName, userName, onLogout }: SidebarPr
   const activeAgent = agents?.find((a) => String(a.id) === agentId);
 
   const handleLogout = async () => {
-    await logout();
     onLogout?.();
-    navigate("/login");
+    navigate("/");
   };
 
   return (
-    <aside className="w-60 shrink-0 h-screen sticky top-0 flex flex-col bg-white border-r border-[var(--gray-200)]">
+    <aside className="w-60 shrink-0 h-screen sticky top-0 flex flex-col bg-white/55 backdrop-blur-2xl saturate-150 border-r hairline shadow-[inset_-1px_0_0_rgba(255,255,255,0.6)]">
       {/* Brand */}
-      <div className="px-5 py-5 border-b border-[var(--gray-100)]">
-        <div className="flex items-center gap-2.5">
+      <div className="px-5 py-5 border-b hairline">
+        <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[var(--sky-400)] to-[var(--sky-600)] flex items-center justify-center text-white font-bold text-sm shadow-[var(--shadow-md)]">
             D
           </div>
@@ -67,7 +66,7 @@ export default function Sidebar({ workspaceName, userName, onLogout }: SidebarPr
 
       {/* Agent-scoped nav */}
       {agentId && (
-        <nav className="px-3 pt-5 pb-2 border-t border-[var(--gray-100)] mt-2 space-y-0.5">
+        <nav className="px-3 pt-5 pb-2 border-t hairline mt-2 space-y-0.5">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--gray-400)] px-3 pb-1.5">
             Agent{activeAgent ? ` · ${activeAgent.agent_name}` : ""}
           </div>
@@ -89,7 +88,7 @@ export default function Sidebar({ workspaceName, userName, onLogout }: SidebarPr
             <select
               value={agentId ?? ""}
               onChange={(e) => navigate(`/agent/${e.target.value}/overview`)}
-              className="w-full appearance-none bg-[var(--gray-50)] border border-[var(--gray-200)] rounded-lg px-3 py-2 pr-8 text-[13px] text-[var(--gray-700)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--sky-400)] cursor-pointer"
+              className="w-full appearance-none bg-white/50 backdrop-blur-md border hairline rounded-xl px-3 py-2 pr-8 text-[13px] text-[var(--gray-700)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--sky-400)] cursor-pointer shadow-[inset_0_1px_2px_rgba(34,33,28,0.04)]"
             >
               {agents.map((a) => (
                 <option key={a.id} value={a.id}>
@@ -105,7 +104,7 @@ export default function Sidebar({ workspaceName, userName, onLogout }: SidebarPr
       <div className="flex-1" />
 
       {/* User footer */}
-      <div className="p-3 border-t border-[var(--gray-100)]">
+      <div className="p-3 border-t hairline">
         <div className="flex items-center gap-2.5 px-2 py-1.5">
           <div className="w-8 h-8 rounded-full bg-[var(--sky-100)] text-[var(--sky-700)] flex items-center justify-center text-xs font-semibold">
             {(userName || "U").slice(0, 1).toUpperCase()}
@@ -116,7 +115,7 @@ export default function Sidebar({ workspaceName, userName, onLogout }: SidebarPr
           <button
             onClick={handleLogout}
             title={t("nav.logout")}
-            className="p-1.5 rounded-lg text-[var(--gray-400)] hover:text-[var(--gray-600)] hover:bg-[var(--gray-100)] transition-colors"
+            className="p-1.5 rounded-lg text-[var(--gray-400)] hover:text-[var(--gray-600)] hover:bg-white/70 transition-colors"
           >
             <LogOut className="w-4 h-4" />
           </button>
@@ -134,10 +133,10 @@ function SideLink({
       to={to}
       end={end}
       className={({ isActive }) =>
-        `flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13.5px] font-medium transition-colors ${
+        `flex items-center gap-2.5 px-3 py-2 rounded-[10px] text-[13.5px] font-medium transition-all duration-200 ${
           isActive
-            ? "bg-[var(--sky-50)] text-[var(--sky-700)]"
-            : "text-[var(--gray-600)] hover:bg-[var(--gray-50)] hover:text-[var(--gray-800)]"
+            ? "bg-white/70 backdrop-blur-md text-[var(--sky-700)] shadow-[0_4px_16px_rgba(33,42,52,0.08),0_1px_2px_rgba(255,255,255,0.8)] border border-white/60"
+            : "text-[var(--gray-600)] hover:bg-white/50 hover:text-[var(--gray-800)]"
         }`
       }
     >

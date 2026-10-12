@@ -69,19 +69,33 @@ def main():
           f"status={r.json().get('status') if r.status_code == 200 else r.status_code}")
     agent_id = r.json()["id"]
 
-    # 5. Upload REAL knowledge PDF
+    # 5. Upload REAL knowledge PDF. Ingestion runs in the BACKGROUND so the
+    # upload request returns immediately (this is what stops a large document
+    # from tripping the client/Render request timeout); we poll the REAL
+    # ingestion status below instead of reading chunks from the upload response.
     pdf = _make_test_pdf()
+    t0 = time.time()
     r = s1.post(f"{BASE}/api/agents/{agent_id}/documents", headers=H_A,
-                files={"file": ("e2e_knowledge.pdf", pdf, "application/pdf")}, timeout=120)
-    check("Upload knowledge — real ingestion", r.status_code == 200 and r.json().get("chunks_count", 0) > 0,
-          f"chunks={r.json().get('chunks_count') if r.status_code == 200 else r.status_code}")
-    chunks = r.json().get("chunks_count", 0) if r.status_code == 200 else 0
+                files={"file": ("e2e_knowledge.pdf", pdf, "application/pdf")}, timeout=60)
+    upload_secs = time.time() - t0
+    check("Upload knowledge accepted (background ingestion)",
+          r.status_code == 200 and r.json().get("status") == "processing",
+          f"status={r.json().get('status') if r.status_code == 200 else r.status_code} in {upload_secs:.1f}s")
+    check("Upload returns promptly (no request timeout)", upload_secs < 30, f"{upload_secs:.1f}s")
 
     # 6. Knowledge status = ready + indexed (spec §11)
-    r = s1.get(f"{BASE}/api/agents/{agent_id}/knowledge/status", headers=H_A, timeout=15)
-    ks = r.json()
-    check("Knowledge status READY + indexed", r.status_code == 200 and ks.get("status") == "ready" and ks.get("indexed"),
+    ks = {}
+    deadline = time.time() + 300
+    while time.time() < deadline:
+        r = s1.get(f"{BASE}/api/agents/{agent_id}/knowledge/status", headers=H_A, timeout=15)
+        ks = r.json()
+        if (ks.get("status") == "ready" and ks.get("indexed")) or ks.get("status") == "error":
+            break
+        time.sleep(1.5)
+    check("Knowledge status READY + indexed",
+          ks.get("status") == "ready" and ks.get("indexed"),
           f"stage={ks.get('stage')} chunks={ks.get('chunks')}")
+    chunks = ks.get("chunks", 0)
 
     # 7. Knowledge validation (spec §48)
     r = s1.post(f"{BASE}/api/agents/{agent_id}/validate-knowledge", headers=H_A, timeout=60)

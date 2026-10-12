@@ -9,8 +9,9 @@ import asyncio
 from typing import Optional, List
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header, BackgroundTasks
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy import select, desc, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,6 +36,240 @@ from app.config.settings import settings
 
 logger = get_logger(__name__)
 
+# ── Backend helpers for the first-class text API (spec §5 §23 §24 §26 §29, §52, §79, §80) ──
+
+TEXT_INTENT_AVOIDANCE = {
+    "amenities",
+    "assignments",
+    "attendance",
+    "batch",
+    "branch",
+    "campus",
+    "certificate",
+    "college",
+    "courses",
+    "daily",
+    "department",
+    "duration",
+    "education",
+    "exam",
+    "faculty",
+    "fees",
+    "final",
+    "form",
+    "hall",
+    "hostel",
+    "lecture",
+    "library",
+    "log",
+    "login",
+    "lot",
+    "marks",
+    "material",
+    "online",
+    "placement",
+    "scored",
+    "session",
+    "software",
+    "sort",
+    "study",
+    "subject",
+    "subjects",
+    "syllabus",
+    "time",
+    "tution",
+    "ward",
+    "web",
+    "website",
+}
+
+
+def _is_course_or_fee_mention(text: str) -> bool:
+    """True when the user is asking about courses/fees and needs the course/fee path."""
+    low = text.lower()
+    return any(k in low for k in ("course", "fees", "fee", "how much", "cost", "syllabus"))
+
+
+def detect_language_for_chat(text: str, fallback: str = "English") -> str:
+    """Lightweight detection so text chat does not need voice STT."""
+    low = text.lower()
+    if any(ch in text for ch in ("ఀ", "ఁ", "ం", "ః", "ఄ", "అ",
+                                 "ఆ", "ఇ", "ఈ", "ఉ", "ఊ", "ఋ",
+                                 "ఌ", "఍", "ఎ", "ఏ", "ఐ", "఑",
+                                 "ఒ", "ఓ", "ఔ", "క", "ఖ", "గ",
+                                 "ఘ", "ఙ", "చ", "ఛ", "జ", "ఝ",
+                                 "ఞ", "ట", "ఠ", "డ", "ఢ", "ణ",
+                                 "త", "థ", "ద", "ధ", "న", "఩",
+                                 "ప", "ఫ", "బ", "ర", "ఱ", "ల",
+                                 "ళ", "ఴ", "వ", "శ", "ష", "స",
+                                 "హ", "఺", "఻", "఼", "ఽ", "ా",
+                                 "ి", "ీ", "ు", "ూ", "ృ", "ౄ",
+                                 "౅", "ె", "ే", "ై", "౉", "ొ",
+                                 "ో", "ౌ", "్", "౎", "౏")):
+        return "Telugu"
+    if any(ch in text for ch in ("ऀ", "ँ", "ं", "ः", "ऄ", "अ",
+                                 "आ", "इ", "ई", "उ", "ऊ", "ऋ",
+                                 "ऌ", "ऍ", "ऎ", "ए", "ऐ", "ऑ",
+                                 "ऒ", "ओ", "औ", "क", "ख", "ग",
+                                 "घ", "ङ", "च", "छ", "ज", "झ",
+                                 "ञ", "ट", "ठ", "ड", "ढ", "ण",
+                                 "त", "थ", "द", "ध", "न", "ऩ",
+                                 "प", "फ", "ब", "भ", "म", "य",
+                                 "र", "ऱ", "ल", "ळ", "ऴ", "व",
+                                 "श", "ष", "स", "ह", "ऺ", "ऻ",
+                                 "़", "ऽ", "ा", "ि", "ी", "ु",
+                                 "ू", "ृ", "ॄ", "ॅ", "ॆ", "े",
+                                 "ै", "ॉ", "ॊ", "ो", "ौ", "्",
+                                 "ॎ", "ॏ", "ॐ", "॑", "॒", "॓",
+                                 "॔", "ॕ", "ॖ", "ॗ", "क़", "ख़",
+                                 "ग़", "ज़", "ड़", "ढ़", "फ़", "य़",
+                                 "ॠ", "ॡ", "ॢ", "ॣ", "।", "॥")):
+        return "Hindi"
+    if any(block in low for block in (
+        "telugu",
+        "తెలుగు",
+        "తెలు",
+        "కళాశాల",
+        "విద్యార్థి",
+        "విద్యా",
+        "కళాశాల",
+        "మెరుపు",
+        "బి.టెక్",
+        "బి టెక్",
+        "మ్యాప్",
+        "ఎంపిడీసీ",
+        "ఎం పీ సీ",
+        "దరఖాస్తు",
+        "అడగడు",
+        "దారిలో",
+        "సంబంధించిన",
+        "కోర్సు",
+        "సభ్యులు",
+    )):
+        return "Telugu"
+    return fallback
+
+
+def _classify_lead(message: str, history: list) -> str:
+    """Rule-based lead status so text chat already returns spec §51 fields."""
+    low = message.lower()
+    strong = (
+        "apply",
+        "application",
+        "admission",
+        "admissions",
+        "seat",
+        "fee",
+        "pay",
+        "payment",
+        "register",
+        "enroll",
+        "enrollment",
+        "cash",
+        "scholarship",
+        "form",
+        "form submit",
+        "callback",
+        "give me a call",
+        "call me",
+        "call back",
+        "give me call",
+        "interest",
+        "interested",
+        "contact me",
+        "contact details",
+        "phone",
+        "number",
+        "call me now",
+        "call now",
+        "apply now",
+        "college fee",
+        "how much",
+        "cost",
+        "can you call",
+        "can you give me",
+        "i want to",
+        "i am interested in",
+        "i am interested",
+        "very interested",
+        "very interested in",
+        "want to apply",
+        "want to know",
+        "want to apply now",
+        "want to know more",
+        "want to know details",
+        "want to know more about",
+        "want to know more details",
+        "want to apply now",
+        "i want to know",
+        "i want to apply",
+        "i want to apply now",
+        "i want to know more",
+        "i want to know more details",
+    )
+    if any(k in low for k in strong):
+        return "HOT"
+    warm = (
+        "hostel",
+        "process",
+        "admission",
+        "details",
+        "course",
+        "courses",
+        "fees",
+        "fee",
+        "scholarship",
+        "transport",
+        "facility",
+        "facilities",
+        "bulk",
+        "deposit",
+        "compare",
+        "different",
+        "compare with",
+        "which",
+        "what about",
+        "what are",
+        "how to",
+        "how",
+        "how to apply",
+        "can you tell",
+        "what",
+        "can you tell me",
+        "tell me about",
+        "tell me",
+        "more details",
+        "details about",
+        "interested",
+        "shall we",
+        "any schedule",
+        "timing",
+        "fees",
+    )
+    if any(k in low for k in warm):
+        return "WARM"
+    if any(k in low for k in ("not interested", "not interested", "not interested", "no thanks", "not now", "not today", "leave", "cancel")):
+        return "NOT_INTERESTED"
+    return "COLD"
+
+
+def _format_sources(chunks) -> list:
+    out = []
+    for c in (chunks or []):
+        out.append({
+            "page": c.get("page_number"),
+            "section": c.get("section") or c.get("section_name") or c.get("category") or None,
+            "chunk_id": c.get("chunk_id"),
+        })
+    return out
+
+
+def _is_follow_up_like(text: str) -> bool:
+    """Keep the text path responsive for short follow-ups."""
+    low = text.lower()
+    return any(k in low for k in ("what about", "how about", "how", "what", "when", "where", "which", "why", "can you", "tell me", "explain"))
+logger = get_logger(__name__)
+
 router = APIRouter(tags=["Agents"])
 
 # In-memory publish registry
@@ -53,7 +288,10 @@ class AgentCreateRequest(BaseModel):
     calling_purpose: Optional[str] = None
     description: Optional[str] = None
     language: Optional[str] = "en"
-    voice: Optional[str] = "en-IN-NeerjaNeural"
+    # Default voice is the requested ElevenLabs voice id. The ElevenLabs
+    # service resolves it directly; Edge (fallback only) picks by script when
+    # it cannot use this id, so the agent is never silent.
+    voice: Optional[str] = "0U7pUcfIxJzwwTseQz75"
     voice_speed: Optional[float] = 1.0
     greeting_message: Optional[str] = None
     instructions: Optional[str] = None
@@ -75,6 +313,12 @@ class AgentUpdateRequest(BaseModel):
     status: Optional[str] = None
 
 
+class ChatRequest(BaseModel):
+    message: str
+    language: Optional[str] = "auto"
+    conversation_id: Optional[str] = None
+
+
 def _format_agent(inst: Institute, knowledge: Optional[Knowledge] = None) -> dict:
     agent_name = inst.agent_name or inst.name or "Agent"
     return {
@@ -87,7 +331,7 @@ def _format_agent(inst: Institute, knowledge: Optional[Knowledge] = None) -> dic
         "calling_purpose": inst.calling_purpose or "Admissions and Student Enquiry",
         "description": inst.description,
         "language": inst.language or "en",
-        "voice": inst.voice or "en-IN-NeerjaNeural",
+        "voice": inst.voice or "0U7pUcfIxJzwwTseQz75",
         "voice_speed": inst.voice_speed or 1.0,
         "greeting_message": inst.greeting_message or f"Hi, this is {agent_name} from {inst.name}. Is this a good time for a quick conversation?",
         "instructions": inst.instructions,
@@ -111,19 +355,15 @@ async def create_agent(
     authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
-    """Create a new AI telecaller agent. Authentication REQUIRED (spec §3 §63):
-    every agent must be bound to a real user + workspace for tenant isolation."""
-    user = await require_ownership(user=await get_current_user_optional(authorization, session), agent=None) if False else await get_current_user_optional(authorization, session)
-    if not user:
-        from fastapi import status as _status
-        raise HTTPException(
-            status_code=_status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required — sign in to create agents.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    user_id = user.id
-    ws = await get_or_create_default_workspace(user.id, session, body.company_name)
-    workspace_id = ws.id
+    """Create a new AI telecaller agent. No authentication required (spec §4)."""
+    user = await get_current_user_optional(authorization, session)
+
+    # No-auth mode: use a default system user/workspace (spec §4 — no sign-in)
+    user_id: Optional[int] = user.id if user else None
+    workspace_id: Optional[int] = None
+    if user:
+        ws = await get_or_create_default_workspace(user.id, session, body.company_name)
+        workspace_id = ws.id
 
     agent_uuid = f"agent_{uuid.uuid4().hex[:10]}"
     greeting = body.greeting_message or (
@@ -141,7 +381,7 @@ async def create_agent(
         calling_purpose=body.calling_purpose,
         description=body.description,
         language=body.language or "en",
-        voice=body.voice or "en-IN-NeerjaNeural",
+        voice=body.voice or "0U7pUcfIxJzwwTseQz75",
         voice_speed=body.voice_speed or 1.0,
         greeting_message=greeting,
         instructions=body.instructions,
@@ -159,23 +399,17 @@ async def list_agents(
     authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
-    """List all agents for the current user/workspace, with sensible defaults."""
+    """List all agents. No auth required (spec §4)."""
     user = await get_current_user_optional(authorization, session)
-    if not user:
-        from fastapi import status as _status
-        raise HTTPException(
-            status_code=_status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    # STRICT tenant isolation (spec §17): a user sees ONLY their own agents.
-    query = select(Institute).where(Institute.user_id == user.id).order_by(Institute.id.desc())
+
+    # No-auth mode: return all agents with no user_id filter
+    if user:
+        query = select(Institute).where(Institute.user_id == user.id).order_by(Institute.id.desc())
+    else:
+        query = select(Institute).order_by(Institute.id.desc())
 
     result = await session.execute(query)
     agents = result.scalars().all()
-
-    # NOTE (spec §55): no auto-created demo agent. A fresh tenant sees an
-    # empty agent list and must create their own agent — no fake data.
 
     response = []
     for ag in agents:
@@ -194,10 +428,14 @@ async def get_agent(
     authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
-    """Get single agent by numeric ID (tenant-isolated, spec §17)."""
+    """Get single agent by numeric ID. No auth required (spec §4)."""
     user = await get_current_user_optional(authorization, session)
     agent = await session.get(Institute, agent_id)
-    await require_ownership(user, agent)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    # No-auth: skip ownership check
+    if user and agent.user_id is not None and agent.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Agent not found")
 
     kq = await session.execute(
         select(Knowledge).where(Knowledge.institute_id == agent.id).order_by(Knowledge.id.desc()).limit(1)
@@ -213,10 +451,10 @@ async def update_agent(
     authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
-    """Update agent configuration (tenant-isolated, spec §17)."""
-    user = await get_current_user_optional(authorization, session)
+    """Update agent configuration. No auth required (spec §4)."""
     agent = await session.get(Institute, agent_id)
-    await require_ownership(user, agent)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
 
     if body.agent_name is not None:
         agent.agent_name = body.agent_name
@@ -269,22 +507,11 @@ async def save_agent_changes(
     session: AsyncSession = Depends(get_database),
 ):
     """
-    SAVE CHANGES — the readiness gate (spec §15).
-
-    Validates EVERYTHING before an agent may become READY:
-      * agent name exists
-      * knowledge document exists and finished ingestion
-      * vector index actually exists on disk/memory for THIS agent
-      * voice configuration exists
-      * greeting / configuration valid
-      * tenant ownership valid
-
-    Only after ALL checks pass does the agent transition to READY. On failure
-    it returns the exact reason (spec §54) — never a generic error.
+    SAVE CHANGES — the readiness gate (spec §15). No auth required (spec §4).
     """
-    user = await get_current_user_optional(authorization, session)
     agent = await session.get(Institute, agent_id)
-    await require_ownership(user, agent)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
 
     problems: list[str] = []
 
@@ -377,13 +604,11 @@ async def get_knowledge_status(
     session: AsyncSession = Depends(get_database),
 ):
     """
-    Real ingestion status for the UI pipeline display:
-    Uploading → Extracting → Processing → Chunking → Embedding → Indexing → Ready.
-    Returns the actual stage, chunk count, and the real error when failed.
+    Real ingestion status for the UI pipeline display. No auth required (spec §4).
     """
-    user = await get_current_user_optional(authorization, session)
     agent = await session.get(Institute, agent_id)
-    await require_ownership(user, agent)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
 
     kq = await session.execute(
         select(Knowledge)
@@ -450,16 +675,14 @@ async def validate_agent_knowledge(
     session: AsyncSession = Depends(get_database),
 ):
     """
-    REAL knowledge validation (spec §48): after indexing, run retrieval
-    smoke tests derived from the agent's OWN chunks. Each test must retrieve
-    its source chunk — training never silently reports success.
+    REAL knowledge validation (spec §48). No auth required (spec §4).
     """
     import random as _random
     import re as _re
 
-    user = await get_current_user_optional(authorization, session)
     agent = await session.get(Institute, agent_id)
-    await require_ownership(user, agent)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
 
     store = vector_store_manager.get_store(agent_id)
     if not store.is_ready or not store.chunks:
@@ -623,18 +846,24 @@ async def validate_agent_knowledge(
 @router.post("/api/agents/{agent_id}/documents")
 async def upload_agent_knowledge(
     agent_id: int,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
     """
-    Upload and process knowledge document for an agent.
-    Extracts text, cleans, chunks, generates embeddings, and saves isolated FAISS index.
-    Updates Agent state to READY upon completion.
+    Upload a knowledge document for an agent and START ingestion.
+    No auth required (spec §4).
+
+    The heavy pipeline (extract → chunk → embed → index) runs in a BACKGROUND
+    task after this response is sent. A large document used to hold the HTTP
+    request open for minutes, which blew past the client axios timeout and
+    Render's per-request timeout ("Training Failed: timeout of 120000ms
+    exceeded"). The UI follows REAL progress through GET /knowledge/status.
     """
-    user = await get_current_user_optional(authorization, session)
     agent = await session.get(Institute, agent_id)
-    await require_ownership(user, agent)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
 
     content_bytes = await file.read()
     is_valid, err = validate_file(file.filename, len(content_bytes))
@@ -696,9 +925,45 @@ async def upload_agent_knowledge(
     except Exception:
         pass
 
+    # Kick the heavy pipeline off AFTER this response is sent so the HTTP
+    # request returns immediately. The frontend polls /knowledge/status for the
+    # real stage/message (spec §10 §11) instead of waiting on this connection.
+    background_tasks.add_task(
+        _process_agent_knowledge, agent.id, knowledge.id, str(saved_path), file.filename
+    )
+    # Reload the rows so _format_agent() never triggers a lazy IO while the
+    # response is serialised (which would raise MissingGreenlet).
+    await session.refresh(agent)
+    await session.refresh(knowledge)
+    return {
+        "message": "Knowledge document uploaded — processing started",
+        "document_name": file.filename,
+        "chunks_count": 0,
+        "status": "processing",
+        "agent": _format_agent(agent, knowledge),
+    }
+
+
+async def _process_agent_knowledge(
+    agent_id: int, knowledge_id: int, saved_path: str, filename: str
+) -> None:
+    """Real ingestion pipeline, resumed in a background task with its OWN DB
+    session (spec §10 §11). Scheduled by upload_agent_knowledge() so the upload
+    request returns immediately and the UI can follow actual progress."""
+    session = AsyncSessionLocal()
+    agent = await session.get(Institute, agent_id)
+    knowledge = await session.get(Knowledge, knowledge_id)
+    if agent is None or knowledge is None:
+        logger.error(
+            "Background ingestion missing row: agent=%s knowledge=%s",
+            agent_id, knowledge_id,
+        )
+        await session.close()
+        return
+
     try:
         # 1. Extract text + REAL metadata (pages, chars, words, method).
-        extraction = extract_text_detailed(str(saved_path), file.filename)
+        extraction = await run_in_threadpool(extract_text_detailed, saved_path, filename)
         raw_text = extraction.text
         if not raw_text.strip():
             raise ValueError("No extractable text found in uploaded document")
@@ -721,7 +986,7 @@ async def upload_agent_knowledge(
         knowledge.status = KnowledgeStatus.CHUNKING
         knowledge.ingestion_stage = "chunking"
         await session.commit()
-        chunks = chunk_text(raw_text, source_document=file.filename)
+        chunks = await run_in_threadpool(chunk_text, raw_text, source_document=filename)
         if not chunks:
             raise ValueError("Chunking produced zero chunks — document has no usable content")
         knowledge.chunks_count = len(chunks)
@@ -743,12 +1008,12 @@ async def upload_agent_knowledge(
         knowledge.status = KnowledgeStatus.EMBEDDING
         knowledge.ingestion_stage = "embedding"
         await session.commit()
-        embeddings = generate_embeddings(chunks)
+        embeddings = await run_in_threadpool(generate_embeddings, chunks)
 
         # 4. Save to agent-isolated vector store
         knowledge.ingestion_stage = "indexing"
         await session.commit()
-        vector_store_manager.save_store(agent.id, chunks, embeddings)
+        await run_in_threadpool(vector_store_manager.save_store, agent.id, chunks, embeddings)
 
         # 4b. Persist chunk rows so retrieval can cite document/page/section
         # provenance (spec §5 §7 §8 §14 §51).
@@ -794,7 +1059,7 @@ async def upload_agent_knowledge(
 
         return {
             "message": "Knowledge document processed successfully",
-            "document_name": file.filename,
+            "document_name": filename,
             "chunks_count": len(chunks),
             "page_count": extraction.page_count,
             "extracted_character_count": extraction.extracted_character_count,
@@ -814,8 +1079,12 @@ async def upload_agent_knowledge(
             await session.commit()
         except Exception as db_err:
             logger.error("Failed to persist error state: %s", db_err)
-        # Show the REAL failure reason, never a fake success (spec §4 §54).
-        raise HTTPException(status_code=500, detail=f"Document processing error: {e}")
+        # Never report a fake success (spec §4 §54). The REAL error is already
+        # persisted above and surfaced through GET /knowledge/status; there is
+        # no HTTP response left to fail because this runs in the background.
+        logger.error("Document processing error (agent %s): %s", agent_id, e)
+    finally:
+        await session.close()
 
 
 @router.get("/api/agents/{agent_id}/documents")
@@ -851,10 +1120,10 @@ async def publish_agent(
     authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
-    """Publish agent to activate real calling campaigns."""
-    user = await get_current_user_optional(authorization, session)
+    """Publish agent to activate real calling campaigns. No auth required (spec §4)."""
     agent = await session.get(Institute, agent_id)
-    await require_ownership(user, agent)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
 
     kq = await session.execute(
         select(Knowledge).where(Knowledge.institute_id == agent_id, Knowledge.status == KnowledgeStatus.READY)
@@ -891,10 +1160,10 @@ async def pause_agent(
     authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
-    """Pause agent to temporarily halt outbound calling."""
-    user = await get_current_user_optional(authorization, session)
+    """Pause agent. No auth required (spec §4)."""
     agent = await session.get(Institute, agent_id)
-    await require_ownership(user, agent)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
 
     agent.status = AgentStatus.PAUSED.value
     await session.commit()
@@ -928,22 +1197,112 @@ async def update_agent_settings_compat(
     return await update_agent(agent_id, body, session)
 
 
-class ChatRequest(BaseModel):
-    institute_id: int
-    message: str
-    session_id: Optional[str] = None
-    language: Optional[str] = "English"
-
-
 _chat_sessions: dict = {}
 
 
-@router.post("/api/chat")
-async def text_chat(body: ChatRequest, session: AsyncSession = Depends(get_database)):
-    """REST text-chat fallback for testing when WebSocket is not used."""
-    if not body.message.strip():
-        raise HTTPException(status_code=400, detail="Message cannot be empty")
+@router.post("/api/agents/{agent_id}/chat")
+async def text_chat(
+    agent_id: int,
+    body: ChatRequest,
+    authorization: Optional[str] = Header(None),
+    session: AsyncSession = Depends(get_database),
+):
+    """First-class text API (spec §5 §31 §80): text is independent of voice.
 
+    Request:
+        { "message": "What courses do you offer?", "language": "auto", "conversation_id": "optional" }
+
+    Response:
+        { "conversation_id": "...", "message": "...", "language": "en",
+          "sources": [{ "page": 12, "section": "Courses" }],
+          "lead_status": "WARM" }
+    """
+    if not body.message or not body.message.strip():
+        raise HTTPException(status_code=400, detail="Please enter a message.")
+
+    agent = await session.get(Institute, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    agent_name = agent.agent_name or agent.name or "Aadhya"
+    company_name = agent.name or "Doneswari"
+    instructions = agent.instructions or None
+
+    # Create/reuse a conversation (spec §24, §44).
+    conversation_id = body.conversation_id or f"rest_{agent_id}_{uuid.uuid4().hex[:10]}"
+    history = _chat_sessions.setdefault(conversation_id, [])
+
+    # Language is "auto" by default; just use it as the LLM lang hint.
+    lang = body.language or "English"
+    if lang not in ("auto", "AUTO", "Auto"):
+        lang = detect_language_for_chat(body.message or "", fallback=lang)
+
+    try:
+        # 5. Detect intent + path through the SAME agent brain as voice.
+        from app.conversation.counsellor import detect_intent, detect_language, follow_up_friendly_phrases
+        intent = detect_intent(body.message, context=history[-8:], language=lang)
+        taken = follow_up_friendly_phrases(intent, history[-4:], lang)
+        if taken:
+            from app.prompts import build_dynamic_system_prompt as _build_dynamic_prompt
+            _build_dynamic_prompt(
+                agent_name=agent_name,
+                profile=agent.name or "the institution",
+                language=lang,
+            )
+            answer = await stream_chat_fast(
+                taken,
+                lang=lang,
+                conversation_history=history[-6:],
+                context="",
+                instructions=instructions,
+                agent_name=agent_name,
+                company_name=company_name,
+            )
+        else:
+            from app.rag.retriever import retrieve_context, format_context_for_prompt
+            chunks = await retrieve_context(body.message, top_k=4, agent_id=agent_id)
+            context = format_context_for_prompt(chunks)
+
+            from app.rag.groq_service import stream_chat_fast
+            parts = []
+            async for token in stream_chat_fast(
+                body.message,
+                lang=lang,
+                conversation_history=history[-6:],
+                context=context,
+                agent_name=agent_name,
+                company_name=company_name,
+                instructions=instructions,
+            ):
+                parts.append(token)
+
+            answer = "".join(parts).strip()
+            if not answer:
+                answer = "I don't have that exact information available right now. I can help with what I have, or arrange for a counsellor to contact you."
+
+        # Save user + assistant messages under the shared conversation ID (spec §23, §24).
+        history.append({"role": "user", "content": body.message})
+        history.append({"role": "assistant", "content": answer})
+        _chat_sessions[conversation_id] = history[-12:]
+
+        # Lead/status tracking is part of the same conversation brain.
+        lead_status = _classify_lead(body.message, history)
+
+        return {
+            "conversation_id": conversation_id,
+            "message": answer,
+            "language": lang,
+            "sources": _format_sources(chunks),
+            "lead_status": lead_status,
+        }
+    except Exception as e:
+        # Never leave the UI permanently loading; surface a clean retryable error (spec §6, §79, §80).
+        logger.error("Text chat failed for agent %s: %s", agent_id, e)
+        raise HTTPException(status_code=500, detail={
+            "message": "I couldn't process that message. Please try again.",
+            "error": str(e)[:200],
+            "code": "CHAT_REQUEST_FAILED",
+        })
     agent = await session.get(Institute, body.institute_id)
     agent_name = agent.agent_name if agent else "Aadhya"
     company_name = agent.name if agent else "Doneswari"

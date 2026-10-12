@@ -77,20 +77,20 @@ export default function Campaign() {
     <div className="max-w-4xl mx-auto px-6 py-8">
       <div className="flex items-start justify-between mb-6">
         <div>
-          <h1 className="text-xl font-bold text-[var(--gray-800)]">Calling Campaign</h1>
+          <h1 className="text-xl font-semibold text-[var(--gray-800)] tracking-tight">Calling Campaign</h1>
           <p className="text-sm text-[var(--gray-500)] mt-0.5">
             {status.agent_name} · {running ? "Queue is live" : "Queue is idle"}
           </p>
         </div>
         <div className="flex gap-2">
           {running ? (
-            <button onClick={handlePause} className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-lg px-4 py-2.5">
+            <button onClick={handlePause} className="flex items-center gap-2 text-orange-700 bg-orange-50/70 hover:bg-orange-100 border border-orange-200 text-sm font-semibold rounded-xl px-4 py-2.5">
               <Pause className="w-4 h-4" /> Pause Calling
             </button>
           ) : (
             <button
               onClick={handleStart}
-              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg px-4 py-2.5"
+              className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] shadow-[0_8px_24px_rgba(14,147,232,0.3)] text-white text-sm font-semibold rounded-xl px-4 py-2.5"
             >
               <Play className="w-4 h-4" /> Start Calling
             </button>
@@ -98,7 +98,7 @@ export default function Campaign() {
           <button
             onClick={handleSimulate}
             title="Labelled dry-run: the agent's real RAG+LLM runtime with an LLM role-playing the student (no phone call)"
-            className="flex items-center gap-2 bg-white hover:bg-[var(--gray-50)] text-[var(--gray-700)] border border-[var(--gray-200)] text-sm font-semibold rounded-lg px-4 py-2.5"
+            className="flex items-center gap-2 glass hover:bg-white/80 text-[var(--gray-700)] text-sm font-semibold rounded-xl px-4 py-2.5"
           >
             <Zap className="w-4 h-4" /> Dry-Run (Demo)
           </button>
@@ -106,7 +106,7 @@ export default function Campaign() {
       </div>
 
       {status.agent_status !== "published" && status.agent_status !== "ready" && (
-        <div className="mb-5 text-[13px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5">
+        <div className="mb-5 text-[13px] text-amber-700 bg-amber-50/70 border border-amber-200 rounded-xl px-4 py-2.5">
           Agent must be <strong>published</strong> before starting real calls. Current status: <strong>{status.agent_status}</strong> — publish from the Overview page.
         </div>
       )}
@@ -141,10 +141,10 @@ export default function Campaign() {
       <div className="glass rounded-[var(--radius-md)] p-5 shadow-[var(--shadow-sm)]">
         <h2 className="text-[15px] font-semibold text-[var(--gray-800)] mb-4">Results So Far</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
-          <MiniStat label="Interested" value={status.interested} cls="bg-emerald-50 text-emerald-700 border border-emerald-200" />
-          <MiniStat label="Not Interested" value={status.not_interested} cls="bg-red-50 text-red-700 border border-red-200" />
-          <MiniStat label="Needs Follow-up" value={status.follow_up_required} cls="bg-blue-50 text-blue-700 border border-blue-200" />
-          <MiniStat label="Callbacks" value={status.callback_requested} cls="bg-violet-50 text-violet-700 border border-violet-200" />
+          <MiniStat label="Interested" value={status.interested} cls="bg-emerald-50/70 text-emerald-700 border border-emerald-200" />
+          <MiniStat label="Not Interested" value={status.not_interested} cls="bg-red-50/70 text-red-700 border border-red-200" />
+          <MiniStat label="Needs Follow-up" value={status.follow_up_required} cls="bg-blue-50/70 text-blue-700 border border-blue-200" />
+          <MiniStat label="Callbacks" value={status.callback_requested} cls="bg-violet-50/70 text-violet-700 border border-violet-200" />
         </div>
       </div>
 
@@ -158,10 +158,10 @@ export default function Campaign() {
 function BigStat({ icon: Icon, label, value, accent }: { icon: React.ComponentType<{ className?: string }>; label: string; value: number; accent: string }) {
   return (
     <div className="glass rounded-[var(--radius-md)] p-4 shadow-[var(--shadow-sm)]">
-      <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2.5 ${accent}`}>
+      <div className={`w-8 h-8 rounded-xl flex items-center justify-center mb-2.5 ${accent}`}>
         <Icon className="w-4 h-4" />
       </div>
-      <div className="text-2xl font-bold text-[var(--gray-800)]">{value}</div>
+      <div className="text-2xl font-semibold text-[var(--gray-800)]">{value}</div>
       <div className="text-[11.5px] text-[var(--gray-500)] mt-0.5">{label}</div>
     </div>
   );
@@ -169,8 +169,8 @@ function BigStat({ icon: Icon, label, value, accent }: { icon: React.ComponentTy
 
 function MiniStat({ label, value, cls }: { label: string; value: number; cls: string }) {
   return (
-    <div className={`rounded-lg px-4 py-3 text-center ${cls}`}>
-      <div className="text-xl font-bold">{value}</div>
+    <div className={`rounded-xl px-4 py-3 text-center ${cls}`}>
+      <div className="text-xl font-semibold">{value}</div>
       <div className="text-[11.5px] mt-0.5">{label}</div>
     </div>
   );

@@ -150,7 +150,7 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
               const f = e.dataTransfer.files?.[0];
               if (f) setFile(f);
             }}
-            className="border-2 border-dashed border-[var(--gray-300)] hover:border-[var(--sky-400)] rounded-[var(--radius-md)] py-6 flex flex-col items-center justify-center cursor-pointer transition-colors bg-white/50"
+            className="border-2 border-dashed border-[var(--gray-300)] hover:border-[var(--sky-400)] rounded-[var(--radius-md)] py-6 flex flex-col items-center justify-center cursor-pointer transition-colors bg-white/40 backdrop-blur-sm"
           >
             {file ? (
               <div className="text-sm text-[var(--gray-700)]">{file.name} — {(file.size / 1024).toFixed(0)} KB</div>
@@ -176,12 +176,12 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
             <button
               onClick={handleTrain}
               disabled={!file}
-              className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] disabled:opacity-50 text-white text-sm font-semibold rounded-lg px-5 py-2.5"
+              className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] shadow-[0_8px_24px_rgba(14,147,232,0.3)] disabled:opacity-50 disabled:shadow-none text-white text-sm font-semibold rounded-xl px-5 py-2.5"
             >
               <GraduationCap className="w-4 h-4" /> {t("train.trainAgent")}
             </button>
             {phase === "failed" && (
-              <button onClick={reset} className="text-sm font-medium text-[var(--gray-600)] bg-[var(--gray-50)] hover:bg-[var(--gray-100)] border border-[var(--gray-200)] rounded-lg px-4 py-2.5">
+              <button onClick={reset} className="glass hover:bg-white/80 text-[var(--gray-700)] text-sm font-medium rounded-xl px-4 py-2.5">
                 Reset
               </button>
             )}
@@ -234,7 +234,7 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
             <Stat label="Validation" value={validation ? `${validation.pass_rate}%` : "—"} />
           </div>
           {validation && (
-            <div className={`text-[12.5px] rounded-lg px-3.5 py-2.5 border ${validation.validated ? "text-emerald-800 bg-emerald-50 border-emerald-200" : "text-amber-800 bg-amber-50 border-amber-200"}`}>
+            <div className={`text-[12.5px] rounded-xl px-3.5 py-2.5 border ${validation.validated ? "text-emerald-700 bg-emerald-50/70 border-emerald-200" : "text-amber-700 bg-amber-50/70 border-amber-200"}`}>
               <div className="flex items-center gap-1.5 font-semibold mb-1">
                 {validation.validated ? <ShieldCheck className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
                 {validation.tests_passed}/{validation.tests_total} retrieval tests passed
@@ -250,7 +250,7 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
 
       {/* REAL error (spec §78) */}
       {phase === "failed" && (
-        <div className="flex items-start gap-2 text-[12.5px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-3.5 py-2.5">
+        <div className="flex items-start gap-2 text-[12.5px] text-red-700 bg-red-50/70 border border-red-200 rounded-xl px-3.5 py-2.5">
           <XCircle className="w-4 h-4 mt-0.5 shrink-0" />
           <span><strong>{t("train.failed")}:</strong> {error}</span>
         </div>
@@ -261,8 +261,8 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="bg-white border border-[var(--gray-100)] rounded-lg px-3.5 py-2.5">
-      <div className="text-[15px] font-bold text-[var(--gray-800)] truncate">{value}</div>
+    <div className="bg-white/70 backdrop-blur-md border hairline rounded-xl px-3.5 py-2.5">
+      <div className="text-[15px] font-semibold text-[var(--gray-800)] truncate">{value}</div>
       <div className="text-[11px] text-[var(--gray-500)]">{label}</div>
     </div>
   );

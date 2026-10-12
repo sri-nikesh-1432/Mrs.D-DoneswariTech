@@ -31,20 +31,15 @@ export default function TopBar({ agentId, agentName = "Mrs.D", status = "draft" 
 
   return (
     <header
-      className="w-full flex items-center justify-between px-5 py-3 shrink-0 z-30"
-      style={{
-        background: "rgba(255,255,255,0.82)",
-        backdropFilter: "blur(20px)",
-        borderBottom: "1px solid rgba(186,230,253,0.5)",
-        boxShadow: "0 1px 8px rgba(14,165,233,0.07)",
-      }}
+      className="w-full flex items-center justify-between px-5 py-3 shrink-0 z-30 glass"
+      style={{ borderBottom: "1px solid rgba(34,33,28,0.07)" }}
     >
       {/* Logo + Agent Name */}
       <div className="flex items-center gap-3">
         {/* Mrs.D Logo Mark */}
         <div
-          className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white text-sm shadow-sm"
-          style={{ background: "linear-gradient(135deg, #38bdf8, #0284c7)" }}
+          className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white text-sm shadow-[0_2px_10px_rgba(7,115,194,0.35)]"
+          style={{ background: "linear-gradient(135deg, #3fb1f5, #0773c2)" }}
         >
           M
         </div>
@@ -55,7 +50,7 @@ export default function TopBar({ agentId, agentName = "Mrs.D", status = "draft" 
 
         {/* Status badge */}
         <span
-          className={`hidden sm:flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border ${sc.bg} ${sc.text}`}
+          className={`hidden sm:flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border backdrop-blur-md ${sc.bg} ${sc.text}`}
         >
           <span className={`w-1.5 h-1.5 rounded-full ${sc.dot} ${status === "published" ? "animate-pulse" : ""}`} />
           {sc.label}
@@ -74,10 +69,10 @@ export default function TopBar({ agentId, agentName = "Mrs.D", status = "draft" 
               key={item.label}
               to={item.to}
               className={`
-                flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all duration-200
+                flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-xs font-medium transition-all duration-200
                 ${(active || agentActive)
-                  ? "bg-sky-100 text-sky-700"
-                  : "text-gray-500 hover:text-sky-600 hover:bg-sky-50"}
+                  ? "bg-[var(--sky-100)] text-[var(--sky-700)]"
+                  : "text-gray-500 hover:text-[var(--sky-600)] hover:bg-white/60"}
               `}
             >
               {item.icon}

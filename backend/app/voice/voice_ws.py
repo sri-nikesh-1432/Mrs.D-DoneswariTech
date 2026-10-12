@@ -45,6 +45,7 @@ from app.rag.groq_service import generate_response, stream_chat_fast
 from app.rag.retriever import retrieve_context, format_context_for_prompt
 from app.rag.json_retriever import get_json_retriever
 from app.tts.edge_tts_service import get_tts_service
+from app.tts.elevenlabs_service import get_elevenlabs_service
 from app.roman_telugu import looks_roman_telugu, transliterate_roman_telugu
 from app.reports.call_report_service import generate_report_data
 from app.conversation.counsellor import (

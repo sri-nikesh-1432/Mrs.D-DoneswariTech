@@ -81,20 +81,15 @@ async def require_ownership(
     agent: Optional[Institute],
 ) -> Institute:
     """
-    Strict tenant-isolation gate (spec §17 §63).
-
-    Raises 401 when unauthenticated and 404 (never 403 — do not leak
-    existence) when the agent does not belong to the authenticated user's
-    workspace. Every agent-scoped route MUST call this before returning data.
+    Ownership gate — no-auth mode: when no user is present, allow access
+    to any agent (spec §4: no sign-in, no sign-up required).
+    Still raises 404 when the agent does not exist.
     """
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    # No-auth mode: skip user ownership check
+    if not user:
+        return agent
     if agent.user_id is not None and agent.user_id != user.id:
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent

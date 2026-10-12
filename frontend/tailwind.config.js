@@ -4,37 +4,33 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        display: ["Playfair Display", "serif"],
-        body: ["Inter", "sans-serif"],
+        display: ["Instrument Serif", "Georgia", "serif"],
+        body: ["Inter", "-apple-system", "sans-serif"],
       },
       colors: {
-        // Cognac — warm brand brown
-        primary: {
-          50: "#fbf3ee", 100: "#f5e2d6", 200: "#e9c4ac",
-          300: "#d9a180", 400: "#c07b52", 500: "#a85a32",
-          600: "#8f4426", 700: "#75341d", 800: "#5c2918",
-          900: "#452012",
-        },
-        // Sky blue — fresh accent
+        // Sky blue — cool accent (ElevenLabs × Apple)
         secondary: {
-          50: "#f0f9fe", 100: "#dcf1fb", 200: "#b8e2f7",
-          300: "#8cd0f0", 400: "#5ab8e4", 500: "#3a9fd6",
-          600: "#2b82b5", 700: "#256992", 800: "#225474",
-          900: "#1f465f",
+          50: "#eef7ff", 100: "#def0fe", 200: "#b9e2fd",
+          300: "#83cdfa", 400: "#3fb1f5", 500: "#0e93e8",
+          600: "#0773c2", 700: "#0a5c9c", 800: "#0d4470",
+          900: "#0d304f",
         },
         // Cream / beige — warm light surfaces
         cream: {
-          50: "#fffdf8", 100: "#fbf6ec", 200: "#f5edde",
-          300: "#f0e6d1", 400: "#e8dcc4", 500: "#ded0b2",
-          600: "#c9b896",
+          50: "#fffdf9", 100: "#fbf9f4", 200: "#f4f0e7",
+          300: "#ece6d8", 400: "#e0d8c4", 500: "#cfc4a9",
+          600: "#b4a57f",
         },
-        // Warm ink — dark text
+        // Warm ink — dark text (near black)
         ink: {
-          DEFAULT: "#43301f",
-          soft: "#5c4632",
-          muted: "#8a7157",
-          faint: "#9c8369",
+          DEFAULT: "#22211c",
+          soft: "#3b3931",
+          muted: "#5d594f",
+          faint: "#807b6e",
         },
+      },
+      borderRadius: {
+        "4xl": "2rem",
       },
       animation: {
         "float": "float 6s ease-in-out infinite",

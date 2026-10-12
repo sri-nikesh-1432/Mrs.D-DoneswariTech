@@ -2,11 +2,14 @@ import React, { useEffect, useRef } from "react";
 import type { VoiceState } from "../types";
 
 interface VoiceWaveformProps {
-  state: VoiceState;
+  state?: VoiceState;
+  active?: boolean;
   amplitude?: number;   // 0..1 REAL level from the Web Audio analyser
+  levelsRef?: React.RefObject<ArrayLike<number> | null>;
   barCount?: number;
   color?: string;
   height?: number;
+  className?: string;
 }
 
 /**
@@ -18,16 +21,19 @@ interface VoiceWaveformProps {
  *   - silence renders flat/minimal exactly as silence sounds
  */
 export default function VoiceWaveform({
-  state,
+  state = "idle",
+  active: activeProp,
   amplitude = 0,
+  levelsRef,
   barCount = 40,
   color = "#0ea5e9",
   height = 56,
+  className,
 }: VoiceWaveformProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
 
-  const active = state === "listening" || state === "speaking" || state === "greeting";
+  const active = activeProp ?? (state === "listening" || state === "speaking" || state === "greeting");
 
   // Ring buffer of REAL measured amplitudes (scrolled over time).
   const historyRef = useRef<number[]>(new Array(barCount).fill(0));
@@ -57,7 +63,12 @@ export default function VoiceWaveform({
       if (ts - lastPush >= PUSH_EVERY_MS) {
         lastPush = ts;
         const hist = historyRef.current;
-        hist.push(ampRef.current);
+        const samples = levelsRef?.current;
+        let sampleLevel = 0;
+        if (samples) {
+          for (let i = 0; i < samples.length; i++) sampleLevel = Math.max(sampleLevel, Math.abs(samples[i]));
+        }
+        hist.push(Math.max(ampRef.current, Math.min(1, sampleLevel)));
         if (hist.length > barCount) hist.shift();
       }
 
@@ -86,13 +97,13 @@ export default function VoiceWaveform({
 
     animRef.current = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(animRef.current);
-  }, [barCount, color, height, active]);
+  }, [barCount, color, height, active, levelsRef]);
 
   return (
     <canvas
       ref={canvasRef}
       style={{ width: "100%", height: `${height}px` }}
-      className="w-full"
+      className={`w-full ${className ?? ""}`}
     />
   );
 }

@@ -358,6 +358,7 @@ from app.api.agent_routes import router as agent_router
 from app.api.student_routes import router as student_router
 from app.api.campaign_routes import router as campaign_router
 from app.api.calls_routes import router as calls_router
+from app.api.websocket_routes import router as websocket_router
 
 app.include_router(auth_router)
 app.include_router(knowledge_router)
@@ -372,6 +373,7 @@ app.include_router(agent_router)
 app.include_router(student_router)
 app.include_router(campaign_router)
 app.include_router(calls_router)
+app.include_router(websocket_router)
 
 
 @app.get("/", tags=["Root"])

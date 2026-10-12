@@ -621,8 +621,19 @@ _tts_service: Optional[EdgeTTSService] = None
 
 
 def get_tts_service() -> EdgeTTSService:
-    """Get or create global TTS service instance."""
+    """Get or create global TTS service instance.
+
+    When an ElevenLabs API key is configured, the ElevenLabs service is
+    returned so the voice agent speaks with the premium ElevenLabs voice;
+    otherwise the Edge-TTS service is used.
+    """
     global _tts_service
+    from app.config.settings import settings as _settings
+
+    if _settings.elevenlabs_enabled:
+        from app.tts.elevenlabs_service import get_elevenlabs_service
+        return get_elevenlabs_service()
+
     if _tts_service is None:
         _tts_service = EdgeTTSService()
     return _tts_service

@@ -19,7 +19,7 @@ export default function TextInput({
   disabled = false,
 }: TextInputProps) {
   const [value, setValue] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const listening = voiceState === "listening";
 
@@ -31,7 +31,7 @@ export default function TextInput({
     inputRef.current?.focus();
   };
 
-  const handleKey = (e: React.KeyboardEvent) => {
+  const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -82,16 +82,17 @@ export default function TextInput({
         )}
       </motion.button>
 
-      {/* Text input — always typable, even while the mic listens */}
-      <input
+      {/* Text input — always typable, even while the mic listens
+          Multiline textarea, Enter→send, Shift+Enter→newline */}
+      <textarea
         ref={inputRef}
-        type="text"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKey}
-        placeholder={listening ? "Listening — you can also type here…" : "Type a message…"}
+        placeholder={listening ? "Listening — you can also type here…" : "Type a message… (Enter to send, Shift+Enter for a new line)"}
         disabled={disabled}
-        className="flex-1 bg-transparent text-sm text-gray-700 placeholder-gray-400 outline-none disabled:cursor-not-allowed"
+        style={{ minHeight: "44px", resize: "vertical", maxHeight: "160px" }}
+        className="flex-1 bg-transparent text-sm text-gray-700 placeholder-gray-400 outline-none disabled:cursor-not-allowed whitespace-pre-wrap"
       />
 
       {/* Send button */}

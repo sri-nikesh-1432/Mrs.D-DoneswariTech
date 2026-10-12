@@ -6,20 +6,27 @@
 [build.environment]
   NODE_VERSION = "20"
 
-# Production build must talk to the Render backend (REST + WebSocket). This is
-# baked in at BUILD time by Vite (VITE_API_URL / VITE_WS_URL in api.ts). If you
-# override it from the Netlify UI, that value wins.
+# Production build must talk to the DLLP deploy (Netlify) backend.
+# Vite bakes this value in at build time; if you override it in the Netlify
+# UI, that value wins — so keep it consistent with ALLOWED_ORIGINS below.
 [context.production.environment]
-  VITE_API_URL = "https://d-tech-pid6.onrender.com"
+  VITE_API_URL = "https://dllp.netlify.app"
+  VITE_WS_URL = "wss://dllp.netlify.app"
 
-# SPA fallback: all client-side routes (e.g. /signup, /agents) serve index.html.
+# Netlify site origin MUST be listed in backend ALLOWED_ORIGINS (settings.py
+# and Render env) for cross-origin REST + voice WebSocket.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    # The voice WebSocket is upgraded cross-origin; CORS must support it.
+    Access-Control-Allow-Origin = "https://dllp.netlify.app"
+    Access-Control-Allow-Methods = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+    Access-Control-Allow-Headers = "Content-Type,Authorization,X-Requested-With,Accept"
+    Access-Control-Max-Age = "86400"
+    Vary = "Origin"
+
+# SPA fallback: all client-side routes (e.g. /agents, /settings) serve index.html.
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
-
-# Do not cache the service-worker-free index so deploys always serve fresh JS.
-[[headers]]
-  for = "/index.html"
-  [headers.values]
-    Cache-Control = "no-cache"

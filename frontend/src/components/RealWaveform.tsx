@@ -29,7 +29,7 @@ export default function RealWaveform({
   source,
   amplitude,
   active,
-  color = "#0ea5e9",
+  color = "#0e93e8",
   height = 56,
   barCount = 40,
 }: RealWaveformProps) {

@@ -4,18 +4,27 @@ Application settings for Mrs. D AI Admission Campaign Platform.
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, field_validator
 
 
 class Settings(BaseSettings):
     """Application configuration settings."""
     
     # Application
-    APP_NAME: str = "Mrs. D - AI Admission Campaign Platform"
-    APP_VERSION: str = "1.0.0"
+    APP_NAME: str = "Doneswari AI Telecaller Platform"
+    APP_VERSION: str = "2.0.0"
     DEBUG: bool = Field(default=False, env="DEBUG")
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def coerce_debug(cls, v: Any) -> bool:
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            return v.lower() in ("1", "true", "yes", "on")
+        return bool(v)
     
     # Server
     HOST: str = Field(default="localhost", env="HOST")
@@ -29,11 +38,11 @@ class Settings(BaseSettings):
     
     # AI / Groq
     GROQ_API_KEY: str = Field(default="", env="GROQ_API_KEY")
-    # llama-3.1-8b-instant is Groq's fastest hosted model — lowest TTFT — which
-    # is what keeps a voice turn inside the <700ms response-latency KPI. The
-    # GPT-OSS models are kept as fallbacks for better quality when rate limits
-    # kick in (free tier caps tokens per model per day).
-    GROQ_MODEL: str = Field(default="llama-3.1-8b-instant", env="GROQ_MODEL")
+    # openai/gpt-oss-20b is Groq's fastest production model — lowest TTFT —
+    # which keeps a voice turn inside the <700ms response-latency KPI. The
+    # GPT-OSS-120B is kept as a fallback for better quality when rate limits
+    # kick in (per-model daily caps on the free tier).
+    GROQ_MODEL: str = Field(default="openai/gpt-oss-20b", env="GROQ_MODEL")
     # Whisper model for the real-time VAD → MediaRecorder → STT pipeline.
     # whisper-large-v3-turbo auto-detects Telugu/Hindi/Tamil/Kannada/Malayalam
     # so ANY voice the VAD catches is transcribed in the right language.
@@ -42,7 +51,7 @@ class Settings(BaseSettings):
     # (Groq's free tier caps tokens per DAY per model — a 429 on one model
     # must not end the call; the next model keeps Mrs. D talking).
     GROQ_FALLBACK_MODELS: list = Field(
-        default=["openai/gpt-oss-20b", "llama-3.3-70b-versatile", "llama3-8b-8192", "gemma2-9b-it"],
+        default=["openai/gpt-oss-120b"],
         env="GROQ_FALLBACK_MODELS",
     )
     
@@ -75,16 +84,50 @@ class Settings(BaseSettings):
     LOGS_DIR: Path = Field(default_factory=lambda: (Path(__file__).parent.parent.parent / "logs").resolve())
     STATIC_DIR: Path = Field(default_factory=lambda: (Path(__file__).parent.parent.parent / "static").resolve())
     AUDIO_DIR: Path = Field(default_factory=lambda: (Path(__file__).parent.parent.parent / "static" / "audio").resolve())
-    
-# Voice — warm, professional Telugu Indian female neural voice (Mrs. D).
-    # te-IN-ShrutiNeural is the Telugu female voice. Rate +10% ≈ 1.1x for a
-    # natural, calm counsellor pace (not robotic, not rushed).
-    TTS_VOICE: str = Field(default="te-IN-ShrutiNeural", env="TTS_VOICE")
+
+    # Voice — warm, professional Indian female neural voice.
+    TTS_VOICE: str = Field(default="en-IN-NeerjaNeural", env="TTS_VOICE")
     TTS_RATE: str = Field(default="+14%", env="TTS_RATE")
     TTS_VOLUME: str = Field(default="+0%", env="TTS_VOLUME")
     MAX_CONCURRENT_CALLS: int = Field(default=1, env="MAX_CONCURRENT_CALLS")
     CALL_RETRY_ATTEMPTS: int = Field(default=3, env="CALL_RETRY_ATTEMPTS")
     CALL_TIMEOUT_SECONDS: int = Field(default=300, env="CALL_TIMEOUT_SECONDS")
+
+    # ElevenLabs premium TTS — when the API key is set, the voice agent
+    # speaks with an ElevenLabs voice instead of Edge TTS.
+    ELEVENLABS_API_KEY: str = Field(default="", env="ELEVENLABS_API_KEY")
+    ELEVENLABS_VOICE_ID: str = Field(
+        default="0U7pUcfIxJzwwTseQz75", env="ELEVENLABS_VOICE_ID"
+    )
+    ELEVENLABS_MODEL_ID: str = Field(
+        default="eleven_turbo_v2_5", env="ELEVENLABS_MODEL_ID"
+    )
+    # Fallback premade voice used when the chosen voice is not permitted for
+    # this ElevenLabs plan (a library voice on a Free account returns HTTP 402
+    # "paid_plan_required"). Premade voices are always allowed on every plan.
+    # Bella — Professional, Bright, Warm (female).
+    ELEVENLABS_FALLBACK_VOICE_ID: str = Field(
+        default="hpp4J3VqNfWAUOO0d1Us", env="ELEVENLABS_FALLBACK_VOICE_ID"
+    )
+    # Last resort: if ElevenLabs returns no audio at all, fall back to Edge TTS
+    # so the voice agent is never silent.
+    ELEVENLABS_ALLOW_EDGE_FALLBACK: bool = Field(
+        default=True, env="ELEVENLABS_ALLOW_EDGE_FALLBACK"
+    )
+
+    @field_validator("ELEVENLABS_ALLOW_EDGE_FALLBACK", mode="before")
+    @classmethod
+    def coerce_edge_fallback(cls, v: Any) -> bool:
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            return v.lower() in ("1", "true", "yes", "on")
+        return bool(v)
+
+    @property
+    def elevenlabs_enabled(self) -> bool:
+        """True when a real ElevenLabs API key is configured."""
+        return bool(self.ELEVENLABS_API_KEY) and "your_" not in self.ELEVENLABS_API_KEY
 
     # Telephony (Twilio) — spec §58 §59
     TWILIO_ACCOUNT_SID: str = Field(default="", env="TWILIO_ACCOUNT_SID")

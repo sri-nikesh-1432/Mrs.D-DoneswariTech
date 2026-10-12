@@ -15,7 +15,23 @@ services:
         sync: false
       - key: EMBEDDING_WARMUP
         value: 'false'
+      # CORS: every frontend origin allowed to call this backend. Add the
+      # deployed Netlify site(s) here — REST is called cross-origin from the
+      # browser. The voice WebSocket connects to the same origin.
       - key: ALLOWED_ORIGINS
-        value: '["https://dtechp1.netlify.app"]'
+        value: '["https://dtechp1.netlify.app","https://dllp.netlify.app","https://dllp.netlify.com","http://localhost:5176"]'
       - key: DATABASE_URL
         value: sqlite+aiosqlite:////app/mrsd_campaign.db
+      # ── ElevenLabs premium voice ────────────────────────────────────
+      # The API key is a real secret — set it in the Render dashboard
+      # (or `render.yaml` sync:false prompts for it), never commit it.
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ELEVENLABS_VOICE_ID
+        value: '0U7pUcfIxJzwwTseQz75'
+      - key: ELEVENLABS_FALLBACK_VOICE_ID
+        value: 'hpp4J3VqNfWAUOO0d1Us'
+      - key: ELEVENLABS_MODEL_ID
+        value: 'eleven_turbo_v2_5'
+      - key: ELEVENLABS_ALLOW_EDGE_FALLBACK
+        value: '1'

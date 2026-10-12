@@ -46,7 +46,7 @@ export default function Agents() {
         </div>
         <button
           onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-lg px-4 py-2.5 transition-colors"
+          className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-xl px-4 py-2.5 transition-colors shadow-[0_8px_24px_rgba(14,147,232,0.3)]"
         >
           <Plus className="w-4 h-4" /> New Agent
         </button>
@@ -73,7 +73,7 @@ export default function Agents() {
               <div className="font-semibold text-[var(--gray-800)]">{a.agent_name}</div>
               <div className="text-[12.5px] text-[var(--gray-500)] truncate">{a.name}</div>
               <div className="text-[12px] text-[var(--gray-500)] mt-0.5 truncate">{a.calling_purpose}</div>
-              <div className="flex gap-4 mt-3 pt-3 border-t border-[var(--gray-100)] text-[12px] text-[var(--gray-500)]">
+              <div className="flex gap-4 mt-3 pt-3 border-t hairline text-[12px] text-[var(--gray-500)]">
                 <span className="flex items-center gap-1"><Bot className="w-3.5 h-3.5" /> {a.total_students ?? 0} students</span>
                 <span className="flex items-center gap-1">
                   <FileUp className="w-3.5 h-3.5" />
@@ -88,9 +88,9 @@ export default function Agents() {
       {/* Create modal */}
       {showCreate && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 px-4" onClick={() => setShowCreate(false)}>
-          <div className="bg-white rounded-[var(--radius-lg)] shadow-[var(--shadow-lg)] w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+          <div className="glass-strong bg-white/85 rounded-[var(--radius-lg)] shadow-[var(--shadow-lg)] w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2.5 mb-5">
-              <div className="w-9 h-9 rounded-xl bg-[var(--sky-50)] text-[var(--sky-600)] flex items-center justify-center">
+              <div className="w-9 h-9 rounded-xl bg-sky-100/70 text-[var(--sky-600)] flex items-center justify-center">
                 <Sparkles className="w-4.5 h-4.5" />
               </div>
               <h2 className="text-lg font-semibold text-[var(--gray-800)]">Create New Agent</h2>
@@ -107,17 +107,17 @@ export default function Agents() {
                   value={form.instructions}
                   onChange={(e) => setForm({ ...form, instructions: e.target.value })}
                   placeholder="Be polite, highlight placements, mention scholarship deadlines..."
-                  className="w-full bg-white border border-[var(--gray-200)] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)] resize-none"
+                  className="w-full bg-white/70 backdrop-blur-md border hairline rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)] resize-none"
                 />
               </div>
 
               {error && <div className="text-[13px] text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
 
               <div className="flex gap-2.5 pt-1">
-                <button type="button" onClick={() => setShowCreate(false)} className="flex-1 text-sm font-medium text-[var(--gray-600)] bg-[var(--gray-50)] hover:bg-[var(--gray-100)] border border-[var(--gray-200)] rounded-lg py-2.5">
+                <button type="button" onClick={() => setShowCreate(false)} className="flex-1 text-sm font-medium text-[var(--gray-700)] glass hover:bg-white/80 rounded-xl py-2.5">
                   Cancel
                 </button>
-                <button type="submit" disabled={creating} className="flex-1 flex items-center justify-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-lg py-2.5 disabled:opacity-60">
+                <button type="submit" disabled={creating} className="flex-1 flex items-center justify-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-xl py-2.5 disabled:opacity-60">
                   {creating && <Loader2 className="w-4 h-4 animate-spin" />} Create
                 </button>
               </div>
@@ -138,7 +138,7 @@ function Field({ label, placeholder, value, onChange }: { label: string; placeho
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full bg-white border border-[var(--gray-200)] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
+        className="w-full bg-white/70 backdrop-blur-md border hairline rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
       />
     </div>
   );

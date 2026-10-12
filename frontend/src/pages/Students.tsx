@@ -101,14 +101,14 @@ export default function Students() {
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={validating}
-            className="flex items-center gap-2 bg-white hover:bg-[var(--gray-50)] text-[var(--gray-700)] border border-[var(--gray-200)] text-sm font-semibold rounded-lg px-4 py-2.5 disabled:opacity-60"
+            className="flex items-center gap-2 glass hover:bg-white/80 text-[var(--gray-700)] text-sm font-semibold rounded-xl px-4 py-2.5 disabled:opacity-60"
           >
             {validating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
             Upload CSV/XLSX
           </button>
           <button
             onClick={() => setShowAdd(true)}
-            className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-lg px-4 py-2.5"
+            className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] shadow-[0_8px_24px_rgba(14,147,232,0.3)] text-white text-sm font-semibold rounded-xl px-4 py-2.5"
           >
             <Plus className="w-4 h-4" /> {t("students.add")}
           </button>
@@ -134,13 +134,13 @@ export default function Students() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by name or phone…"
-            className="w-full bg-white border border-[var(--gray-200)] rounded-lg pl-9 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
+            className="w-full bg-white/70 backdrop-blur-md border hairline rounded-xl pl-9 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
           />
         </div>
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="bg-white border border-[var(--gray-200)] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
+          className="bg-white/70 backdrop-blur-md border hairline rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
         >
           {["all", "Pending", "Calling", "In Progress", "Completed", "No Answer", "Busy", "Failed", "Callback Requested"].map((s) => (
             <option key={s} value={s}>{s === "all" ? "All statuses" : s}</option>
@@ -149,7 +149,7 @@ export default function Students() {
         <select
           value={interestFilter}
           onChange={(e) => setInterestFilter(e.target.value)}
-          className="bg-white border border-[var(--gray-200)] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
+          className="bg-white/70 backdrop-blur-md border hairline rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
         >
           {["all", "Interested", "Not Interested", "Needs Follow-up", "Callback Requested", "Unclear"].map((s) => (
             <option key={s} value={s}>{s === "all" ? "All interest levels" : s}</option>
@@ -162,7 +162,7 @@ export default function Students() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-white/70 border-b border-[var(--gray-200)] text-left text-[12px] uppercase tracking-wide text-[var(--gray-500)]">
+              <tr className="bg-white/70 border-b hairline text-left text-[11px] uppercase tracking-wide text-[var(--gray-400)]">
                 <th className="px-4 py-3 font-semibold">Student</th>
                 <th className="px-4 py-3 font-semibold">Phone</th>
                 <th className="px-4 py-3 font-semibold">Course</th>
@@ -184,7 +184,7 @@ export default function Students() {
                 </tr>
               ) : (
                 data!.students.map((s) => (
-                  <tr key={s.id} className="border-b border-[var(--gray-100)] hover:bg-white/60 transition-colors">
+                  <tr key={s.id} className="border-b hairline hover:bg-white/60 transition-colors">
                     <td className="px-4 py-3 font-medium text-[var(--gray-800)]">{s.name}</td>
                     <td className="px-4 py-3 text-[var(--gray-600)] font-mono text-[12.5px]">{s.phone}</td>
                     <td className="px-4 py-3 text-[var(--gray-600)]">{s.preferred_course || "—"}</td>
@@ -211,7 +211,7 @@ export default function Students() {
       {/* Import preview dialog */}
       {preview && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 px-4" onClick={() => setPreview(null)}>
-          <div className="bg-white rounded-[var(--radius-lg)] shadow-[var(--shadow-lg)] w-full max-w-2xl p-6 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          <div className="glass-strong bg-white/85 rounded-[var(--radius-lg)] w-full max-w-2xl p-6 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2.5 mb-5">
               <FileSpreadsheet className="w-5 h-5 text-[var(--sky-600)]" />
               <h2 className="text-lg font-semibold text-[var(--gray-800)]">Import Preview — {preview.filename}</h2>
@@ -226,12 +226,12 @@ export default function Students() {
 
             {preview.preview_valid.length > 0 && (
               <>
-                <div className="text-[12px] font-semibold uppercase tracking-wide text-[var(--gray-500)] mb-2">Sample valid rows</div>
-                <div className="border border-[var(--gray-100)] rounded-lg overflow-hidden mb-4">
+                <div className="text-[12px] font-semibold uppercase tracking-wide text-[var(--gray-400)] mb-2">Sample valid rows</div>
+                <div className="border hairline rounded-xl overflow-hidden mb-4">
                   <table className="w-full text-[12.5px]">
                     <tbody>
                       {preview.preview_valid.slice(0, 5).map((r, i) => (
-                        <tr key={i} className="border-b border-[var(--gray-100)] last:border-0">
+                        <tr key={i} className="border-b hairline last:border-0">
                           <td className="px-3 py-2 font-medium text-[var(--gray-700)]">{r.name}</td>
                           <td className="px-3 py-2 font-mono text-[var(--gray-600)]">{r.phone}</td>
                           <td className="px-3 py-2 text-[var(--gray-500)]">{r.preferred_course || "—"}</td>
@@ -245,10 +245,10 @@ export default function Students() {
 
             {preview.errors.length > 0 && (
               <>
-                <div className="text-[12px] font-semibold uppercase tracking-wide text-[var(--gray-500)] mb-2">Errors (first 10)</div>
+                <div className="text-[12px] font-semibold uppercase tracking-wide text-[var(--gray-400)] mb-2">Errors (first 10)</div>
                 <div className="space-y-1.5 mb-4">
                   {preview.errors.slice(0, 10).map((e, i) => (
-                    <div key={i} className="flex items-center gap-2 text-[12.5px] text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-1.5">
+                    <div key={i} className="flex items-center gap-2 text-[12.5px] text-red-700 bg-red-50/70 border border-red-200 rounded-xl px-3 py-1.5">
                       <XCircle className="w-3.5 h-3.5 shrink-0" />
                       <span>Row {e.row}: {e.reason}</span>
                     </div>
@@ -258,13 +258,13 @@ export default function Students() {
             )}
 
             <div className="flex gap-2.5 pt-2">
-              <button onClick={() => setPreview(null)} className="flex-1 text-sm font-medium text-[var(--gray-600)] bg-[var(--gray-50)] hover:bg-[var(--gray-100)] border border-[var(--gray-200)] rounded-lg py-2.5">
+              <button onClick={() => setPreview(null)} className="flex-1 glass hover:bg-white/80 text-[var(--gray-700)] text-sm font-medium rounded-xl py-2.5">
                 Cancel
               </button>
               <button
                 onClick={commitImport}
                 disabled={importing || preview.valid_count === 0}
-                className="flex-1 flex items-center justify-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-lg py-2.5 disabled:opacity-50"
+                className="flex-1 flex items-center justify-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] shadow-[0_8px_24px_rgba(14,147,232,0.3)] text-white text-sm font-semibold rounded-xl py-2.5 disabled:opacity-50 disabled:shadow-none"
               >
                 {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                 Import {preview.valid_count} Students
@@ -277,7 +277,7 @@ export default function Students() {
       {/* Add student modal */}
       {showAdd && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 px-4" onClick={() => setShowAdd(false)}>
-          <div className="bg-white rounded-[var(--radius-lg)] shadow-[var(--shadow-lg)] w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+          <div className="glass-strong bg-white/85 rounded-[var(--radius-lg)] w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-lg font-semibold text-[var(--gray-800)] mb-5">Add Student Manually</h2>
             <form onSubmit={handleAdd} className="space-y-4">
               <Field label="Name *" value={addForm.name} onChange={(v) => setAddForm({ ...addForm, name: v })} required />
@@ -285,10 +285,10 @@ export default function Students() {
               <Field label="Email" value={addForm.email} onChange={(v) => setAddForm({ ...addForm, email: v })} />
               <Field label="Preferred Course" value={addForm.preferred_course} onChange={(v) => setAddForm({ ...addForm, preferred_course: v })} />
               <Field label="City" value={addForm.city} onChange={(v) => setAddForm({ ...addForm, city: v })} />
-              {addError && <div className="text-[13px] text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{addError}</div>}
+              {addError && <div className="text-[13px] text-red-700 bg-red-50/70 border border-red-200 rounded-xl px-3 py-2">{addError}</div>}
               <div className="flex gap-2.5 pt-1">
-                <button type="button" onClick={() => setShowAdd(false)} className="flex-1 text-sm font-medium text-[var(--gray-600)] bg-[var(--gray-50)] hover:bg-[var(--gray-100)] border border-[var(--gray-200)] rounded-lg py-2.5">Cancel</button>
-                <button type="submit" className="flex-1 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-lg py-2.5">Add Student</button>
+                <button type="button" onClick={() => setShowAdd(false)} className="flex-1 glass hover:bg-white/80 text-[var(--gray-700)] text-sm font-medium rounded-xl py-2.5">Cancel</button>
+                <button type="submit" className="flex-1 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] shadow-[0_8px_24px_rgba(14,147,232,0.3)] text-white text-sm font-semibold rounded-xl py-2.5">Add Student</button>
               </div>
             </form>
           </div>
@@ -300,8 +300,8 @@ export default function Students() {
 
 function Stat({ label, value, color }: { label: string; value: number; color: string }) {
   return (
-    <div className="bg-[var(--gray-50)] border border-[var(--gray-100)] rounded-lg p-3 text-center">
-      <div className={`text-xl font-bold ${color}`}>{value}</div>
+    <div className="bg-white/70 backdrop-blur-md border hairline rounded-xl p-3 text-center">
+      <div className={`text-xl font-semibold ${color}`}>{value}</div>
       <div className="text-[11px] text-[var(--gray-500)]">{label}</div>
     </div>
   );
@@ -342,7 +342,7 @@ function Field({ label, value, onChange, placeholder, required }: { label: strin
         required={required}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full bg-white border border-[var(--gray-200)] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
+        className="w-full bg-white/70 backdrop-blur-md border hairline rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
       />
     </div>
   );

@@ -55,17 +55,10 @@ const KNOWLEDGE_STEP_LABELS: Partial<Record<KnowledgeStatus, string>> = {
 // ─── Section wrapper ──────────────────────────────────────────────
 function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div
-      className="rounded-2xl overflow-hidden"
-      style={{
-        background: "rgba(255,255,255,0.8)",
-        border: "1px solid rgba(186,230,253,0.4)",
-        boxShadow: "0 2px 12px rgba(14,165,233,0.06)",
-      }}
-    >
-      <div className="flex items-center gap-2 px-5 py-3.5 border-b border-sky-100">
-        <span className="text-sky-500">{icon}</span>
-        <span className="text-sm font-semibold text-gray-700">{title}</span>
+    <div className="glass rounded-[var(--radius-md)] overflow-hidden">
+      <div className="flex items-center gap-2 px-5 py-3.5 border-b hairline">
+        <span className="text-[var(--sky-500)]">{icon}</span>
+        <span className="text-[15px] font-semibold text-[var(--gray-800)]">{title}</span>
       </div>
       <div className="p-5 space-y-4">{children}</div>
     </div>
@@ -76,9 +69,9 @@ function Section({ title, icon, children }: { title: string; icon: React.ReactNo
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">{label}</label>
+      <label className="block text-[13px] font-medium text-[var(--gray-700)] mb-1.5">{label}</label>
       {children}
-      {hint && <p className="text-[10px] text-gray-400 mt-1 ml-1">{hint}</p>}
+      {hint && <p className="text-[10px] text-[var(--gray-400)] mt-1 ml-1">{hint}</p>}
     </div>
   );
 }
@@ -93,7 +86,7 @@ function SettingsInput({ value, onChange, placeholder, type = "text" }: {
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className="w-full h-10 px-4 rounded-xl border border-sky-200 bg-white/80 text-sm text-gray-700 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100 transition-all"
+      className="w-full h-10 px-4 rounded-xl bg-white/70 backdrop-blur-md border hairline text-sm text-[var(--gray-700)] outline-none focus:ring-2 focus:ring-[var(--sky-400)] transition-all"
     />
   );
 }
@@ -108,13 +101,13 @@ function SettingsSelect({ value, onChange, options }: {
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full h-10 px-4 pr-8 rounded-xl border border-sky-200 bg-white/80 text-sm text-gray-700 outline-none focus:border-sky-400 appearance-none cursor-pointer"
+        className="w-full h-10 px-4 pr-8 rounded-xl bg-white/70 backdrop-blur-md border hairline text-sm text-[var(--gray-700)] outline-none focus:ring-2 focus:ring-[var(--sky-400)] appearance-none cursor-pointer"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
         ))}
       </select>
-      <ChevronDown size={14} className="absolute right-3 top-3 text-gray-400 pointer-events-none" />
+      <ChevronDown size={14} className="absolute right-3 top-3 text-[var(--gray-400)] pointer-events-none" />
     </div>
   );
 }
@@ -123,7 +116,7 @@ function SettingsSelect({ value, onChange, options }: {
 function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-sm text-gray-600">{label}</span>
+      <span className="text-sm text-[var(--gray-600)]">{label}</span>
       <button
         onClick={() => onChange(!value)}
         className={`relative w-10 h-5.5 rounded-full transition-colors ${value ? "bg-sky-500" : "bg-gray-200"}`}
@@ -157,8 +150,8 @@ function LanguageChips({ selected, onChange }: { selected: string[]; onChange: (
           onClick={() => toggle(lang)}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
             selected.includes(lang)
-              ? "bg-sky-500 text-white border-sky-500"
-              : "bg-white text-gray-500 border-sky-200 hover:border-sky-300"
+              ? "bg-[var(--sky-500)] text-white border border-[var(--sky-500)] shadow-[0_8px_24px_rgba(14,147,232,0.3)]"
+              : "glass text-[var(--gray-500)] hover:bg-white/80"
           }`}
         >
           {selected.includes(lang) && <Check size={11} />}
@@ -261,10 +254,7 @@ export default function Settings() {
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   return (
-    <div
-      className="flex flex-col h-screen"
-      style={{ background: "linear-gradient(160deg, #f0f9ff 0%, #e0f2fe 40%, #f0f9ff 100%)" }}
-    >
+    <div className="flex flex-col h-screen bg-app">
       <TopBar agentName={settings.agent_name} />
 
       <main className="flex-1 overflow-y-auto px-4 py-4">
@@ -272,16 +262,15 @@ export default function Settings() {
           {/* Header */}
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-xl font-bold text-gray-800">Settings</h1>
-              <p className="text-xs text-gray-500">Configure your AI agent</p>
+              <h1 className="text-xl font-semibold text-[var(--gray-800)] tracking-tight">Settings</h1>
+              <p className="text-xs text-[var(--gray-500)]">Configure your AI agent</p>
             </div>
             <motion.button
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.97 }}
               onClick={handleSave}
               disabled={saving}
-              className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold text-white shadow-md disabled:opacity-60"
-              style={{ background: "linear-gradient(135deg, #38bdf8, #0284c7)" }}
+              className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold text-white bg-[var(--sky-500)] hover:bg-[var(--sky-600)] shadow-[0_8px_24px_rgba(14,147,232,0.3)] disabled:opacity-60"
             >
               {saving ? <Loader2 size={14} className="animate-spin" /> : saved ? <Check size={14} /> : null}
               {saved ? "Saved!" : saving ? "Saving..." : "Save Changes"}
@@ -301,7 +290,7 @@ export default function Settings() {
                 value={settings.greeting}
                 onChange={(e) => update({ greeting: e.target.value })}
                 rows={2}
-                className="w-full px-4 py-2.5 rounded-xl border border-sky-200 bg-white/80 text-sm text-gray-700 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100 resize-none"
+                className="w-full px-4 py-2.5 rounded-xl bg-white/70 backdrop-blur-md border hairline text-sm text-[var(--gray-700)] outline-none focus:ring-2 focus:ring-[var(--sky-400)] resize-none"
                 placeholder="Hi, this is {agent_name} from {business_name}..."
               />
             </Field>
@@ -355,37 +344,37 @@ export default function Settings() {
           <Section title="Knowledge Base" icon={<BookOpen size={15} />}>
             {/* Current */}
             <div>
-              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Current Knowledge</p>
+              <p className="text-[11px] font-semibold text-[var(--gray-400)] uppercase tracking-wider mb-2">Current Knowledge</p>
               {settings.knowledge_file ? (
-                <div className="flex items-center gap-3 p-3 rounded-xl border border-sky-100 bg-sky-50">
+                <div className="flex items-center gap-3 p-3 rounded-xl glass-sky">
                   <div className="w-9 h-9 rounded-xl bg-sky-200 flex items-center justify-center flex-shrink-0">
                     <FileText size={16} className="text-sky-600" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-700 truncate">{settings.knowledge_file}</p>
+                    <p className="text-sm font-medium text-[var(--gray-700)] truncate">{settings.knowledge_file}</p>
                     <KnowledgeStatusBadge status={settings.knowledge_status} />
                   </div>
                 </div>
               ) : (
-                <p className="text-sm text-gray-400 italic">No knowledge base uploaded yet.</p>
+                <p className="text-sm text-[var(--gray-500)] italic">No knowledge base uploaded yet.</p>
               )}
             </div>
 
             {/* Upload new */}
             <div>
-              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Upload New Version</p>
-              <p className="text-xs text-gray-500 mb-3">
+              <p className="text-[11px] font-semibold text-[var(--gray-400)] uppercase tracking-wider mb-2">Upload New Version</p>
+              <p className="text-xs text-[var(--gray-500)] mb-3">
                 Uploading a new PDF will create a new knowledge version. Your current live agent remains active until you publish the new version.
               </p>
 
               {!newPdf ? (
                 <div
                   onClick={() => fileInputRef.current?.click()}
-                  className="border-2 border-dashed border-sky-200 rounded-2xl p-6 text-center cursor-pointer hover:border-sky-300 hover:bg-sky-50/50 transition-all"
+                  className="border-2 border-dashed border-[var(--gray-300)] rounded-2xl p-6 text-center cursor-pointer hover:border-[var(--sky-400)] hover:bg-white/40 transition-all"
                 >
-                  <Upload size={20} className="text-sky-400 mx-auto mb-2" />
-                  <p className="text-sm text-gray-500">Click to upload a PDF</p>
-                  <p className="text-xs text-gray-400">PDF only · Max 20 MB</p>
+                  <Upload size={20} className="text-[var(--sky-400)] mx-auto mb-2" />
+                  <p className="text-sm text-[var(--gray-500)]">Click to upload a PDF</p>
+                  <p className="text-xs text-[var(--gray-400)]">PDF only · Max 20 MB</p>
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -399,22 +388,22 @@ export default function Settings() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <div className="flex items-center gap-3 p-3 rounded-xl border border-sky-200 bg-sky-50">
+                  <div className="flex items-center gap-3 p-3 rounded-xl glass-sky">
                     <FileText size={16} className="text-sky-500 flex-shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-700 truncate">{newPdf.name}</p>
-                      <p className="text-xs text-gray-400">{(newPdf.size / 1024).toFixed(0)} KB</p>
+                      <p className="text-sm font-medium text-[var(--gray-700)] truncate">{newPdf.name}</p>
+                      <p className="text-xs text-[var(--gray-400)]">{(newPdf.size / 1024).toFixed(0)} KB</p>
                     </div>
-                    <button onClick={() => setNewPdf(null)} className="text-gray-400 hover:text-red-500">✕</button>
+                    <button onClick={() => setNewPdf(null)} className="text-[var(--gray-400)] hover:text-red-500">✕</button>
                   </div>
 
                   {uploading && (
                     <div>
-                      <div className="flex justify-between text-xs text-gray-500 mb-1">
+                      <div className="flex justify-between text-xs text-[var(--gray-500)] mb-1">
                         <span>Uploading...</span>
                         <span>{uploadPct}%</span>
                       </div>
-                      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div className="h-1.5 bg-[var(--gray-100)] rounded-full overflow-hidden">
                         <motion.div
                           className="h-full bg-sky-400 rounded-full"
                           animate={{ width: `${uploadPct}%` }}
@@ -429,8 +418,7 @@ export default function Settings() {
                     whileTap={{ scale: 0.98 }}
                     onClick={handleUploadKnowledge}
                     disabled={uploading}
-                    className="w-full h-10 rounded-xl text-white text-sm font-semibold disabled:opacity-60 flex items-center justify-center gap-2"
-                    style={{ background: "linear-gradient(135deg, #38bdf8, #0284c7)" }}
+                    className="w-full h-10 rounded-xl text-white text-sm font-semibold bg-[var(--sky-500)] hover:bg-[var(--sky-600)] shadow-[0_8px_24px_rgba(14,147,232,0.3)] disabled:opacity-60 flex items-center justify-center gap-2"
                   >
                     {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
                     {uploading ? "Processing..." : "Train with New PDF"}
@@ -444,12 +432,12 @@ export default function Settings() {
           <Section title="Published Version" icon={<Sparkles size={15} />}>
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-700 font-medium">
+                <p className="text-sm text-[var(--gray-700)] font-medium">
                   {settings.published_version
                     ? `Version ${settings.published_version} is live`
                     : "No version published yet"}
                 </p>
-                <p className="text-xs text-gray-400 mt-0.5">
+                <p className="text-xs text-[var(--gray-400)] mt-0.5">
                   Publishing makes your agent live for real calls.
                 </p>
               </div>
@@ -465,13 +453,13 @@ export default function Settings() {
           {/* Account */}
           <Section title="Account & Security" icon={<Shield size={15} />}>
             <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl border border-sky-100 bg-sky-50">
-                <p className="text-[10px] font-semibold text-gray-400 uppercase">Agent ID</p>
-                <p className="text-sm font-mono text-gray-600 mt-0.5">{agentId}</p>
+              <div className="p-3 rounded-xl glass-sky">
+                <p className="text-[10px] font-semibold text-[var(--gray-400)] uppercase">Agent ID</p>
+                <p className="text-sm font-mono text-[var(--gray-600)] mt-0.5">{agentId}</p>
               </div>
-              <div className="p-3 rounded-xl border border-sky-100 bg-sky-50">
-                <p className="text-[10px] font-semibold text-gray-400 uppercase">Plan</p>
-                <p className="text-sm font-medium text-gray-600 mt-0.5">Starter</p>
+              <div className="p-3 rounded-xl glass-sky">
+                <p className="text-[10px] font-semibold text-[var(--gray-400)] uppercase">Plan</p>
+                <p className="text-sm font-medium text-[var(--gray-600)] mt-0.5">Starter</p>
               </div>
             </div>
           </Section>

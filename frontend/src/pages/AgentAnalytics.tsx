@@ -69,7 +69,7 @@ export default function AgentAnalytics() {
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
       <div className="mb-6">
-        <h1 className="text-xl font-bold text-[var(--gray-800)]">Analytics — {analytics.agent_name}</h1>
+        <h1 className="text-xl font-semibold text-[var(--gray-800)] tracking-tight">Analytics — {analytics.agent_name}</h1>
         <p className="text-sm text-[var(--gray-500)] mt-0.5">{analytics.company_name} · student-level call intelligence</p>
       </div>
 
@@ -77,7 +77,7 @@ export default function AgentAnalytics() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5 mb-6">
         {kpis.map((k) => (
           <div key={k.label} className="glass rounded-[var(--radius-md)] p-4 shadow-[var(--shadow-sm)]">
-            <div className="text-xl font-bold text-[var(--gray-800)]">{k.value}</div>
+            <div className="text-xl font-semibold text-[var(--gray-800)]">{k.value}</div>
             <div className="text-[11.5px] text-[var(--gray-500)] mt-0.5">{k.label}</div>
           </div>
         ))}
@@ -138,9 +138,9 @@ export default function AgentAnalytics() {
               <BarChart data={analytics.call_outcomes} layout="vertical" margin={{ left: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--gray-200)" horizontal={false} />
                 <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: "var(--gray-500)" }} axisLine={false} tickLine={false} />
-                <YAxis type="category" dataKey="outcome" width={130} tick={{ fontSize: 10.5, fill: "var(--gray-600)" }} axisLine={false} tickLine={false} />
+                <YAxis type="category" dataKey="outcome" width={130} tick={{ fontSize: 10.5, fill: "var(--gray-500)" }} axisLine={false} tickLine={false} />
                 <Tooltip />
-                <Bar dataKey="count" fill="#0ea5e9" radius={[0, 6, 6, 0]} barSize={18} />
+                <Bar dataKey="count" fill="#0e93e8" radius={[0, 6, 6, 0]} barSize={18} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -157,15 +157,15 @@ export default function AgentAnalytics() {
               <AreaChart data={analytics.calls_over_time}>
                 <defs>
                   <linearGradient id="analyticsGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.3} />
-                    <stop offset="100%" stopColor="#0ea5e9" stopOpacity={0} />
+                    <stop offset="0%" stopColor="#3fb1f5" stopOpacity={0.3} />
+                    <stop offset="100%" stopColor="#3fb1f5" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--gray-200)" vertical={false} />
                 <XAxis dataKey="date" tick={{ fontSize: 11, fill: "var(--gray-500)" }} axisLine={false} tickLine={false} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "var(--gray-500)" }} axisLine={false} tickLine={false} width={28} />
                 <Tooltip />
-                <Area type="monotone" dataKey="calls" stroke="#0ea5e9" strokeWidth={2} fill="url(#analyticsGrad)" />
+                <Area type="monotone" dataKey="calls" stroke="#0e93e8" strokeWidth={2} fill="url(#analyticsGrad)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -179,9 +179,9 @@ export default function AgentAnalytics() {
               <BarChart data={analytics.most_asked_questions} layout="vertical" margin={{ left: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--gray-200)" horizontal={false} />
                 <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: "var(--gray-500)" }} axisLine={false} tickLine={false} />
-                <YAxis type="category" dataKey="question" width={150} tick={{ fontSize: 10.5, fill: "var(--gray-600)" }} axisLine={false} tickLine={false} />
+                <YAxis type="category" dataKey="question" width={150} tick={{ fontSize: 10.5, fill: "var(--gray-500)" }} axisLine={false} tickLine={false} />
                 <Tooltip />
-                <Bar dataKey="count" fill="#6366f1" radius={[0, 6, 6, 0]} barSize={16} />
+                <Bar dataKey="count" fill="#3fb1f5" radius={[0, 6, 6, 0]} barSize={16} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -190,14 +190,14 @@ export default function AgentAnalytics() {
 
       {/* Call history table */}
       <div className="glass rounded-[var(--radius-md)] shadow-[var(--shadow-sm)] overflow-hidden mb-6">
-        <div className="px-5 py-4 border-b border-[var(--gray-100)] flex items-center justify-between">
+        <div className="px-5 py-4 border-b hairline flex items-center justify-between">
           <h2 className="text-[15px] font-semibold text-[var(--gray-800)]">Call History</h2>
           <span className="text-[12px] text-[var(--gray-500)]">{callsData?.total ?? 0} calls</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-white/70 border-b border-[var(--gray-200)] text-left text-[12px] uppercase tracking-wide text-[var(--gray-500)]">
+              <tr className="bg-white/70 border-b hairline text-left text-[11px] uppercase tracking-wide text-[var(--gray-400)]">
                 <th className="px-4 py-3 font-semibold">Student</th>
                 <th className="px-4 py-3 font-semibold">Status</th>
                 <th className="px-4 py-3 font-semibold">Interest</th>
@@ -216,7 +216,7 @@ export default function AgentAnalytics() {
                 </tr>
               ) : (
                 callsData!.calls.map((call) => (
-                  <tr key={call.id} className="border-b border-[var(--gray-100)] hover:bg-white/60 transition-colors">
+                  <tr key={call.id} className="border-b hairline hover:bg-white/60 transition-colors">
                     <td className="px-4 py-3">
                       <div className="font-medium text-[var(--gray-800)]">{call.caller_name}</div>
                       <div className="text-[11.5px] text-[var(--gray-500)] font-mono">{call.caller_number}</div>
@@ -246,8 +246,8 @@ export default function AgentAnalytics() {
       {/* Detail drawer */}
       {selectedCall && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex justify-end z-50" onClick={() => setSelectedCall(null)}>
-          <div className="bg-white w-full max-w-xl h-full overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="sticky top-0 bg-white/95 backdrop-blur border-b border-[var(--gray-100)] px-6 py-4 flex items-center justify-between z-10">
+          <div className="glass-strong bg-white/90 w-full max-w-xl h-full overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 bg-white/85 backdrop-blur border-b hairline px-6 py-4 flex items-center justify-between z-10">
               <div>
                 <h2 className="text-lg font-semibold text-[var(--gray-800)]">{selectedCall.caller_name}</h2>
                 <div className="text-[12.5px] text-[var(--gray-500)]">
@@ -316,7 +316,7 @@ export default function AgentAnalytics() {
               {selectedCall && (studentDetail?.calls?.length || selectedCall.summary) && (
                 <Section icon={FileText} title="Transcript">
                   {studentDetail?.calls?.find((cc) => cc.id === selectedCall.call_id)?.transcript ? (
-                    <pre className="text-[12.5px] whitespace-pre-wrap font-sans text-[var(--gray-700)] bg-[var(--gray-50)] border border-[var(--gray-100)] rounded-lg p-3.5 leading-relaxed">
+                    <pre className="text-[12.5px] whitespace-pre-wrap font-sans text-[var(--gray-700)] bg-white/60 border hairline rounded-xl p-3.5 leading-relaxed">
                       {studentDetail.calls.find((cc) => cc.id === selectedCall.call_id)!.transcript}
                     </pre>
                   ) : (
@@ -346,7 +346,7 @@ function Section({ icon: Icon, title, children }: { icon: React.ComponentType<{ 
 
 function LatCell({ label, value }: { label: string; value?: number }) {
   return (
-    <div className="flex justify-between bg-[var(--gray-50)] border border-[var(--gray-100)] rounded-lg px-3 py-2">
+    <div className="flex justify-between bg-white/70 backdrop-blur-md border hairline rounded-xl px-3 py-2">
       <span className="text-[var(--gray-600)]">{label}</span>
       <span className="font-mono text-[var(--gray-800)]">{value != null ? `${value} ms` : "—"}</span>
     </div>

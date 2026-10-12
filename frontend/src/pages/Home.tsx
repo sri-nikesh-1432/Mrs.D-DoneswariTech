@@ -63,7 +63,7 @@ export default function Home() {
         </div>
         <button
           onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-lg px-4 py-2.5 transition-colors shadow-[var(--shadow-sm)]"
+          className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-xl px-4 py-2.5 transition-colors shadow-[0_8px_24px_rgba(14,147,232,0.3)]"
         >
           <Plus className="w-4 h-4" /> {t("home.createAgent")}
         </button>
@@ -83,7 +83,7 @@ export default function Home() {
           </p>
           <button
             onClick={() => setShowCreate(true)}
-            className="mt-5 inline-flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-lg px-5 py-2.5"
+            className="mt-5 inline-flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-xl px-5 py-2.5 shadow-[0_8px_24px_rgba(14,147,232,0.3)]"
           >
             <Plus className="w-4 h-4" /> {t("home.createAgent")}
           </button>
@@ -113,7 +113,7 @@ export default function Home() {
               </div>
 
               {/* Real counts from the agent's own records (spec §55) */}
-              <div className="grid grid-cols-3 gap-2 mt-3.5 pt-3.5 border-t border-[var(--gray-100)] text-center">
+              <div className="grid grid-cols-3 gap-2 mt-3.5 pt-3.5 border-t hairline text-center">
                 <MiniStat icon={Users} value={a.total_students ?? 0} label={t("home.students")} />
                 <MiniStat icon={PhoneCall} value={a.calls_completed ?? 0} label={t("home.calls")} />
                 <MiniStat icon={TrendingUp} value={a.interested_count ?? 0} label={t("home.interested")} />
@@ -126,7 +126,7 @@ export default function Home() {
       {/* Create modal — reusable CREATE NEW AGENT flow (spec §6 §7) */}
       {showCreate && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 px-4" onClick={() => setShowCreate(false)}>
-          <div className="bg-white rounded-[var(--radius-lg)] shadow-[var(--shadow-lg)] w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+          <div className="glass-strong bg-white/85 rounded-[var(--radius-lg)] shadow-[var(--shadow-lg)] w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-lg font-semibold text-[var(--gray-800)] mb-1">{t("home.createAgent")}</h2>
             <p className="text-[12.5px] text-[var(--gray-500)] mb-5">
               The agent starts as a DRAFT — you'll upload knowledge and train it next.
@@ -139,10 +139,10 @@ export default function Home() {
               {error && <div className="text-[13px] text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
 
               <div className="flex gap-2.5 pt-1">
-                <button type="button" onClick={() => setShowCreate(false)} className="flex-1 text-sm font-medium text-[var(--gray-600)] bg-[var(--gray-50)] hover:bg-[var(--gray-100)] border border-[var(--gray-200)] rounded-lg py-2.5">
+                <button type="button" onClick={() => setShowCreate(false)} className="flex-1 text-sm font-medium text-[var(--gray-700)] glass hover:bg-white/80 rounded-xl py-2.5">
                   Cancel
                 </button>
-                <button type="submit" disabled={creating} className="flex-1 flex items-center justify-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-lg py-2.5 disabled:opacity-60">
+                <button type="submit" disabled={creating} className="flex-1 flex items-center justify-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-xl py-2.5 disabled:opacity-60">
                   {creating && <Loader2 className="w-4 h-4 animate-spin" />} Create Agent
                 </button>
               </div>
@@ -177,7 +177,7 @@ function Field({ label, placeholder, value, onChange, required }: { label: strin
         required={required}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full bg-white border border-[var(--gray-200)] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
+        className="w-full bg-white/70 backdrop-blur-md border hairline rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
       />
     </div>
   );

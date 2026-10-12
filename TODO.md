@@ -1,37 +1,177 @@
-# Implementation TODO - Multilingual Telugu Voice Agent
+# DONESWARI AI TELECALLER — MASTER TODO
 
-## Core Module
-- [x] Create `backend/app/roman_telugu.py` with:
-  - Roman Telugu detection (`detect_language` aware)
-  - Roman Telugu -> Telugu transliteration (internal)
-  - Telugu number-to-words converter (fees, years)
-  - `normalize_for_speech()` (fees, years, phone numbers, abbreviations)
+## 🔴 P0 — CORE PIPELINE (Must work for MVP)
 
-## Active Mrs. D Pipeline
-- [x] `backend/app/api/conversation_routes.py` - robust language detection + internal transliteration + feed normalized text to prompt
-- [x] `backend/app/rag/prompt_builder.py` - enrich SYSTEM_PROMPT (counsellor tone, code-mixing, fillers, pronunciation)
-- [x] `backend/app/tts/edge_tts_service.py` - apply normalize_for_speech before synthesis, warm Telugu voice + ~1.1x rate
-- [x] `backend/app/config/settings.py` - default TTS_RATE +10%, TTS_VOICE te-IN-ShrutiNeural
-- [x] `backend/app/voice/voice_service.py` - rate +10%, Telugu voice default
+### RAG & Knowledge
+- [x] PDF upload endpoint (`POST /api/agents/{id}/documents`)
+- [x] PDF extraction with PyMuPDF (page-level metadata preserved)
+- [x] Document cleaning (headers, footers, whitespace)
+- [x] Semantic chunking (300–800 tokens, section-aware)
+- [x] Chunk metadata: chunk_id, page_number, section, category, agent_id
+- [x] Embeddings with sentence-transformers (all-MiniLM-L6-v2)
+- [x] FAISS vector store (agent-isolated: `knowledge/agent_{id}/index`)
+- [x] Retrieval pipeline: query → embed → FAISS → rerank → top-k chunks
+- [x] RAG grounding: answer ONLY from retrieved context, never invent
+- [x] Knowledge validation: auto-test retrieval after indexing
+- [x] Training status polling (`GET /api/agents/{id}/knowledge/status`)
 
-## Legacy Services (consistency)
-- [x] `backend/services/language_service.py` - Roman Telugu detection
-- [x] `backend/services/tts_service.py` - apply normalization pre-TTS
-- [x] `backend/services/llm_service.py` - code-mixing/filler guidance in instruction
+### Agent Brain
+- [x] Dynamic system prompt from skills spec (37 skills)
+- [x] `build_dynamic_system_prompt()` — full skills spec
+- [x] `build_skills_system_prompt()` — compact form for voice (<120 tokens)
+- [x] `FEW_SHOT_EXAMPLES` — behavioral style examples
+- [x] `build_prompt()` — assembles full message list for LLM
+- [x] skills.md — master skills specification file
+- [x] Groq LLM integration with model fallback chain
+- [x] `stream_chat_fast()` — ultra-low-latency streaming for voice
+- [x] Conversation memory (last 8 turns + structured slots)
+- [x] Objection detection and handling
+- [x] Lead scoring (HOT/WARM/COLD/CALLBACK/NOT_INTERESTED)
+- [x] Parent vs student conversation mode detection
+- [x] Multilingual: English, Telugu, Hindi (native script)
+- [x] Language detection and locking per conversation
 
-## Frontend
-- [x] `frontend/src/hooks/useVoiceAgent.ts` - Roman Telugu detection in detectLanguage()
-- [x] Adaptive turn-taking: silence timeout scales with utterance length + jitter (no fixed timeout that cuts callers off)
-- [x] TTFA (time-to-first-audio) surfaced in the debug panels — the metric that decides "feels human" vs "feels robotic"
+### Voice Pipeline
+- [x] WebSocket voice endpoint (`/ws/voice/{agent_id}`)
+- [x] Server-side VAD (energy-based, adaptive turn detection)
+- [x] Groq Whisper STT (whisper-large-v3-turbo)
+- [x] Edge TTS (en-IN-NeerjaNeural, streaming)
+- [x] Barge-in / interruption support (cancel in-flight turn)
+- [x] Parallel RAG + LLM streaming (RAG fires before LLM blocks)
+- [x] Per-sentence TTS streaming (first audio < 700ms target)
+- [x] Phantom input prevention (echo, backchannel, noise filtering)
+- [x] Duplicate utterance tracking
+- [x] Latency instrumentation (STT/RAG/LLM/TTS per-turn metrics)
+- [x] Audio response cache (first-sentence MP3 for repeat questions)
 
-## Tests
-- [x] Add tests for Roman Telugu detection + number normalization
-- [x] Run pytest and verify (43 passed)
+### Frontend — Core Flow
+- [x] TrainLanding page: upload → train → ready (warm ivory design)
+- [x] Training progress screen (real backend stages, no fake progress)
+- [x] Agent ready screen (chunks, capabilities, CTA buttons)
+- [x] AgentTest page: voice orb, real waveform, transcript, barge-in
+- [x] AgentOverview: knowledge upload, training panel, save/publish
+- [x] Sidebar navigation (agent-scoped + global)
+- [x] Voice WebSocket client (`voiceWebSocket.ts`)
+- [x] Real waveform visualization (mic + playback amplitude)
+- [x] Agent orb states: idle / listening / thinking / speaking
 
-## Realtime pipeline rebuild (true streaming, ML VAD)
-- [x] `frontend/public/vad/` - Silero VAD v5 model + worklet + onnxruntime wasm (local, no CDN)
-- [x] `frontend/src/lib/vad.ts` - replace energy/RMS VAD with Silero ML VAD (neural speech probability; fan/keyboard/cough/echo can never start a turn). Same public interface + 16 kHz PCM window + `setAISpeaking()` threshold lift while Mrs. D talks
-- [x] `frontend/src/lib/wav.ts` - PCM16 WAV encoder (no MediaRecorder round-trip)
-- [x] `frontend/src/hooks/useVoiceAgent.ts` - merged-utterance turn detection (mid-thought pauses stay ONE turn), streaming STT partials (live "naku... naku mee..." text, never sent to LLM), partial-based semantic barge-in (genuine question stops Mrs. D immediately; backchannel resumes her), PCM-window finalize with STT-lock parking (never drops an utterance), echo suppression on partials, spec §34 analytics counters (partials/barge-ins/false detections/corrections/turns) + `fsmState`/`partialTranscript` exposure
-- [x] `frontend/src/components/VoiceTestingConsole.tsx` - live partial transcript + Voice engine analytics panel
-- [x] Verify: tsc + vite build green; backend pytest 43 passed; /vad assets served; headless Chrome (fake mic) reaches LISTENING with zero console errors and zero phantom STT calls
+---
+
+## 🟠 P1 — IMPORTANT (Ship soon after P0)
+
+### Prompt & Skills
+- [x] skills.md master specification (37 skills documented)
+- [x] prompt_builder.py rebuilt with full skills spec
+- [x] groq_service.py wired to build_skills_system_prompt
+- [ ] Institution profile extraction after indexing (JSON: courses, fees, hostel, etc.)
+- [ ] Automatic FAQ generation from document sections
+- [ ] Knowledge evaluation report (pass rate, grounded %, insufficient %)
+- [ ] Conversation state machine: GREETING→DISCOVER→ANSWER→OBJECTION→CLOSE
+
+### Agent Configuration
+- [x] Agent CRUD (create, read, update, delete)
+- [x] Save Changes validation gate (name + knowledge + vector index + voice)
+- [x] Publish / Pause workflow
+- [x] Agent status lifecycle: DRAFT → PROCESSING → READY → PUBLISHED → PAUSED
+- [ ] Agent voice selector UI (pick from ElevenLabs or Edge TTS voices)
+- [ ] Agent language selector (EN / TE / HI)
+- [ ] Custom greeting message per agent
+
+### Lead & Memory
+- [x] Conversation memory (in-memory per WebSocket session)
+- [x] Call finalization: persist CallHistory + CallReport at disconnect
+- [ ] Lead extraction: name, course, location, hostel, budget, callback
+- [ ] Lead status display in voice UI (HOT/WARM/COLD badge)
+- [ ] Structured memory slots: caller_name, course_interest, hostel_required, etc.
+- [ ] Callback request detection and capture
+
+### UI Polish
+- [x] Warm ivory design system (#faf9f7, #c8a96e, #1a1a1a)
+- [x] Framer Motion page transitions
+- [x] Skeleton loading states
+- [ ] Voice UI: show live lead status (interest, concern, language)
+- [ ] Voice UI: show RAG source ("Admissions · Page 14")
+- [ ] Call summary screen after conversation ends
+- [ ] Error states: upload failure, no text, API failure, voice failure
+- [ ] Toast notifications for all async actions
+
+---
+
+## 🟡 P2 — TELEPHONY (Next phase after web voice works)
+
+- [ ] Twilio integration (`POST /api/telephony/incoming`)
+- [ ] Twilio inbound call webhook
+- [ ] Twilio outbound call initiation
+- [ ] Call state management (ringing, connected, completed, failed)
+- [ ] Caller identification from Twilio metadata
+- [ ] Call recording (opt-in, legally compliant)
+- [ ] Transcript generation per call
+- [ ] Call duration tracking
+- [ ] Telephony status dashboard
+- [ ] Phone number configuration UI
+- [ ] Test call from AgentOverview (real phone rings)
+
+---
+
+## 🟡 P2 — ANALYTICS (After telephony)
+
+- [ ] Real call analytics (only from actual call records)
+- [ ] Calls today / connected / hot leads / callbacks
+- [ ] Per-agent analytics: interest distribution, objection types, language breakdown
+- [ ] Latency dashboard: STT/RAG/LLM/TTS per-turn metrics
+- [ ] Lead funnel visualization
+- [ ] Call history with full transcript view
+- [ ] Export leads as CSV
+
+---
+
+## 🟢 P3 — PRODUCTION HARDENING (Later)
+
+- [ ] PostgreSQL migration (replace SQLite)
+- [ ] Qdrant vector DB (replace FAISS for multi-instance)
+- [ ] ElevenLabs voice integration (replace Edge TTS for premium voice)
+- [ ] ElevenLabs Conversational AI agent option
+- [ ] Twilio + ElevenLabs native integration for telephony
+- [ ] Multi-tenant isolation (workspace-level agent separation)
+- [ ] Rate limiting per agent/workspace
+- [ ] File size limits and MIME validation hardening
+- [ ] HTTPS / production CORS configuration
+- [ ] Render.com deployment (backend)
+- [ ] Netlify deployment (frontend)
+- [ ] Environment variable validation on startup
+- [ ] Health check endpoint with real component statuses
+- [ ] Structured logging with log rotation
+- [ ] Hallucination red-team test suite (automated)
+- [ ] Voice interruption test suite
+- [ ] RAG retrieval test suite (exact, paraphrase, multilingual, table)
+
+---
+
+## 📋 CURRENT STATUS
+
+| Component | Status |
+|---|---|
+| Backend (FastAPI) | ✅ Built, needs start |
+| Frontend (React + Vite) | ✅ Running on :5176 |
+| RAG Pipeline | ✅ Complete |
+| Voice WebSocket | ✅ Complete |
+| Prompt Builder (skills spec) | ✅ Rebuilt with 37 skills |
+| skills.md | ✅ Created |
+| Groq LLM | ✅ Wired |
+| Edge TTS | ✅ Wired |
+| Twilio | 🔴 Not started |
+| ElevenLabs | 🔴 Not started |
+| Institution Profile | 🟡 Partial |
+| FAQ Generation | 🔴 Not started |
+| Lead Extraction UI | 🔴 Not started |
+
+## 🚀 TODAY'S DEFINITION OF DONE
+
+```
+Upload PDF → Real extraction → Real chunks → Real embeddings
+→ Real FAISS index → Real RAG retrieval → Real LLM (Groq)
+→ Real voice (Edge TTS) → Real conversation with barge-in
+→ Memory works → Objections handled → No hallucination
+```
+
+That is the vertical slice. Once that works end-to-end, telephony is next.

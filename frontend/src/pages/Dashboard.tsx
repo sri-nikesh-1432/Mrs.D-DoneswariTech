@@ -19,12 +19,12 @@ export default function Dashboard() {
   const cards = analytics?.cards;
 
   const kpis = [
-    { label: "Total Students", value: cards?.total_students ?? 0, icon: Users, color: "text-[var(--sky-600)] bg-[var(--sky-50)]" },
-    { label: "Total Calls", value: cards?.total_calls ?? 0, icon: PhoneCall, color: "text-indigo-600 bg-indigo-50" },
-    { label: "Completed", value: cards?.completed_calls ?? 0, icon: CheckCircle2, color: "text-emerald-600 bg-emerald-50" },
-    { label: "Interested", value: cards?.interested ?? 0, icon: TrendingUp, color: "text-emerald-600 bg-emerald-50" },
-    { label: "Follow-ups", value: cards?.follow_ups ?? 0, icon: Clock, color: "text-amber-600 bg-amber-50" },
-    { label: "Avg Duration", value: cards?.average_duration ?? "0:00", icon: Clock, color: "text-[var(--gray-600)] bg-[var(--gray-100)]" },
+    { label: "Total Students", value: cards?.total_students ?? 0, icon: Users, color: "bg-sky-100/70 text-[var(--sky-600)]" },
+    { label: "Total Calls", value: cards?.total_calls ?? 0, icon: PhoneCall, color: "bg-indigo-50/70 text-indigo-600" },
+    { label: "Completed", value: cards?.completed_calls ?? 0, icon: CheckCircle2, color: "bg-emerald-50/70 text-emerald-600" },
+    { label: "Interested", value: cards?.interested ?? 0, icon: TrendingUp, color: "bg-emerald-50/70 text-emerald-600" },
+    { label: "Follow-ups", value: cards?.follow_ups ?? 0, icon: Clock, color: "bg-amber-50/70 text-amber-600" },
+    { label: "Avg Duration", value: cards?.average_duration ?? "0:00", icon: Clock, color: "bg-gray-100/70 text-[var(--gray-600)]" },
   ];
 
   return (
@@ -68,15 +68,15 @@ export default function Dashboard() {
             <AreaChart data={analytics?.calls_over_time ?? []}>
               <defs>
                 <linearGradient id="callGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.3} />
-                  <stop offset="100%" stopColor="#0ea5e9" stopOpacity={0} />
+                  <stop offset="0%" stopColor="#3fb1f5" stopOpacity={0.3} />
+                  <stop offset="100%" stopColor="#3fb1f5" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--gray-200)" vertical={false} />
               <XAxis dataKey="date" tick={{ fontSize: 11, fill: "var(--gray-500)" }} axisLine={false} tickLine={false} />
               <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "var(--gray-500)" }} axisLine={false} tickLine={false} width={28} />
               <Tooltip />
-              <Area type="monotone" dataKey="calls" stroke="#0ea5e9" strokeWidth={2} fill="url(#callGrad)" />
+              <Area type="monotone" dataKey="calls" stroke="#0e93e8" strokeWidth={2} fill="url(#callGrad)" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -112,12 +112,12 @@ export default function Dashboard() {
 
 export function StatusChip({ status }: { status?: string }) {
   const map: Record<string, { bg: string; text: string }> = {
-    published: { bg: "bg-emerald-50 border-emerald-200", text: "text-emerald-700" },
-    ready: { bg: "bg-[var(--sky-50)] border-[var(--sky-200)]", text: "text-[var(--sky-700)]" },
-    draft: { bg: "bg-[var(--gray-50)] border-[var(--gray-200)]", text: "text-[var(--gray-600)]" },
-    processing: { bg: "bg-amber-50 border-amber-200", text: "text-amber-700" },
-    testing: { bg: "bg-violet-50 border-violet-200", text: "text-violet-700" },
-    paused: { bg: "bg-orange-50 border-orange-200", text: "text-orange-700" },
+    published: { bg: "bg-emerald-50/70 border-emerald-200", text: "text-emerald-700" },
+    ready: { bg: "bg-sky-50/80 border-[var(--sky-200)]", text: "text-[var(--sky-700)]" },
+    draft: { bg: "bg-gray-50/80 border-[var(--gray-200)]", text: "text-[var(--gray-600)]" },
+    processing: { bg: "bg-amber-50/70 border-amber-200", text: "text-amber-700" },
+    testing: { bg: "bg-violet-50/70 border-violet-200", text: "text-violet-700" },
+    paused: { bg: "bg-orange-50/70 border-orange-200", text: "text-orange-700" },
   };
   const s = map[status ?? "draft"] ?? map.draft;
   return (

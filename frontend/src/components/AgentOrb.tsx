@@ -9,16 +9,16 @@ interface AgentOrbProps {
 }
 
 const STATE_COLORS: Record<VoiceState, { from: string; to: string; glow: string }> = {
-  idle:       { from: "#bae6fd", to: "#7dd3fc", glow: "rgba(125,211,252,0.3)" },
-  connecting: { from: "#7dd3fc", to: "#38bdf8", glow: "rgba(56,189,248,0.35)" },
-  listening:  { from: "#38bdf8", to: "#0ea5e9", glow: "rgba(14,165,233,0.5)" },
-  thinking:   { from: "#0ea5e9", to: "#0284c7", glow: "rgba(2,132,199,0.45)" },
-  speaking:   { from: "#0ea5e9", to: "#38bdf8", glow: "rgba(14,165,233,0.55)" },
+  idle:       { from: "#b9e2fd", to: "#83cdfa", glow: "rgba(131,205,250,0.30)" },
+  connecting: { from: "#83cdfa", to: "#3fb1f5", glow: "rgba(63,177,245,0.35)" },
+  listening:  { from: "#3fb1f5", to: "#0e93e8", glow: "rgba(14,147,232,0.50)" },
+  thinking:   { from: "#0e93e8", to: "#0773c2", glow: "rgba(7,115,194,0.45)" },
+  speaking:   { from: "#0e93e8", to: "#3fb1f5", glow: "rgba(14,147,232,0.55)" },
   calling:    { from: "#34d399", to: "#10b981", glow: "rgba(16,185,129,0.4)" },
   connected:  { from: "#34d399", to: "#059669", glow: "rgba(5,150,105,0.4)" },
   ended:      { from: "#94a3b8", to: "#64748b", glow: "rgba(100,116,139,0.3)" },
   error:      { from: "#fca5a5", to: "#ef4444", glow: "rgba(239,68,68,0.35)" },
-  greeting:   { from: "#a5b4fc", to: "#6366f1", glow: "rgba(99,102,241,0.4)" },
+  greeting:   { from: "#83cdfa", to: "#0e93e8", glow: "rgba(14,147,232,0.45)" },
 };
 
 export default function AgentOrb({ state, amplitude = 0, size = 200 }: AgentOrbProps) {

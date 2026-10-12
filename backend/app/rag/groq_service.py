@@ -12,7 +12,7 @@ from app.config.settings import settings
 from app.logs.logger import get_logger
 from app.rag.retriever import retrieve_context, format_context_for_prompt, is_knowledge_ready
 from app.rag.prompt_builder import build_prompt  # noqa: F401 (re-exported for legacy importers)
-from app.rag.prompt_builder import build_dynamic_system_prompt, FEW_SHOT_EXAMPLES
+from app.rag.prompt_builder import build_dynamic_system_prompt, build_skills_system_prompt, FEW_SHOT_EXAMPLES
 
 # Legacy name kept importable: older modules import SYSTEM_PROMPT from here.
 SYSTEM_PROMPT = build_dynamic_system_prompt()
@@ -126,36 +126,15 @@ async def stream_chat_fast(
       - max_tokens=180 for a concise 2-sentence phone answer (was 300)
       - temperature=0.25 → less sampling overhead
     """
-    # ── System prompt (kept tiny for speed, tuned for HUMAN speech §37 §38) ──
-    # Multilingual: mirror the caller's language exactly (te/hi/kn/ml/ta/en).
-    # Native-script requirement is CRITICAL — Indic languages transliterated
-    # into Latin letters sound wrong through the neural TTS voices.
-    system = (
-        f"You are {agent_name}, a warm human OUTBOUND counsellor from {company_name} on a live phone call. "
-        "YOU placed this call: you started it, you know why, and you DRIVE it — the student only has to answer. "
-        "Never behave like a support chatbot. "
-        f"LANGUAGE RULE (highest priority): reply ONLY in {lang} in its NATIVE SCRIPT "
-        f"(Telugu=తెలుగు, Hindi=देवनागरी, Tamil=தமிழ், Kannada=ಕನ್ನಡ, Malayalam=മലയാളം, English=Latin). "
-        "If the caller switches language, switch with them. "
-        "SPEAK LIKE A HUMAN: contractions (we're, that's), a varied short acknowledgement when it fits "
-        "('Sure.', 'Yeah.', 'Okay so…'), 1-2 SHORT sentences, ONE question at a time, casual words "
-        "('basically', 'around forty five thousand a year'). No brochure phrasing, no lists. "
-        "HUMAN TEXTURE: never open two consecutive replies the same way; match the caller's mood "
-        "(warm if they're warm, calm if they're in a hurry); use a tiny natural connector like 'so' "
-        "or 'let me see' only where a real speaker would, never the same one twice in a row; and "
-        "always hand the call back with a short question or a soft pick-up so there is never dead air. "
-        "WRITE FOR THE EAR: commas are pauses, full stops are breaths; never em dashes, semicolons, "
-        "parentheses, slashes, brackets or markdown — a voice stumbles on them. Vary sentence length. "
-        "Say money/dates/course names as SPOKEN WORDS, never digits. "
-        "CRITICAL for low latency: your FIRST sentence must be the direct answer in 12 words or fewer; "
-        "optionally add ONE short follow-up question as the second sentence. "
-        "The KNOWLEDGE below is authoritative — if it mentions the topic, answer from it in casual spoken "
-        "words; never claim info is missing when it is present; never guess fees/dates/eligibility. "
-        "If the knowledge truly lacks it, say naturally: 'I don't have that specific detail right now, "
-        "but I can connect you with someone who can help with that.'"
+    # ── System prompt: full skills spec (compact form for low TTFT) ──────────
+    # Uses build_skills_system_prompt which covers all 37 skills in ~120 tokens.
+    # Language rule is highest priority — native script for every Indic language.
+    system = build_skills_system_prompt(
+        agent_name=agent_name,
+        company_name=company_name,
+        language_hint=lang,
+        instructions=instructions,
     )
-    if instructions and instructions.strip():
-        system += f"\nSpecial Instructions: {instructions.strip()[:200]}"
 
     # Live counselling state (stage, known facts, locked language, next
     # question). This is what keeps the agent driving the call instead of

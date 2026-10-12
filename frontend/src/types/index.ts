@@ -313,6 +313,12 @@ export interface WSMessage {
   data: unknown;
 }
 
+export interface Activity {
+  type: string;
+  message: string;
+  timestamp?: string;
+}
+
 // ─── Training Job ─────────────────────────────────────────────────
 export interface TrainingJob {
   job_id: string;

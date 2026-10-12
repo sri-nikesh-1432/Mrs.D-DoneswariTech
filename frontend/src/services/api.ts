@@ -20,6 +20,9 @@ import type {
 
 const BASE = import.meta.env.VITE_API_URL ?? "";
 
+/** Absolute backend origin (empty in dev, where Vite proxies /api). */
+export const API_BASE = BASE;
+
 // ─── Auth token handling ───────────────────────────────────────────
 const TOKEN_KEY = "doneswari_token";
 
@@ -33,6 +36,12 @@ export function setToken(token: string | null): void {
 }
 
 const api = axios.create({ baseURL: BASE, timeout: 120_000 });
+
+/** Long-running endpoints: knowledge validation runs real retrieval smoke
+ *  tests and can be slow on a cold/small backend instance. Uploading now
+ *  returns immediately (server-side background ingestion), but validation and
+ *  the readiness gate still do real work — give them a generous ceiling. */
+const HEAVY_TIMEOUT_MS = 600_000;
 
 api.interceptors.request.use((config) => {
   const token = getToken();
@@ -123,6 +132,10 @@ export async function listAgents(): Promise<AgentProfile[]> {
   return res.data;
 }
 
+/** Default ElevenLabs voice id (see elevenlabs.io/voices/0U7pUcfIxJzwwTseQz75).
+ *  Used for every new agent unless the caller picks another voice. */
+export const DEFAULT_AGENT_VOICE = "0U7pUcfIxJzwwTseQz75";
+
 export async function createAgent(payload: {
   name: string;
   company_name: string;
@@ -135,7 +148,10 @@ export async function createAgent(payload: {
   greeting_message?: string;
   instructions?: string;
 }): Promise<AgentProfile> {
-  const res = await api.post<AgentProfile>("/api/agents", payload);
+  const res = await api.post<AgentProfile>("/api/agents", {
+    voice: DEFAULT_AGENT_VOICE,
+    ...payload,
+  });
   return res.data;
 }
 
@@ -161,6 +177,7 @@ export async function uploadAgentDocument(
   fd.append("file", file);
   const res = await api.post(`/api/agents/${agentId}/documents`, fd, {
     headers: { "Content-Type": "multipart/form-data" },
+    timeout: HEAVY_TIMEOUT_MS,
     onUploadProgress: (e) => {
       if (onUploadProgress && e.total) onUploadProgress(Math.round((e.loaded * 100) / e.total));
     },
@@ -187,7 +204,7 @@ export async function publishAgent(agentId: string | number): Promise<{ status: 
 export async function saveAgentChanges(
   agentId: string | number
 ): Promise<{ status: string; message: string; chunks_indexed: number; knowledge_document?: string; agent: AgentProfile }> {
-  const res = await api.post(`/api/agents/${agentId}/save`);
+  const res = await api.post(`/api/agents/${agentId}/save`, undefined, { timeout: HEAVY_TIMEOUT_MS });
   return res.data;
 }
 
@@ -231,7 +248,11 @@ export interface KnowledgeValidationResult {
 }
 
 export async function validateKnowledge(agentId: string | number): Promise<KnowledgeValidationResult> {
-  const res = await api.post<KnowledgeValidationResult>(`/api/agents/${agentId}/validate-knowledge`);
+  const res = await api.post<KnowledgeValidationResult>(
+    `/api/agents/${agentId}/validate-knowledge`,
+    undefined,
+    { timeout: HEAVY_TIMEOUT_MS },
+  );
   return res.data;
 }
 
@@ -286,6 +307,39 @@ export interface KnowledgeStatus {
 
 export async function getKnowledgeStatus(agentId: string | number): Promise<KnowledgeStatus> {
   const res = await api.get<KnowledgeStatus>(`/api/agents/${agentId}/knowledge/status`);
+  return res.data;
+}
+
+export async function saveSimulatorCall(payload: {
+  call_id: string;
+  institute_id: number;
+  duration: number;
+  language: string;
+  status: string;
+  transcript: Array<{ speaker: string; text: string }>;
+}): Promise<{ message: string; call_id: string }> {
+  const { call_id, institute_id, duration, language, status, transcript } = payload;
+  const res = await api.post<{ message: string; call_id: string }>("/api/calls/save", transcript, {
+    params: { call_id, institute_id, duration, language, status },
+  });
+  return res.data;
+}
+
+export interface SimulatorCall {
+  call_id: string;
+  caller_number: string;
+  caller_name: string | null;
+  call_status: string;
+  started_at: string;
+  duration_seconds: number;
+  detected_language: string;
+  transcript: string;
+  total_turns: number;
+  sentiment: string | null;
+}
+
+export async function getSimulatorCalls(instituteId: string | number): Promise<{ calls: SimulatorCall[] }> {
+  const res = await api.get<{ calls: SimulatorCall[] }>(`/api/calls/${instituteId}`);
   return res.data;
 }
 
