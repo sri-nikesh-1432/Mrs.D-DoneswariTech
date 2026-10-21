@@ -82,6 +82,8 @@ export interface ConversationMessage {
   timestamp: string;
   language?: string;
   partial?: boolean;
+  sources?: Array<{ document_name?: string; document?: string; page?: number; section?: string; score?: number }>;
+  audioData?: string | null;
 }
 
 // ─── Memory Panel ─────────────────────────────────────────────────

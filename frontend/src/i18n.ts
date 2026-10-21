@@ -10,6 +10,7 @@ import { useCallback, useSyncExternalStore } from "react";
 export type SupportedLanguage =
   | "English"
   | "Telugu"
+  | "Roman Telugu"
   | "Hindi"
   | "Tamil"
   | "Kannada"
@@ -18,6 +19,7 @@ export type SupportedLanguage =
 export const SUPPORTED_LANGUAGES: SupportedLanguage[] = [
   "English",
   "Telugu",
+  "Roman Telugu",
   "Hindi",
   "Tamil",
   "Kannada",
@@ -28,6 +30,7 @@ export const SUPPORTED_LANGUAGES: SupportedLanguage[] = [
 export const LANGUAGE_NATIVE_NAMES: Record<SupportedLanguage, string> = {
   English: "English",
   Telugu: "తెలుగు",
+  "Roman Telugu": "Roman Telugu (Tenglish)",
   Hindi: "हिंदी",
   Tamil: "தமிழ்",
   Kannada: "ಕನ್ನಡ",
@@ -649,6 +652,7 @@ const ML: Dict = {
 const DICTIONARIES: Record<SupportedLanguage, Dict> = {
   English: EN,
   Telugu: TE,
+  "Roman Telugu": TE,
   Hindi: HI,
   Tamil: TA,
   Kannada: KN,

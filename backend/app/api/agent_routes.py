@@ -1201,22 +1201,14 @@ _chat_sessions: dict = {}
 
 
 @router.post("/api/agents/{agent_id}/chat")
+@router.post("/api/agents/{agent_id}/chat")
 async def text_chat(
     agent_id: int,
     body: ChatRequest,
     authorization: Optional[str] = Header(None),
     session: AsyncSession = Depends(get_database),
 ):
-    """First-class text API (spec §5 §31 §80): text is independent of voice.
-
-    Request:
-        { "message": "What courses do you offer?", "language": "auto", "conversation_id": "optional" }
-
-    Response:
-        { "conversation_id": "...", "message": "...", "language": "en",
-          "sources": [{ "page": 12, "section": "Courses" }],
-          "lead_status": "WARM" }
-    """
+    """First-class text API (spec §5 §31 §80): text is independent of voice."""
     if not body.message or not body.message.strip():
         raise HTTPException(status_code=400, detail="Please enter a message.")
 
@@ -1224,103 +1216,30 @@ async def text_chat(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    agent_name = agent.agent_name or agent.name or "Aadhya"
+    agent_name = agent.agent_name or agent.name or "Mrs. D"
     company_name = agent.name or "Doneswari"
     instructions = agent.instructions or None
 
-    # Create/reuse a conversation (spec §24, §44).
     conversation_id = body.conversation_id or f"rest_{agent_id}_{uuid.uuid4().hex[:10]}"
     history = _chat_sessions.setdefault(conversation_id, [])
 
-    # Language is "auto" by default; just use it as the LLM lang hint.
     lang = body.language or "English"
     if lang not in ("auto", "AUTO", "Auto"):
         lang = detect_language_for_chat(body.message or "", fallback=lang)
 
     try:
-        # 5. Detect intent + path through the SAME agent brain as voice.
-        from app.conversation.counsellor import detect_intent, detect_language, follow_up_friendly_phrases
-        intent = detect_intent(body.message, context=history[-8:], language=lang)
-        taken = follow_up_friendly_phrases(intent, history[-4:], lang)
-        if taken:
-            from app.prompts import build_dynamic_system_prompt as _build_dynamic_prompt
-            _build_dynamic_prompt(
-                agent_name=agent_name,
-                profile=agent.name or "the institution",
-                language=lang,
-            )
-            answer = await stream_chat_fast(
-                taken,
-                lang=lang,
-                conversation_history=history[-6:],
-                context="",
-                instructions=instructions,
-                agent_name=agent_name,
-                company_name=company_name,
-            )
-        else:
-            from app.rag.retriever import retrieve_context, format_context_for_prompt
-            chunks = await retrieve_context(body.message, top_k=4, agent_id=agent_id)
-            context = format_context_for_prompt(chunks)
-
-            from app.rag.groq_service import stream_chat_fast
-            parts = []
-            async for token in stream_chat_fast(
-                body.message,
-                lang=lang,
-                conversation_history=history[-6:],
-                context=context,
-                agent_name=agent_name,
-                company_name=company_name,
-                instructions=instructions,
-            ):
-                parts.append(token)
-
-            answer = "".join(parts).strip()
-            if not answer:
-                answer = "I don't have that exact information available right now. I can help with what I have, or arrange for a counsellor to contact you."
-
-        # Save user + assistant messages under the shared conversation ID (spec §23, §24).
-        history.append({"role": "user", "content": body.message})
-        history.append({"role": "assistant", "content": answer})
-        _chat_sessions[conversation_id] = history[-12:]
-
-        # Lead/status tracking is part of the same conversation brain.
-        lead_status = _classify_lead(body.message, history)
-
-        return {
-            "conversation_id": conversation_id,
-            "message": answer,
-            "language": lang,
-            "sources": _format_sources(chunks),
-            "lead_status": lead_status,
-        }
-    except Exception as e:
-        # Never leave the UI permanently loading; surface a clean retryable error (spec §6, §79, §80).
-        logger.error("Text chat failed for agent %s: %s", agent_id, e)
-        raise HTTPException(status_code=500, detail={
-            "message": "I couldn't process that message. Please try again.",
-            "error": str(e)[:200],
-            "code": "CHAT_REQUEST_FAILED",
-        })
-    agent = await session.get(Institute, body.institute_id)
-    agent_name = agent.agent_name if agent else "Aadhya"
-    company_name = agent.name if agent else "Doneswari"
-    instructions = agent.instructions if agent else None
-
-    session_id = body.session_id or f"rest_{body.institute_id}"
-    history = _chat_sessions.get(session_id, [])
-
-    try:
         from app.rag.retriever import retrieve_context, format_context_for_prompt
-        chunks = await retrieve_context(body.message, top_k=4, agent_id=body.institute_id)
-        context = format_context_for_prompt(chunks)
-
+        from app.roman_telugu import looks_roman_telugu, transliterate_roman_telugu
         from app.rag.groq_service import stream_chat_fast
+
+        search_query = transliterate_roman_telugu(body.message) if looks_roman_telugu(body.message) else body.message
+        chunks = await retrieve_context(search_query, top_k=4, agent_id=agent_id)
+        context = format_context_for_prompt(chunks) if chunks else ""
+
         parts = []
         async for token in stream_chat_fast(
-            body.message,
-            lang=body.language or "English",
+            search_query,
+            lang=lang,
             conversation_history=history[-6:],
             context=context,
             agent_name=agent_name,
@@ -1329,19 +1248,30 @@ async def text_chat(
         ):
             parts.append(token)
 
-        response_text = "".join(parts).strip()
-        if not response_text:
-            response_text = "I don't have that exact information available right now. I can help with what I have, or arrange for a counsellor to contact you."
+        answer = "".join(parts).strip()
+        if not answer:
+            answer = "I don't have that exact information available right now. I can help with what I have, or arrange for a counsellor to contact you."
 
+        # Save user + assistant messages under the shared conversation ID (spec §23, §24).
         history.append({"role": "user", "content": body.message})
-        history.append({"role": "assistant", "content": response_text})
-        _chat_sessions[session_id] = history[-12:]
+        history.append({"role": "assistant", "content": answer})
+        _chat_sessions[conversation_id] = history[-12:]
+
+        lead_status = _classify_lead(body.message, history)
 
         return {
-            "response": response_text,
-            "session_id": session_id,
-            "grounded": bool(context),
+            "conversation_id": conversation_id,
+            "message": answer,
+            "response": answer,
+            "language": lang,
+            "sources": _format_sources(chunks),
+            "lead_status": lead_status,
         }
     except Exception as e:
-        logger.error("REST chat failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"Chat error: {e}")
+        logger.error("Text chat failed for agent %s: %s", agent_id, e)
+        raise HTTPException(status_code=500, detail={
+            "message": "I couldn't process that message. Please try again.",
+            "error": str(e)[:200],
+            "code": "CHAT_REQUEST_FAILED",
+        })
+

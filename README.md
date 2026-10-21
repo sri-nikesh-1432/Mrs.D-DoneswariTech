@@ -124,9 +124,18 @@ frontend/
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/health` | System health check |
-| POST | `/api/conversation/stream` | Streaming voice conversation (test mode) |
-| POST | `/api/conversation/test` | Single turn text/audio test |
-| POST | `/api/ws/voice/{agent_id}` | Real-time voice WebSocket |
+| GET | `/ready` | Service readiness check |
+| GET | `/api/status` | Real-time system diagnostics & credentials status |
+| POST | `/api/chat` | REST text conversation with RAG retrieval, citations, and TTS audio |
+| POST | `/api/chat/stream` | Server-Sent Events (SSE) streaming text chat |
+| GET | `/api/chat/history/{session_id}` | Retrieve multi-turn chat session history |
+| POST | `/api/chat/clear` | Clear chat session history |
+| POST | `/insert` or `/api/knowledge/insert` | Ingest institutional knowledge document into vector store |
+| POST | `/api/knowledge/test-retrieval` | Test RAG retrieval query and return ranked chunks with scores |
+| GET | `/api/knowledge/documents` | List indexed institutional documents |
+| DELETE | `/api/knowledge/documents/{id}` | Remove a document from the knowledge base |
+| POST | `/api/knowledge/documents/{id}/reindex` | Trigger re-indexing of a document |
+| WS | `/api/ws/voice/{agent_id}` | Real-time low-latency voice WebSocket pipeline |
 
 Interactive API docs: `http://<backend>:8000/docs`
 

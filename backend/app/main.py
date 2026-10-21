@@ -359,9 +359,11 @@ from app.api.student_routes import router as student_router
 from app.api.campaign_routes import router as campaign_router
 from app.api.calls_routes import router as calls_router
 from app.api.websocket_routes import router as websocket_router
+from app.api.chat_routes import router as chat_router
 
 app.include_router(auth_router)
 app.include_router(knowledge_router)
+app.include_router(chat_router)
 app.include_router(receptionist_router)
 app.include_router(conversation_router)
 app.include_router(analytics_router)
@@ -471,3 +473,52 @@ async def health_check():
         },
         "platform": "AI Telecaller SaaS",
     }
+
+
+@app.get("/ready", tags=["Health"])
+async def ready_check():
+    """Readiness probe for zero-downtime deployments and load balancers."""
+    from sqlalchemy import text as _sql_text
+    from app.database.connection import engine
+    from fastapi.responses import JSONResponse
+
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(_sql_text("SELECT 1"))
+        return {"status": "ready", "ready": True}
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"status": "not_ready", "error": str(e)[:200]})
+
+
+@app.get("/api/status", tags=["Health"])
+async def system_status():
+    """Public system and provider availability status."""
+    from datetime import datetime, timezone
+    from app.rag.vector_store import vector_store_manager
+    ready_stores = sum(1 for s in vector_store_manager._stores.values() if s.is_ready)
+
+    return {
+        "platform": "Mrs.D — Doneswari AI Telecaller",
+        "version": "2.0.0",
+        "status": "operational",
+        "groq": "connected" if settings.is_groq_configured else "not_configured",
+        "elevenlabs": "configured" if settings.elevenlabs_enabled else "edge_tts_fallback",
+        "active_vector_stores": ready_stores,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.post("/insert", tags=["Knowledge"])
+async def root_insert_quick_knowledge(
+    req: dict,
+):
+    """Root alias for /api/knowledge/insert to maintain legacy workflow compatibility."""
+    from app.api.knowledge_routes import insert_quick_knowledge, InsertKnowledgeRequest
+    from app.database.connection import AsyncSessionLocal
+    insert_req = InsertKnowledgeRequest(
+        content=req.get("content", ""),
+        institute_id=req.get("institute_id", 1),
+        title=req.get("title", "Inserted Knowledge"),
+    )
+    async with AsyncSessionLocal() as session:
+        return await insert_quick_knowledge(insert_req, session)

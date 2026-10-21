@@ -188,6 +188,21 @@ export default function TrainLanding() {
           {phase === "idle" && (
             <motion.div key="idle" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
               <div className="glass-strong rounded-[var(--radius-lg)] p-8">
+                {/* Quick Access to existing agent */}
+                <div className="flex items-center justify-between p-3.5 mb-6 rounded-2xl bg-sky-50/80 border border-sky-200/80 text-[13.5px]">
+                  <div className="flex items-center gap-2.5 text-[var(--gray-700)]">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <span><strong>Mrs. D</strong> is ready with admissions knowledge.</span>
+                  </div>
+                  <button
+                    onClick={() => navigate("/agent/1/test")}
+                    className="flex items-center gap-1.5 font-semibold text-[var(--sky-600)] hover:text-[var(--sky-700)] bg-white/90 shadow-sm px-3.5 py-1.5 rounded-xl hover:bg-white transition-all"
+                  >
+                    <span>Test Telecaller</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
                 <h2 className="text-[17px] font-semibold text-[var(--gray-800)] mb-1">Upload Institution Information</h2>
                 <p className="text-[13px] text-[var(--gray-500)] mb-6">
                   Prospectus · Admission brochure · Fee structure · Course document · FAQ document

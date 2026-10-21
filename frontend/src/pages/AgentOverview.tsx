@@ -3,11 +3,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link } from "react-router-dom";
 import {
   Upload, FileText, Loader2, CheckCircle2, Rocket, Pause, Bot, Save,
-  PhoneCall, XCircle, AlertTriangle, Database, Headphones,
+  PhoneCall, XCircle, AlertTriangle, Database, Headphones, Trash2, RefreshCw, Search,
 } from "lucide-react";
 import {
   getAgent, updateAgent, listAgentDocuments, publishAgent, pauseAgent,
   saveAgentChanges, parseSaveError, getKnowledgeStatus, startTestCall, getTestCallStatus,
+  deleteKnowledgeDocument, reindexKnowledgeDocument, testRetrieval,
 } from "../services/api";
 import type { TestCallStatus } from "../services/api";
 import TrainingPanel from "../components/TrainingPanel";
@@ -157,6 +158,56 @@ export default function AgentOverview() {
     }
   };
 
+  // Document management & Retrieval testing
+  const [retrievalQuery, setRetrievalQuery] = useState("");
+  const [retrievalResults, setRetrievalResults] = useState<any[] | null>(null);
+  const [testingRetrieval, setTestingRetrieval] = useState(false);
+  const [actionLoadingId, setActionLoadingId] = useState<number | null>(null);
+
+  const handleDeleteDoc = async (docId: number) => {
+    if (!window.confirm("Are you sure you want to delete this document from the knowledge base?")) return;
+    setActionLoadingId(docId);
+    try {
+      await deleteKnowledgeDocument(docId);
+      showToast("Document deleted successfully");
+      await queryClient.invalidateQueries({ queryKey: ["agent-documents", agentId] });
+      await queryClient.invalidateQueries({ queryKey: ["knowledge-status", agentId] });
+    } catch (err: any) {
+      showToast(err.message || "Failed to delete document", "error");
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleReindexDoc = async (docId: number) => {
+    setActionLoadingId(docId);
+    try {
+      await reindexKnowledgeDocument(docId);
+      showToast("Document re-indexing triggered");
+      await queryClient.invalidateQueries({ queryKey: ["agent-documents", agentId] });
+      await queryClient.invalidateQueries({ queryKey: ["knowledge-status", agentId] });
+    } catch (err: any) {
+      showToast(err.message || "Failed to reindex document", "error");
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleTestRetrieval = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!retrievalQuery.trim()) return;
+    setTestingRetrieval(true);
+    setRetrievalResults(null);
+    try {
+      const res = await testRetrieval(retrievalQuery.trim(), agentId || 1);
+      setRetrievalResults(res.results || []);
+    } catch (err: any) {
+      showToast(err.message || "Retrieval test failed", "error");
+    } finally {
+      setTestingRetrieval(false);
+    }
+  };
+
   if (isLoading || !agent || !form) {
     return (
       <div className="max-w-4xl mx-auto px-6 py-8 space-y-4">
@@ -267,23 +318,91 @@ export default function AgentOverview() {
           </div>
         )}
 
-        {documents && documents.length > 0 && (
+        {documents && documents.length > 0 ? (
           <div className="mt-4 space-y-2">
             {documents.map((d) => (
               <div key={d.id} className="flex items-center justify-between text-[13px] bg-white/70 backdrop-blur-md border hairline rounded-xl px-3.5 py-2.5">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <FileText className="w-4 h-4 text-[var(--gray-400)] shrink-0" />
-                  <span className="truncate text-[var(--gray-700)]">{d.name}</span>
+                  <span className="truncate text-[var(--gray-700)] font-medium">{d.name}</span>
                 </div>
                 <div className="flex items-center gap-3 text-[11.5px] text-[var(--gray-500)] shrink-0">
                   <span>{d.size_kb} KB</span>
                   <span>{d.chunks} chunks</span>
-                  <span className="capitalize font-medium text-[var(--sky-700)]">{d.status}</span>
+                  <span className="capitalize font-medium text-[var(--sky-700)] bg-sky-50 px-2 py-0.5 rounded-full">{d.status}</span>
+                  <button
+                    onClick={() => handleReindexDoc(d.id)}
+                    disabled={actionLoadingId === d.id}
+                    title="Re-index document into vector store"
+                    className="p-1 hover:text-[var(--sky-600)] transition-colors disabled:opacity-40"
+                  >
+                    {actionLoadingId === d.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    onClick={() => handleDeleteDoc(d.id)}
+                    disabled={actionLoadingId === d.id}
+                    title="Delete document"
+                    className="p-1 hover:text-red-600 transition-colors disabled:opacity-40"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </div>
             ))}
           </div>
+        ) : (
+          <p className="text-[12.5px] text-[var(--gray-400)] mt-2 italic">No documents indexed yet.</p>
         )}
+
+        {/* Live Retrieval Tester */}
+        <div className="mt-6 pt-5 border-t border-[var(--gray-200)]">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[13px] font-semibold text-[var(--gray-700)] flex items-center gap-1.5">
+              <Search className="w-3.5 h-3.5 text-[var(--sky-500)]" /> Test Knowledge Retrieval
+            </span>
+            <span className="text-[11px] text-[var(--gray-400)]">Test what chunks will be retrieved for a student's query</span>
+          </div>
+          <form onSubmit={handleTestRetrieval} className="flex gap-2">
+            <input
+              type="text"
+              value={retrievalQuery}
+              onChange={(e) => setRetrievalQuery(e.target.value)}
+              placeholder="e.g., What is the fee for MPC? Or: What courses are offered?"
+              className="flex-1 bg-white/70 backdrop-blur-md border hairline rounded-xl px-3.5 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
+            />
+            <button
+              type="submit"
+              disabled={testingRetrieval || !retrievalQuery.trim()}
+              className="flex items-center gap-1.5 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] disabled:opacity-50 text-white text-xs font-semibold rounded-xl px-3.5 py-2 transition-colors"
+            >
+              {testingRetrieval ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+              Test Query
+            </button>
+          </form>
+
+          {retrievalResults !== null && (
+            <div className="mt-3 space-y-2">
+              <div className="text-[11.5px] font-medium text-[var(--gray-600)]">
+                Found {retrievalResults.length} relevant chunks:
+              </div>
+              {retrievalResults.length === 0 ? (
+                <div className="text-xs text-[var(--gray-400)] italic bg-white/50 p-3 rounded-xl border hairline">
+                  No matching chunks retrieved for this query.
+                </div>
+              ) : (
+                retrievalResults.map((r, i) => (
+                  <div key={i} className="text-xs bg-white/80 p-3 rounded-xl border hairline space-y-1">
+                    <div className="flex items-center justify-between text-[11px] text-[var(--gray-500)] font-medium">
+                      <span>📖 {r.document_name || "Document"} {r.page ? `· Page ${r.page}` : ""} {r.section ? `· ${r.section}` : ""}</span>
+                      <span className="bg-sky-50 text-[var(--sky-700)] px-2 py-0.5 rounded-full font-mono">Score: {typeof r.score === 'number' ? r.score.toFixed(3) : r.score}</span>
+                    </div>
+                    <p className="text-[var(--gray-700)] leading-relaxed line-clamp-3">{r.text || r.content}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
       </section>
 
       {/* Test Call — REAL phone call (spec §33) */}

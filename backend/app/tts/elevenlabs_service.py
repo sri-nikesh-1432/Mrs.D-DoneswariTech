@@ -77,9 +77,9 @@ class ElevenLabsTTSService:
         """
         if voice and voice.strip():
             v = voice.strip()
-            if len(v) >= 11 and len(v) <= 30 and "-" not in v and "." not in v:
+            if v not in self._blocked_voices and len(v) >= 11 and len(v) <= 30 and "-" not in v and "." not in v:
                 return v
-        return self.voice_id or "0U7pUcfIxJzwwTseQz75"
+        return self.voice_id or self.fallback_voice_id or "hpp4J3VqNfWAUOO0d1Us"
 
     # ── Core synthesis ──────────────────────────────────────────────────
     async def _post_tts(

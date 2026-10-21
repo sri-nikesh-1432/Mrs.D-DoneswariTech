@@ -279,3 +279,316 @@ async def process_document(session: AsyncSession, knowledge: Knowledge, file_pat
         knowledge.ingestion_error = str(e)[:1000]
         await session.commit()
         raise
+
+
+
+# ── Schemas for Knowledge Management ──────────────────────────────────────────
+from pydantic import BaseModel
+
+
+class InsertKnowledgeRequest(BaseModel):
+    institute_id: Optional[int] = 1
+    content: str
+    title: Optional[str] = "Inserted Knowledge"
+
+
+class RetrievalTestRequest(BaseModel):
+    query: str
+    agent_id: Optional[int] = 1
+    top_k: Optional[int] = 4
+
+
+@router.post("/insert")
+async def insert_quick_knowledge(
+    req: InsertKnowledgeRequest,
+    session: AsyncSession = Depends(get_database),
+):
+    """
+    Directly insert/append text knowledge into an agent's vector store.
+    Retains the historical /insert workflow (spec §7 §14).
+    """
+    content = (req.content or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Content cannot be empty")
+
+    inst_id = req.institute_id or 1
+    agent_row = await session.get(Institute, inst_id)
+    if not agent_row:
+        raise HTTPException(status_code=404, detail="Institute not found")
+
+    # Create knowledge entry
+    doc_name = f"{req.title or 'Inserted Knowledge'} ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+    knowledge = Knowledge(
+        institute_id=inst_id,
+        document_name=doc_name,
+        document_type="text/plain",
+        file_path="direct_insert",
+        file_size=len(content.encode("utf-8")),
+        status=KnowledgeStatus.PROCESSING,
+        ingestion_stage="chunking",
+    )
+    session.add(knowledge)
+    await session.commit()
+    await session.refresh(knowledge)
+
+    # Chunk text
+    chunks = chunk_text(content, source_document=doc_name)
+    if not chunks:
+        knowledge.status = KnowledgeStatus.ERROR
+        knowledge.error_message = "No chunks generated from content"
+        await session.commit()
+        raise HTTPException(status_code=400, detail="Could not chunk content")
+
+    for c in chunks:
+        c["agent_id"] = inst_id
+        c["document_id"] = knowledge.id
+        c["document_version_id"] = knowledge.id
+        c["embedding_model"] = settings.EMBEDDING_MODEL
+
+    # Embed
+    knowledge.status = KnowledgeStatus.EMBEDDING
+    knowledge.ingestion_stage = "embedding"
+    await session.commit()
+    embeddings = generate_embeddings(chunks)
+
+    # Append to agent-scoped store
+    knowledge.status = KnowledgeStatus.INDEXING
+    knowledge.ingestion_stage = "indexing"
+    await session.commit()
+    agent_store = vector_store_manager.get_store(inst_id)
+    agent_store.append_chunks(chunks, embeddings)
+
+    # Persist vector index
+    save_path = settings.BASE_DIR / "knowledge" / f"agent_{inst_id}" / "index"
+    agent_store.save(str(save_path))
+
+    # Persist chunks
+    for c in chunks:
+        session.add(KnowledgeChunk(
+            agent_id=inst_id,
+            document_id=knowledge.id,
+            document_version_id=knowledge.id,
+            chunk_id=c.get("chunk_id", 0),
+            page_number=c.get("page_number", 1),
+            section=c.get("section", req.title),
+            text=c.get("text", ""),
+            token_count=c.get("token_count") or max(1, len(c.get("text", "")) // 4),
+            character_count=len(c.get("text", "")),
+            embedding_model=settings.EMBEDDING_MODEL,
+        ))
+    await session.flush()
+
+    knowledge.status = KnowledgeStatus.READY
+    knowledge.ingestion_stage = "ready"
+    knowledge.chunks_count = len(chunks)
+    knowledge.processing_completed_at = datetime.now(timezone.utc)
+    await session.commit()
+
+    invalidate_bm25(inst_id)
+    await invalidate_response_cache(inst_id)
+
+    logger.info(f"Quick knowledge inserted for institute {inst_id} ({len(chunks)} chunks)")
+    return {
+        "status": "ready",
+        "message": f"Successfully inserted {len(chunks)} knowledge chunks",
+        "document_name": doc_name,
+        "knowledge_id": knowledge.id,
+        "chunks_count": len(chunks),
+    }
+
+
+@router.get("/documents")
+async def list_documents(
+    institute_id: Optional[int] = None,
+    session: AsyncSession = Depends(get_database),
+):
+    """List all knowledge documents with status and metadata."""
+    query = select(Knowledge).order_by(Knowledge.id.desc())
+    if institute_id:
+        query = query.where(Knowledge.institute_id == institute_id)
+
+    res = await session.execute(query)
+    docs = res.scalars().all()
+    return [
+        {
+            "id": d.id,
+            "institute_id": d.institute_id,
+            "document_name": d.document_name,
+            "document_type": d.document_type,
+            "file_size": d.file_size,
+            "chunks_count": d.chunks_count,
+            "page_count": d.page_count,
+            "status": d.status.value if hasattr(d.status, "value") else str(d.status),
+            "ingestion_stage": d.ingestion_stage,
+            "error_message": d.error_message,
+            "created_at": d.uploaded_at.isoformat() if getattr(d, "uploaded_at", None) else None,
+            "uploaded_at": d.uploaded_at.isoformat() if getattr(d, "uploaded_at", None) else None,
+            "processing_completed_at": d.processing_completed_at.isoformat() if d.processing_completed_at else None,
+        }
+        for d in docs
+    ]
+
+
+@router.get("/documents/{document_id}")
+async def get_document(
+    document_id: int,
+    session: AsyncSession = Depends(get_database),
+):
+    """Retrieve details for a single document."""
+    doc = await session.get(Knowledge, document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    chunk_res = await session.execute(
+        select(KnowledgeChunk).where(KnowledgeChunk.document_id == document_id)
+    )
+    chunks = chunk_res.scalars().all()
+
+    return {
+        "id": doc.id,
+        "institute_id": doc.institute_id,
+        "document_name": doc.document_name,
+        "document_type": doc.document_type,
+        "file_size": doc.file_size,
+        "chunks_count": doc.chunks_count,
+        "page_count": doc.page_count,
+        "status": doc.status.value if hasattr(doc.status, "value") else str(doc.status),
+        "ingestion_stage": doc.ingestion_stage,
+        "error_message": doc.error_message,
+        "created_at": doc.uploaded_at.isoformat() if getattr(doc, "uploaded_at", None) else None,
+        "uploaded_at": doc.uploaded_at.isoformat() if getattr(doc, "uploaded_at", None) else None,
+        "chunks_sample": [
+            {"chunk_id": c.chunk_id, "page": c.page_number, "section": c.section, "text": c.text[:200]}
+            for c in chunks[:5]
+        ],
+    }
+
+
+@router.delete("/documents/{document_id}")
+async def delete_document(
+    document_id: int,
+    session: AsyncSession = Depends(get_database),
+):
+    """Delete a document and clean up its database chunk rows and vector store."""
+    doc = await session.get(Knowledge, document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    inst_id = doc.institute_id
+
+    # 1. Delete DB chunks
+    await session.execute(
+        sa_delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document_id)
+    )
+
+    # 2. Delete document row
+    await session.delete(doc)
+    await session.commit()
+
+    # 3. Rebuild or prune the agent's FAISS vector store
+    agent_store = vector_store_manager.get_store(inst_id)
+    remaining_chunks = [c for c in agent_store.chunks if c.get("document_id") != document_id]
+
+    if remaining_chunks:
+        # Re-embed remaining chunks to guarantee index integrity
+        embeddings = generate_embeddings(remaining_chunks)
+        agent_store.build_index(remaining_chunks, embeddings)
+        save_path = settings.BASE_DIR / "knowledge" / f"agent_{inst_id}" / "index"
+        agent_store.save(str(save_path))
+    else:
+        agent_store.clear()
+        save_path = settings.BASE_DIR / "knowledge" / f"agent_{inst_id}" / "index"
+        for ext in (".index", ".chunks.pkl"):
+            p = Path(f"{save_path}{ext}")
+            if p.exists():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+
+    invalidate_bm25(inst_id)
+    await invalidate_response_cache(inst_id)
+
+    logger.info(f"Deleted document {document_id} and updated index for agent {inst_id}")
+    return {
+        "status": "deleted",
+        "message": f"Document {document_id} successfully deleted",
+        "remaining_chunks": len(remaining_chunks),
+    }
+
+
+@router.post("/documents/{document_id}/reindex")
+async def reindex_document(
+    document_id: int,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_database),
+):
+    """Trigger re-indexing of an existing document."""
+    doc = await session.get(Knowledge, document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    file_path = Path(doc.file_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=400, detail="Original document file not found on disk to re-index")
+
+    doc.status = KnowledgeStatus.PROCESSING
+    doc.ingestion_stage = "extracting"
+    await session.commit()
+
+    background_tasks.add_task(process_document_background, document_id, file_path)
+    return {
+        "status": "processing",
+        "message": f"Re-indexing started for document {document_id}",
+    }
+
+
+@router.post("/test-retrieval")
+async def test_retrieval_endpoint(req: RetrievalTestRequest):
+    """
+    Protected retrieval test endpoint.
+    Retrieves most similar chunks for a test query and returns full provenance.
+    """
+    from app.rag.retriever import retrieve_context
+    chunks = await retrieve_context(req.query, top_k=req.top_k or 4, agent_id=req.agent_id or 1)
+    return {
+        "query": req.query,
+        "agent_id": req.agent_id or 1,
+        "chunks_found": len(chunks),
+        "results": [
+            {
+                "chunk_id": c.get("chunk_id"),
+                "document": c.get("document") or c.get("source"),
+                "page": c.get("page_number"),
+                "section": c.get("section"),
+                "similarity_score": round(float(c.get("score", 0.0)), 4),
+                "text": c.get("text"),
+            }
+            for c in chunks
+        ],
+    }
+
+
+@router.get("/status")
+async def get_knowledge_status_endpoint(
+    institute_id: Optional[int] = 1,
+    session: AsyncSession = Depends(get_database),
+):
+    """Check knowledge base readiness and chunk count for an institute."""
+    doc_res = await session.execute(
+        select(Knowledge)
+        .where(Knowledge.institute_id == institute_id)
+        .order_by(Knowledge.id.desc())
+        .limit(1)
+    )
+    doc = doc_res.scalar_one_or_none()
+    agent_store = vector_store_manager.get_store(institute_id)
+
+    return {
+        "institute_id": institute_id,
+        "is_ready": agent_store.is_ready,
+        "chunks_count": len(agent_store.chunks),
+        "latest_document": doc.document_name if doc else None,
+        "latest_status": (doc.status.value if hasattr(doc.status, "value") else str(doc.status)) if doc else "no_document",
+        "ingestion_stage": doc.ingestion_stage if doc else "none",
+    }

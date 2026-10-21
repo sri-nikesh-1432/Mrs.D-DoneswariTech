@@ -460,13 +460,53 @@ export async function pauseAgent(agentId: string | number): Promise<{ status: st
 export async function sendTextMessage(
   instituteId: string | number,
   message: string,
-  sessionId?: string
-): Promise<{ response: string; grounded?: boolean; memory?: Record<string, string> }> {
+  sessionId?: string,
+  language?: string,
+): Promise<{
+  response: string;
+  message?: string;
+  grounded?: boolean;
+  sources?: Array<{ document_name: string; page?: number; section?: string; score?: number }>;
+  audio_data?: string | null;
+  conversation_id?: string;
+  session_id?: string;
+  language?: string;
+  memory?: Record<string, any>;
+}> {
   const res = await api.post(`/api/chat`, {
-    institute_id: instituteId,
+    institute_id: Number(instituteId) || 1,
+    agent_id: Number(instituteId) || 1,
     message,
     session_id: sessionId,
+    conversation_id: sessionId,
+    language: language || "English",
+    return_audio: true,
   });
+  return res.data;
+}
+
+export async function clearChatSession(sessionId: string): Promise<void> {
+  await api.post(`/api/chat/clear`, { session_id: sessionId });
+}
+
+export async function testRetrieval(
+  query: string,
+  agentId?: number | string,
+): Promise<{ query: string; agent_id: number; chunks_found: number; results: Array<any> }> {
+  const res = await api.post(`/api/knowledge/test-retrieval`, {
+    query,
+    agent_id: Number(agentId) || 1,
+  });
+  return res.data;
+}
+
+export async function deleteKnowledgeDocument(docId: number | string): Promise<any> {
+  const res = await api.delete(`/api/knowledge/documents/${docId}`);
+  return res.data;
+}
+
+export async function reindexKnowledgeDocument(docId: number | string): Promise<any> {
+  const res = await api.post(`/api/knowledge/documents/${docId}/reindex`);
   return res.data;
 }
 

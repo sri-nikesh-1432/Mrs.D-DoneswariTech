@@ -1,32 +1,35 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Mic, MicOff, RotateCcw, Rocket, Loader2 } from "lucide-react";
+import {
+  Mic, MicOff, RotateCcw, Rocket, Loader2, Volume2, Square,
+  Trash2, Globe, BookOpen, CheckCircle2, AlertCircle, Headphones
+} from "lucide-react";
 import AgentOrb from "../components/AgentOrb";
 import RealWaveform from "../components/RealWaveform";
 import TextInput from "../components/TextInput";
 import { voiceWS } from "../services/voiceWebSocket";
 import type { VoiceWSState } from "../services/voiceWebSocket";
-import { publishAgent, getAgent } from "../services/api";
+import { publishAgent, getAgent, sendTextMessage, clearChatSession } from "../services/api";
 import LatencyPanel from "../components/LatencyPanel";
 import RetrievalDebugPanel from "../components/RetrievalDebugPanel";
-import { useI18n } from "../i18n";
+import { useTranslation, SUPPORTED_LANGUAGES, LANGUAGE_NATIVE_NAMES, SupportedLanguage } from "../i18n";
 import type { ConversationMessage } from "../types";
 
 const STATE_MAP: Record<VoiceWSState, { label: string; color: string }> = {
-  disconnected: { label: "Offline", color: "bg-[var(--gray-100)] text-[var(--gray-600)]" },
+  disconnected: { label: "Voice Idle", color: "bg-[var(--gray-100)] text-[var(--gray-600)]" },
   connecting: { label: "Connecting…", color: "bg-amber-50 text-amber-700" },
-  connected: { label: "Ready", color: "bg-[var(--sky-50)] text-[var(--sky-700)]" },
+  connected: { label: "Voice Ready", color: "bg-[var(--sky-50)] text-[var(--sky-700)]" },
   greeting: { label: "Speaking…", color: "bg-[var(--sky-50)] text-[var(--sky-700)]" },
   listening: { label: "Listening…", color: "bg-emerald-50 text-emerald-700" },
   processing: { label: "Thinking…", color: "bg-amber-50 text-amber-700" },
   speaking: { label: "Speaking…", color: "bg-[var(--sky-50)] text-[var(--sky-700)]" },
-  error: { label: "Error", color: "bg-red-50 text-red-700" },
+  error: { label: "Voice Error", color: "bg-red-50 text-red-700" },
 };
 
 export default function AgentTest() {
   const { agentId } = useParams<{ agentId: string }>();
   const navigate = useNavigate();
-  const { t } = useI18n();
+  const { t, lang, changeLanguage } = useTranslation();
 
   const [wsState, setWsState] = useState<VoiceWSState>("disconnected");
   const [amplitude, setAmplitude] = useState(0);      // REAL mic level
@@ -34,41 +37,52 @@ export default function AgentTest() {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [partialUser, setPartialUser] = useState("");
   const [partialAgent, setPartialAgent] = useState("");
-  const [agentName, setAgentName] = useState("Aadhya");
+  const [agentName, setAgentName] = useState("Mrs. D");
+  const [companyName, setCompanyName] = useState("Doneswari Technologies");
   const [agentStatus, setAgentStatus] = useState<string | undefined>();
   const [publishing, setPublishing] = useState(false);
   const [toast, setToast] = useState("");
-  const [lastLatency, setLastLatency] = useState<number | null>(null);
+  const [isTypingLoading, setIsTypingLoading] = useState(false);
+  const [selectedLanguage, setSelectedLanguage] = useState<SupportedLanguage>(lang);
+  const [activeAudio, setActiveAudio] = useState<HTMLAudioElement | null>(null);
+  const [playingMsgIndex, setPlayingMsgIndex] = useState<number | null>(null);
 
   const transcriptRef = useRef<HTMLDivElement>(null);
   const sessionIdRef = useRef(`session_${Date.now()}`);
 
-  // Load agent name
+  // Load agent profile
   useEffect(() => {
-    if (!agentId) return;
-    getAgent(agentId)
+    const id = agentId || "1";
+    getAgent(id)
       .then((a) => {
-        setAgentName(a.agent_name || "Aadhya");
+        setAgentName(a.agent_name || "Mrs. D");
+        setCompanyName(a.name || "Doneswari Technologies");
         setAgentStatus(a.status);
       })
-      .catch(() => setAgentName("Aadhya"));
+      .catch(() => {
+        setAgentName("Mrs. D");
+        setCompanyName("Doneswari Technologies");
+      });
   }, [agentId]);
 
-  // Do NOT auto-connect on mount: the greeting would play before the user
-  // pressed Start (mic still off). The socket is opened by startConversation.
   useEffect(() => {
-    return () => voiceWS.disconnect();
+    return () => {
+      voiceWS.disconnect();
+      if (activeAudio) {
+        activeAudio.pause();
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId]);
 
   // Autoscroll transcript
   useEffect(() => {
     transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, partialUser, partialAgent]);
+  }, [messages, partialUser, partialAgent, isTypingLoading]);
 
   const connect = useCallback(() => {
-    if (!agentId) return;
-    voiceWS.connect(agentId, {
+    const id = agentId || "1";
+    voiceWS.connect(id, {
       onStateChange: (s) => setWsState(s),
       onAmplitude: (a) => setAmplitude(a),
       onPlaybackAmplitude: (a) => setPlayAmplitude(a),
@@ -93,12 +107,12 @@ export default function AgentTest() {
   }, [agentId]);
 
   const startConversation = async () => {
-    setMessages([]);
     connect();
     await voiceWS.startMic();
   };
 
   const restartConversation = () => {
+    stopCurrentAudio();
     voiceWS.disconnect();
     setMessages([]);
     setPartialUser("");
@@ -111,13 +125,122 @@ export default function AgentTest() {
     else voiceWS.startMic();
   };
 
+  const stopCurrentAudio = () => {
+    if (activeAudio) {
+      activeAudio.pause();
+      setActiveAudio(null);
+      setPlayingMsgIndex(null);
+    }
+    voiceWS.interrupt();
+  };
+
+  // ── First-Class Text Handler ───────────────────────────────────────────
+  const handleSendText = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    // Display user utterance immediately
+    const userMsg: ConversationMessage = {
+      role: "user",
+      content: trimmed,
+      timestamp: now(),
+      language: selectedLanguage,
+    };
+    setMessages((prev) => [...prev, userMsg]);
+
+    // If WebSocket voice is open, route through real-time socket
+    if (wsState !== "disconnected" && wsState !== "error") {
+      voiceWS.sendText(trimmed);
+      return;
+    }
+
+    // Otherwise, execute independent first-class REST RAG chat
+    setIsTypingLoading(true);
+    try {
+      const res = await sendTextMessage(
+        agentId || 1,
+        trimmed,
+        sessionIdRef.current,
+        selectedLanguage
+      );
+
+      const assistantMsg: ConversationMessage = {
+        role: "assistant",
+        content: res.response || res.message || "",
+        timestamp: now(),
+        sources: res.sources,
+        audioData: res.audio_data,
+        language: res.language || selectedLanguage,
+      };
+      setMessages((prev) => [...prev, assistantMsg]);
+
+      // Autoplay voice response if available
+      if (res.audio_data) {
+        playAudioData(res.audio_data, messages.length + 1);
+      }
+    } catch (err: any) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "I couldn't process that question right now. Please try again or contact the admissions office directly.",
+          timestamp: now(),
+        },
+      ]);
+    } finally {
+      setIsTypingLoading(false);
+    }
+  };
+
+  // Play audio from base64 MP3
+  const playAudioData = (b64Audio: string, msgIndex?: number) => {
+    stopCurrentAudio();
+    try {
+      const audio = new Audio("data:audio/mp3;base64," + b64Audio);
+      if (typeof msgIndex === "number") setPlayingMsgIndex(msgIndex);
+      setActiveAudio(audio);
+      audio.onended = () => {
+        setActiveAudio(null);
+        setPlayingMsgIndex(null);
+      };
+      audio.onerror = () => {
+        setActiveAudio(null);
+        setPlayingMsgIndex(null);
+      };
+      audio.play().catch(() => {});
+    } catch (e) {
+      console.warn("Failed to play synthesized audio", e);
+    }
+  };
+
+  // Clear conversation history
+  const handleClearConversation = async () => {
+    if (window.confirm("Clear active conversation history?")) {
+      stopCurrentAudio();
+      setMessages([]);
+      setPartialUser("");
+      setPartialAgent("");
+      try {
+        await clearChatSession(sessionIdRef.current);
+      } catch {}
+      sessionIdRef.current = `session_${Date.now()}`;
+      setToast("Conversation cleared");
+      setTimeout(() => setToast(""), 3000);
+    }
+  };
+
+  const handleLanguageChange = (lang: SupportedLanguage) => {
+    setSelectedLanguage(lang);
+    changeLanguage(lang);
+  };
+
   const handlePublish = async () => {
-    if (!agentId) return;
+    const id = agentId || "1";
     setPublishing(true);
     try {
-      const res = await publishAgent(agentId);
+      const res = await publishAgent(id);
       setToast(res.message);
-      setTimeout(() => navigate(`/agent/${agentId}/students`), 1200);
+      setTimeout(() => navigate(`/agent/${id}/students`), 1200);
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       setToast(detail || "Publish failed — upload a knowledge document first");
@@ -130,112 +253,231 @@ export default function AgentTest() {
   const isLiveAgent = agentStatus === "published" || agentStatus === "ready" || agentStatus === "testing";
   const badge =
     wsState === "disconnected" && isLiveAgent
-      ? { label: "Online", color: "bg-emerald-50 text-emerald-700" }
+      ? { label: "Ready", color: "bg-emerald-50 text-emerald-700" }
       : STATE_MAP[wsState] ?? STATE_MAP.disconnected;
   const inConversation = wsState !== "disconnected" && wsState !== "error";
+  const isSpeaking = wsState === "speaking" || wsState === "greeting" || activeAudio !== null;
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-8 flex flex-col" style={{ height: "calc(100vh - 1px)" }}>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
+    <div className="max-w-4xl mx-auto px-6 py-6 flex flex-col" style={{ minHeight: "calc(100vh - 20px)" }}>
+      {/* ── Header ── */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4 pb-3 border-b hairline">
         <div>
-          <h1 className="text-2xl font-display text-[var(--gray-800)]">{t("test.title")} — {agentName}</h1>
-          <p className="text-[13px] text-[var(--gray-500)] mt-0.5">Speak naturally; barge-in interrupts the agent instantly</p>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl font-display font-semibold text-[var(--gray-800)]">
+              {agentName}
+            </h1>
+            <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-sky-100 text-[var(--sky-700)]">
+              Doneswari AI Telecaller
+            </span>
+            <span className={`text-[12px] font-semibold px-3 py-0.5 rounded-full ${badge.color}`}>
+              {badge.label}
+            </span>
+          </div>
+          <p className="text-[13px] text-[var(--gray-500)] mt-0.5">
+            Admissions Telecaller for {companyName} · Grounded in uploaded institutional PDF documents
+          </p>
         </div>
-        <span className={`text-[12px] font-semibold px-3 py-1 rounded-full ${badge.color}`}>{badge.label}</span>
+
+        {/* Language selector & actions */}
+        <div className="flex items-center gap-2 self-start md:self-auto">
+          <div className="flex items-center gap-1.5 bg-white/70 backdrop-blur-md border hairline rounded-xl px-2.5 py-1 text-[13px]">
+            <Globe className="w-3.5 h-3.5 text-[var(--sky-500)]" />
+            <select
+              value={selectedLanguage}
+              onChange={(e) => handleLanguageChange(e.target.value as SupportedLanguage)}
+              className="bg-transparent text-[13px] font-medium text-[var(--gray-700)] outline-none cursor-pointer"
+            >
+              {SUPPORTED_LANGUAGES.map((lang) => (
+                <option key={lang} value={lang}>
+                  {LANGUAGE_NATIVE_NAMES[lang]} ({lang})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            onClick={handleClearConversation}
+            className="p-2 rounded-xl text-[var(--gray-400)] hover:text-red-600 hover:bg-red-50 transition-colors"
+            title="Clear Conversation"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {toast && (
-        <div className="mb-4 text-sm text-[var(--sky-700)] glass-sky rounded-[var(--radius-md)] px-4 py-2.5">{toast}</div>
+        <div className="mb-3 text-sm text-[var(--sky-700)] glass-sky rounded-[var(--radius-md)] px-4 py-2">
+          {toast}
+        </div>
       )}
 
-      {/* Orb */}
-      <div className="flex justify-center py-4">
-        <AgentOrb state={mapToOrbState(wsState)} amplitude={amplitude} />
+      {/* ── Voice Assistant Visualization ── */}
+      <div className="flex justify-center py-2">
+        <AgentOrb state={isSpeaking ? "speaking" : mapToOrbState(wsState)} amplitude={amplitude} />
       </div>
 
-      {/* REAL waveforms (spec §33 §34 §59): driven by actual audio —
-          user's mic while listening, agent's output while speaking.
-          No fake animation: silence is flat. */}
-      <div className="flex justify-center h-16 mb-2">
-        {wsState === "speaking" || wsState === "greeting" ? (
-          <RealWaveform source="playback" amplitude={playAmplitude} active={playAmplitude > 0.01} height={64} color="#0e93e8" />
+      {/* REAL waveforms */}
+      <div className="flex justify-center h-14 mb-1">
+        {isSpeaking ? (
+          <RealWaveform source="playback" amplitude={playAmplitude || 0.4} active={true} height={56} color="#0e93e8" />
         ) : (
-          <RealWaveform source="mic" amplitude={amplitude} active={wsState === "listening"} height={64} color="#3fb1f5" />
+          <RealWaveform source="mic" amplitude={amplitude} active={wsState === "listening"} height={56} color="#3fb1f5" />
         )}
       </div>
-      {/* Two-state label (spec §34) */}
-      <div className="text-center text-[11.5px] text-[var(--gray-400)] mb-3">
-        {wsState === "speaking" || wsState === "greeting"
-          ? `${t("test.aiSpeaking")} — interruption works: just start talking`
-          : wsState === "listening" ? `${t("test.userSpeaking")} — live waveform` : t("test.listening")}
+
+      {/* Audio Status & Interruption Notice */}
+      <div className="text-center text-[12px] text-[var(--gray-400)] mb-3 flex items-center justify-center gap-2">
+        {isSpeaking ? (
+          <>
+            <span className="inline-block w-2 h-2 rounded-full bg-sky-500 animate-ping" />
+            <span className="text-[var(--sky-700)] font-medium">Mrs. D is speaking — barge-in interrupts instantly</span>
+            <button
+              onClick={stopCurrentAudio}
+              className="ml-2 inline-flex items-center gap-1 text-[11px] bg-red-50 text-red-600 px-2 py-0.5 rounded-md hover:bg-red-100"
+            >
+              <Square className="w-3 h-3 fill-current" /> Stop
+            </button>
+          </>
+        ) : wsState === "listening" ? (
+          <span className="text-emerald-600 font-medium">Listening to your question…</span>
+        ) : (
+          <span>Ask questions about admissions, courses, fees, or eligibility via voice or text below</span>
+        )}
       </div>
 
-      {/* Transcript */}
-      <div ref={transcriptRef} className="flex-1 overflow-y-auto glass rounded-[var(--radius-lg)] p-4 mb-4 min-h-[180px]">
-        {messages.length === 0 && !partialUser && !partialAgent && (
-          <div className="h-full flex items-center justify-center text-[13px] text-[var(--gray-400)]">
-            Start the conversation and speak — live transcript appears here
+      {/* ── Conversation Workspace / Transcript ── */}
+      <div
+        ref={transcriptRef}
+        className="flex-1 overflow-y-auto glass rounded-[var(--radius-lg)] p-4 mb-4 min-h-[220px] shadow-[inset_0_1px_3px_rgba(0,0,0,0.03)]"
+      >
+        {messages.length === 0 && !partialUser && !partialAgent && !isTypingLoading && (
+          <div className="h-full flex flex-col items-center justify-center text-center p-6 text-[var(--gray-400)]">
+            <Headphones className="w-8 h-8 text-[var(--gray-300)] mb-2" />
+            <p className="text-[14px] font-medium text-[var(--gray-600)]">Welcome to Admissions Support</p>
+            <p className="text-[12.5px] max-w-md mt-1 text-[var(--gray-400)]">
+              Click the microphone to start voice calling, or type any question below. Answers are strictly grounded in the institution's official documents.
+            </p>
+            <div className="flex flex-wrap justify-center gap-2 mt-4 max-w-lg">
+              {[
+                "What courses are offered?",
+                "What is the fee structure?",
+                "Do you provide hostel facility?",
+                "What is the admission procedure?",
+              ].map((sample) => (
+                <button
+                  key={sample}
+                  onClick={() => handleSendText(sample)}
+                  className="text-[11.5px] bg-white/70 hover:bg-sky-50 border hairline px-2.5 py-1.5 rounded-lg text-[var(--gray-700)] transition-colors"
+                >
+                  "{sample}"
+                </button>
+              ))}
+            </div>
           </div>
         )}
+
         {messages.map((m, i) => (
           <div key={i} className={`mb-3 flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div
-              className={`max-w-[78%] rounded-2xl px-3.5 py-2 text-[13.5px] leading-relaxed ${
+              className={`max-w-[82%] rounded-2xl px-4 py-2.5 text-[13.5px] leading-relaxed ${
                 m.role === "user"
-                  ? "bg-[var(--sky-500)] text-white rounded-br-md"
-                  : "bg-white/70 backdrop-blur-md border hairline text-[var(--gray-800)] rounded-bl-md"
+                  ? "bg-[var(--sky-500)] text-white rounded-br-md shadow-sm"
+                  : "bg-white/85 backdrop-blur-md border hairline text-[var(--gray-800)] rounded-bl-md shadow-sm"
               }`}
             >
-              <div className={`text-[10.5px] font-semibold mb-0.5 ${m.role === "user" ? "text-sky-100" : "text-[var(--sky-600)]"}`}>
-                {m.role === "user" ? "You" : agentName}
+              <div className="flex items-center justify-between gap-3 mb-1">
+                <span className={`text-[11px] font-semibold ${m.role === "user" ? "text-sky-100" : "text-[var(--sky-600)]"}`}>
+                  {m.role === "user" ? "You" : agentName}
+                </span>
+                <span className={`text-[10px] ${m.role === "user" ? "text-sky-200" : "text-[var(--gray-400)]"}`}>
+                  {m.timestamp}
+                </span>
               </div>
-              {m.content}
+
+              <div className="whitespace-pre-wrap">{m.content}</div>
+
+              {/* Provenance citations */}
+              {m.sources && m.sources.length > 0 && (
+                <div className="mt-2.5 pt-2 border-t border-[var(--gray-100)] flex flex-wrap gap-1.5">
+                  {m.sources.slice(0, 2).map((s, idx) => (
+                    <span
+                      key={idx}
+                      className="inline-flex items-center gap-1 text-[11px] bg-sky-50 text-[var(--sky-700)] px-2 py-0.5 rounded-md font-medium"
+                      title={s.section}
+                    >
+                      <BookOpen className="w-3 h-3 text-[var(--sky-500)]" />
+                      {s.document_name || "Document"}{s.page ? ` · Page ${s.page}` : ""}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Play synthesized audio button */}
+              {m.role === "assistant" && m.audioData && (
+                <div className="mt-2 flex justify-end">
+                  <button
+                    onClick={() => playAudioData(m.audioData!, i)}
+                    className="inline-flex items-center gap-1 text-[11px] text-[var(--sky-600)] hover:text-[var(--sky-800)] font-medium"
+                  >
+                    <Volume2 className="w-3.5 h-3.5" />
+                    {playingMsgIndex === i ? "Playing voice…" : "Listen"}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         ))}
+
         {partialUser && (
           <div className="mb-3 flex justify-end">
-            <div className="max-w-[78%] rounded-2xl px-3.5 py-2 text-[13.5px] bg-[var(--sky-100)] text-[var(--sky-700)] italic rounded-br-md">
+            <div className="max-w-[82%] rounded-2xl px-4 py-2.5 text-[13.5px] bg-[var(--sky-100)] text-[var(--sky-800)] italic rounded-br-md">
               {partialUser}…
             </div>
           </div>
         )}
+
         {partialAgent && (
           <div className="mb-3 flex justify-start">
-            <div className="max-w-[78%] rounded-2xl px-3.5 py-2 text-[13.5px] bg-white/70 backdrop-blur-md border hairline text-[var(--gray-800)] rounded-bl-md">
+            <div className="max-w-[82%] rounded-2xl px-4 py-2.5 text-[13.5px] bg-white/80 backdrop-blur-md border hairline text-[var(--gray-800)] rounded-bl-md">
               {partialAgent}
+            </div>
+          </div>
+        )}
+
+        {isTypingLoading && (
+          <div className="mb-3 flex justify-start">
+            <div className="rounded-2xl px-4 py-2.5 text-[13px] bg-white/70 backdrop-blur-md border hairline text-[var(--gray-500)] flex items-center gap-2">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--sky-500)]" />
+              <span>Mrs. D is retrieving institutional documents…</span>
             </div>
           </div>
         )}
       </div>
 
-      {/* Text input fallback */}
-      <div className="mb-4">
+      {/* ── First-Class Text Input ── */}
+      <div className="mb-3">
         <TextInput
-          voiceState={mapToOrbState(wsState)}
-          onSendText={(text) => voiceWS.sendText(text)}
-          onMicStart={() => voiceWS.startMic()}
+          voiceState={isSpeaking ? "speaking" : mapToOrbState(wsState)}
+          onSendText={handleSendText}
+          onMicStart={() => (inConversation ? voiceWS.startMic() : startConversation())}
           onMicStop={() => voiceWS.stopMic()}
-          disabled={!inConversation}
+          disabled={false}
         />
       </div>
 
-      {/* Internal latency view — REAL measured per-turn values (spec §60) */}
+      {/* Internal latency & retrieval inspection panels */}
       {agentId && <LatencyPanel agentId={agentId} />}
-
-      {/* Internal retrieval debug view (spec §14) — shows the real chunks the
-          agent retrieved, with document/page/section provenance. */}
       {agentId && <RetrievalDebugPanel agentId={agentId} />}
 
-      {/* Controls */}
-      <div className="flex items-center justify-center gap-3 pb-2">
+      {/* ── Main Voice & Action Controls ── */}
+      <div className="flex items-center justify-center gap-3 pt-2 pb-1">
         {!inConversation ? (
           <button
             onClick={startConversation}
-            className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white font-semibold text-sm rounded-xl px-6 py-3 shadow-[0_8px_24px_rgba(14,147,232,0.35)]"
+            className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white font-semibold text-sm rounded-xl px-6 py-3 shadow-[0_8px_24px_rgba(14,147,232,0.35)] transition-all"
           >
-            <Mic className="w-4.5 h-4.5" /> {t("test.start")}
+            <Mic className="w-4.5 h-4.5" /> Start Voice Call
           </button>
         ) : (
           <>
@@ -248,13 +490,23 @@ export default function AgentTest() {
               }`}
             >
               {wsState === "listening" ? <Mic className="w-4.5 h-4.5" /> : <MicOff className="w-4.5 h-4.5" />}
-              {wsState === "listening" ? t("test.micOn") : t("test.micOff")}
+              {wsState === "listening" ? "Mute Mic" : "Unmute Mic"}
             </button>
+
+            {isSpeaking && (
+              <button
+                onClick={stopCurrentAudio}
+                className="flex items-center gap-2 bg-red-50 hover:bg-red-100 text-red-600 font-semibold text-sm rounded-xl px-4 py-3 border border-red-200 transition-colors"
+              >
+                <Square className="w-4 h-4 fill-current" /> Stop Speaking
+              </button>
+            )}
+
             <button
               onClick={restartConversation}
-              className="flex items-center gap-2 glass hover:bg-white/80 text-[var(--gray-800)] font-semibold text-sm rounded-xl px-5 py-3"
+              className="flex items-center gap-2 glass hover:bg-white/80 text-[var(--gray-800)] font-semibold text-sm rounded-xl px-5 py-3 transition-colors"
             >
-              <RotateCcw className="w-4 h-4" /> {t("test.restart")}
+              <RotateCcw className="w-4 h-4" /> Restart Call
             </button>
           </>
         )}
@@ -262,10 +514,10 @@ export default function AgentTest() {
         <button
           onClick={handlePublish}
           disabled={publishing}
-          className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-xl px-6 py-3 shadow-[0_8px_24px_rgba(16,185,129,0.35)] disabled:opacity-60"
+          className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-xl px-6 py-3 shadow-[0_8px_24px_rgba(16,185,129,0.35)] disabled:opacity-60 transition-all"
         >
           {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4.5 h-4.5" />}
-          {t("test.publish")}
+          Publish Telecaller
         </button>
       </div>
     </div>

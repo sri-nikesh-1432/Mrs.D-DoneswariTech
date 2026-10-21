@@ -203,7 +203,10 @@ class Settings(BaseSettings):
         return bool(self.GROQ_API_KEY) and self.GROQ_API_KEY != "your_groq_api_key_here"
 
     class Config:
-        env_file = ".env"
+        env_file = (
+            str(Path(__file__).resolve().parent.parent.parent / ".env"),
+            ".env",
+        )
         env_file_encoding = "utf-8"
         case_sensitive = True
     
