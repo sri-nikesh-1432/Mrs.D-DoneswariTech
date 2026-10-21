@@ -91,10 +91,12 @@ class TwilioService:
 
     def _public_base_url(self) -> str:
         """Public HTTPS base URL that Twilio's servers can reach (spec §66)."""
-        return (
-            os.getenv("PUBLIC_BASE_URL")
+        url = (
+            getattr(settings, "PUBLIC_BASE_URL", "")
+            or os.getenv("PUBLIC_BASE_URL", "")
             or f"https://{settings.HOST}:{settings.PORT}"
-        )
+        ).strip().rstrip("/")
+        return url
 
     def build_outbound_twiml(self, agent_id: int, call_id: str) -> str:
         """

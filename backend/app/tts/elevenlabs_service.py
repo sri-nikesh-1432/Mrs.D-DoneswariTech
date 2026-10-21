@@ -102,7 +102,7 @@ class ElevenLabsTTSService:
             "voice_settings": {
                 "stability": stability,
                 "similarity_boost": similarity_boost,
-                "style": 0.2,
+                "style": 0.35,
                 "use_speaker_boost": True,
             },
         }
@@ -136,7 +136,7 @@ class ElevenLabsTTSService:
                     stability = max(0.2, min(0.75, 0.5 + (1.0 - s) * 0.2))
             except (TypeError, ValueError):
                 pass
-        return stability, 0.8
+        return stability, 0.85
 
     async def _synthesize_mp3(
         self, text: str, voice: Optional[str] = None, speed: Optional[float] = None,

@@ -145,9 +145,8 @@ async def stream_chat_fast(
         system += f"\n\n{state_prompt.strip()[:1200]}"
 
     if context and context.strip():
-        # Hard cap at 400 chars — keeps LLM prefill fast (TTFT) while still
-        # covering the top RAG facts for grounded answers
-        system += f"\n\nKNOWLEDGE:\n{context.strip()[:400]}"
+        # Capped at 1600 chars to cover full admission details, fees, and course structures from the PDF
+        system += f"\n\nKNOWLEDGE:\n{context.strip()[:1600]}"
     else:
         # No knowledge retrieved (spec §43): silence in the KB is NOT evidence
         # of absence — never confirm/deny facts about the org. Natural,

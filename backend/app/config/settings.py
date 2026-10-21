@@ -183,6 +183,7 @@ class Settings(BaseSettings):
     TWILIO_ACCOUNT_SID: str = Field(default="", env="TWILIO_ACCOUNT_SID")
     TWILIO_AUTH_TOKEN: str = Field(default="", env="TWILIO_AUTH_TOKEN")
     TWILIO_PHONE_NUMBER: str = Field(default="", env="TWILIO_PHONE_NUMBER")
+    PUBLIC_BASE_URL: str = Field(default="", env="PUBLIC_BASE_URL")
     
     # Security
     SECRET_KEY: str = Field(default="your-secret-key-change-in-production", env="SECRET_KEY")
