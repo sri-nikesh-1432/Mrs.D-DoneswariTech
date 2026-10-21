@@ -3,17 +3,16 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
   Upload, FileText, X, CheckCircle2, Loader2, Mic,
-  BookOpen, Users, PhoneCall, Shield, Zap, ArrowRight,
+  BookOpen, Users, PhoneCall, Shield, Zap, ArrowRight, Sparkles,
 } from "lucide-react";
 import { createAgent, uploadAgentDocument, getKnowledgeStatus } from "../services/api";
 
-// These stages mirror the ingestion state returned by the backend.
 const STAGES = [
-  { key: "extracting", label: "Extracting document text" },
-  { key: "chunking", label: "Creating knowledge chunks" },
-  { key: "embedding", label: "Generating embeddings" },
-  { key: "indexing", label: "Building the knowledge index" },
-  { key: "ready", label: "Knowledge index ready" },
+  { key: "extracting", label: "Extracting institutional text" },
+  { key: "chunking", label: "Structuring knowledge chunks" },
+  { key: "embedding", label: "Generating semantic embeddings" },
+  { key: "indexing", label: "Compiling vector index (FAISS)" },
+  { key: "ready", label: "Telecaller ready for admission calls" },
 ];
 
 type Phase = "idle" | "training" | "ready" | "error";
@@ -69,7 +68,6 @@ export default function TrainLanding() {
     setError("");
 
     try {
-      // Step 1: Create agent
       const newAgent = await createAgent({
         name: file.name.replace(/\.[^.]+$/, ""),
         company_name: "Institution",
@@ -80,7 +78,6 @@ export default function TrainLanding() {
       setCompletedStages([]);
       setCurrentStage(0);
 
-      // Start ingestion and poll alongside it so the UI follows real backend stages.
       const uploadPromise = uploadAgentDocument(newAgentId, file).then(
         () => ({ ok: true as const }),
         (uploadError: unknown) => ({ ok: false as const, uploadError }),
@@ -96,9 +93,6 @@ export default function TrainLanding() {
       };
 
       let attempts = 0;
-      // Ingestion runs in the background on the server, so follow the real
-      // stages for up to 5 minutes (large documents on a free instance can
-      // legitimately take a while to embed and index).
       while (attempts < 300) {
         attempts += 1;
         const uploadResult = await Promise.race([uploadPromise, Promise.resolve(null)]);
@@ -163,63 +157,87 @@ export default function TrainLanding() {
   };
 
   return (
-    <div className="min-h-screen bg-app text-[var(--gray-800)]">
-      {/* ── Header ── */}
-      <header className="max-w-3xl mx-auto px-6 pt-12 pb-4 text-center relative z-10">
-        <div className="inline-flex items-center gap-2.5 mb-7">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[var(--sky-400)] to-[var(--sky-600)] flex items-center justify-center text-white font-bold text-[15px] shadow-[var(--shadow-md)]">
-            D
-          </div>
-          <span className="font-semibold text-[15px] tracking-[0.02em] text-[var(--gray-800)]">DONESWARI</span>
+    <div className="min-h-screen bg-app text-slate-100 flex flex-col justify-between">
+      {/* ── Top Header ── */}
+      <header className="max-w-4xl mx-auto px-6 pt-12 pb-6 text-center relative z-10">
+        <div className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-sky-500/10 border border-sky-500/25 mb-6 backdrop-blur-md shadow-sm">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
+          <span className="text-xs font-semibold tracking-wide text-sky-300 uppercase">
+            DONESWARI TECHNOLOGIES · MRS. D
+          </span>
         </div>
-        <h1 className="font-display text-5xl md:text-6xl font-normal leading-[1.02] tracking-tight text-[var(--gray-800)]">
-          The AI admissions <span className="text-gradient">telecaller</span>
+
+        <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight text-white mb-4 leading-[1.1]">
+          The AI Admissions <span className="text-gradient">Telecaller</span>
         </h1>
-        <p className="text-[15px] text-[var(--gray-500)] mt-4 max-w-xl mx-auto leading-relaxed">
-          Train an AI admissions representative using your institution's official information.
+        <p className="text-base md:text-lg text-slate-300 max-w-2xl mx-auto leading-relaxed">
+          Ground your conversational voice assistant directly in your institution's official brochures, course catalogues, and fee schedules.
         </p>
       </header>
 
-      {/* ── Main content ── */}
-      <main className="max-w-2xl mx-auto px-6 py-10 relative z-10">
+      {/* ── Main Content Container ── */}
+      <main className="max-w-2xl w-full mx-auto px-6 py-4 relative z-10">
         <AnimatePresence mode="wait">
 
-          {/* ── IDLE: Upload card ── */}
+          {/* ── IDLE: Upload & Direct Launch ── */}
           {phase === "idle" && (
-            <motion.div key="idle" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
-              <div className="glass-strong rounded-[var(--radius-lg)] p-8">
-                {/* Quick Access to existing agent */}
-                <div className="flex items-center justify-between p-3.5 mb-6 rounded-2xl bg-sky-50/80 border border-sky-200/80 text-[13.5px]">
-                  <div className="flex items-center gap-2.5 text-[var(--gray-700)]">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                    <span><strong>Mrs. D</strong> is ready with admissions knowledge.</span>
+            <motion.div
+              key="idle"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="space-y-6"
+            >
+              {/* Ready Telecaller Quick Action */}
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-sky-950/80 via-slate-900/90 to-indigo-950/80 border border-sky-500/30 backdrop-blur-xl shadow-xl flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-400/30 flex items-center justify-center text-sky-300 shrink-0 shadow-inner">
+                    <Sparkles className="w-5 h-5" />
                   </div>
-                  <button
-                    onClick={() => navigate("/agent/1/test")}
-                    className="flex items-center gap-1.5 font-semibold text-[var(--sky-600)] hover:text-[var(--sky-700)] bg-white/90 shadow-sm px-3.5 py-1.5 rounded-xl hover:bg-white transition-all"
-                  >
-                    <span>Test Telecaller</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
+                  <div>
+                    <div className="text-sm font-semibold text-white flex items-center gap-2">
+                      <span>Mrs. D is live with knowledge</span>
+                      <span className="text-[10px] bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 px-2 py-0.5 rounded-full font-mono">
+                        361 Chunks
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-300">Narayana College Admissions & Fees</div>
+                  </div>
                 </div>
+                <button
+                  onClick={() => navigate("/agent/1/test")}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-semibold text-xs tracking-wide shadow-lg shadow-sky-500/25 border border-sky-400/30 active:scale-95 transition-all shrink-0"
+                >
+                  <PhoneCall className="w-3.5 h-3.5" />
+                  <span>Launch Telecaller</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
 
-                <h2 className="text-[17px] font-semibold text-[var(--gray-800)] mb-1">Upload Institution Information</h2>
-                <p className="text-[13px] text-[var(--gray-500)] mb-6">
-                  Prospectus · Admission brochure · Fee structure · Course document · FAQ document
+              {/* Upload Card */}
+              <div className="glass-strong rounded-3xl p-7 md:p-9 shadow-2xl border border-slate-700/80">
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-lg font-bold text-white tracking-tight">
+                    Upload Institution Information
+                  </h2>
+                  <span className="text-xs text-slate-400 font-mono">Step 1 of 2</span>
+                </div>
+                <p className="text-xs text-slate-300 mb-6 leading-relaxed">
+                  Prospectus · Admission Brochure · Fee Structure · Course Document · FAQ Document
                 </p>
 
-                {/* Drop zone */}
+                {/* Dropzone */}
                 <div
                   onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
                   onDragLeave={() => setDragOver(false)}
                   onDrop={onDrop}
                   onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all duration-200 ${
+                  className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all duration-300 ${
                     dragOver
-                      ? "border-[var(--sky-400)] bg-[var(--sky-50)]"
+                      ? "border-sky-400 bg-sky-500/15 shadow-[0_0_25px_rgba(56,189,248,0.25)]"
                       : file
-                      ? "border-[var(--sky-400)] bg-[var(--sky-50)]"
-                      : "border-[var(--gray-300)] hover:border-[var(--sky-400)] hover:bg-white/60"
+                      ? "border-sky-500/80 bg-slate-800/90 shadow-md"
+                      : "border-slate-700 hover:border-sky-400/70 bg-slate-900/60 hover:bg-slate-900/90"
                   }`}
                 >
                   <input
@@ -229,66 +247,78 @@ export default function TrainLanding() {
                     className="hidden"
                     onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
                   />
+
                   {file ? (
-                    <div className="flex items-center justify-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-[var(--sky-100)] flex items-center justify-center">
-                        <FileText className="w-5 h-5 text-[var(--sky-600)]" />
-                      </div>
-                      <div className="text-left">
-                        <div className="text-[14px] font-medium text-[var(--gray-800)]">{file.name}</div>
-                        <div className="text-[12px] text-[var(--gray-500)]">{(file.size / 1024 / 1024).toFixed(1)} MB</div>
+                    <div className="flex items-center justify-between gap-4 p-3 rounded-xl bg-slate-800 border border-slate-700">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-12 h-12 rounded-xl bg-sky-500/20 border border-sky-400/40 flex items-center justify-center shrink-0">
+                          <FileText className="w-6 h-6 text-sky-400" />
+                        </div>
+                        <div className="text-left truncate">
+                          <div className="text-sm font-semibold text-white truncate">{file.name}</div>
+                          <div className="text-xs text-slate-400">
+                            {(file.size / 1024 / 1024).toFixed(2)} MB · Ready for ingestion
+                          </div>
+                        </div>
                       </div>
                       <button
                         onClick={(e) => { e.stopPropagation(); setFile(null); setError(""); }}
-                        className="ml-2 text-[var(--gray-400)] hover:text-[var(--gray-800)]"
+                        className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition-colors shrink-0"
+                        title="Remove file"
                       >
-                        <X className="w-4 h-4" />
+                        <X className="w-5 h-5" />
                       </button>
                     </div>
                   ) : (
-                    <>
-                      <span className="mx-auto mb-3 w-14 h-14 rounded-2xl bg-white/70 border hairline flex items-center justify-center">
-                        <Upload className="w-6 h-6 text-[var(--sky-400)]" />
-                      </span>
-                      <p className="text-[14px] text-[var(--gray-700)] mb-1">
-                        Drop institution PDF here, or <span className="text-[var(--sky-600)] font-medium">browse files</span>
+                    <div className="py-2">
+                      <div className="w-16 h-16 rounded-2xl bg-sky-500/15 border border-sky-500/30 flex items-center justify-center mx-auto mb-4 text-sky-400 shadow-lg shadow-sky-500/10">
+                        <Upload className="w-7 h-7" />
+                      </div>
+                      <p className="text-sm font-medium text-slate-200 mb-1">
+                        Drop institution document here, or <span className="text-sky-400 font-semibold underline underline-offset-4">browse files</span>
                       </p>
-                      <p className="text-[12px] text-[var(--gray-400)]">PDF · DOCX · TXT · Max 20 MB</p>
-                    </>
+                      <p className="text-xs text-slate-400">Supports PDF, DOCX, TXT up to 20 MB</p>
+                    </div>
                   )}
                 </div>
 
                 {error && (
-                  <div className="mt-4 text-[13px] text-red-700 bg-red-50/70 backdrop-blur-md border border-red-200 rounded-xl px-4 py-2.5">
-                    {error}
+                  <div className="mt-4 text-xs font-medium text-red-200 bg-red-950/60 border border-red-500/50 rounded-xl px-4 py-3 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
+                    <span>{error}</span>
                   </div>
                 )}
 
+                {/* Primary Action Button — High Contrast & Clear Text */}
                 <button
                   onClick={trainAgent}
                   disabled={!file}
-                  className="mt-6 w-full flex items-center justify-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] disabled:bg-[var(--gray-300)] disabled:cursor-not-allowed text-white font-semibold text-[15px] rounded-xl py-3.5 transition-colors shadow-[0_8px_24px_rgba(14,147,232,0.35)]"
+                  className={`mt-6 w-full flex items-center justify-center gap-2.5 font-bold text-sm tracking-wide rounded-xl py-4 transition-all duration-200 ${
+                    file
+                      ? "bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white shadow-xl shadow-sky-500/30 border border-sky-400/40 active:scale-[0.99] cursor-pointer"
+                      : "bg-slate-800/90 text-slate-400 border border-slate-700/80 cursor-not-allowed shadow-none"
+                  }`}
                 >
-                  <Zap className="w-4 h-4" />
-                  Train Agent
+                  <Zap className={`w-4 h-4 ${file ? "text-white fill-current" : "text-slate-400"}`} />
+                  <span>{file ? "Train Agent from Document" : "Select Document to Train Agent"}</span>
                 </button>
               </div>
 
-              {/* Feature pills */}
-              <div className="grid grid-cols-2 gap-3 mt-6">
+              {/* Feature Cards Grid */}
+              <div className="grid grid-cols-2 gap-3.5 pt-2">
                 {[
-                  { icon: BookOpen, label: "RAG Knowledge Base", desc: "Grounded in your document" },
-                  { icon: Mic, label: "Natural Voice", desc: "Human-like conversation" },
-                  { icon: Users, label: "Parent Questions", desc: "Safety, fees, hostel" },
-                  { icon: Shield, label: "No Hallucination", desc: "Only documented facts" },
+                  { icon: BookOpen, label: "RAG Knowledge Base", desc: "Strictly grounded in your documents" },
+                  { icon: Mic, label: "Natural Voice", desc: "Human-like conversational flow" },
+                  { icon: Users, label: "Parent Questions", desc: "Clear fee, hostel & course guidance" },
+                  { icon: Shield, label: "Zero Hallucination", desc: "Never invents fees or eligibility" },
                 ].map((f) => (
-                  <div key={f.label} className="glass rounded-2xl p-4 flex items-start gap-3">
-                    <div className="w-8 h-8 rounded-xl bg-sky-100/80 flex items-center justify-center shrink-0">
-                      <f.icon className="w-4 h-4 text-[var(--sky-600)]" />
+                  <div key={f.label} className="glass rounded-2xl p-4 flex items-start gap-3.5 border border-slate-800/90 hover:border-slate-700 transition-all">
+                    <div className="w-9 h-9 rounded-xl bg-sky-500/15 border border-sky-400/30 flex items-center justify-center shrink-0">
+                      <f.icon className="w-4 h-4 text-sky-400" />
                     </div>
                     <div>
-                      <div className="text-[13px] font-semibold text-[var(--gray-800)]">{f.label}</div>
-                      <div className="text-[11.5px] text-[var(--gray-500)] mt-0.5">{f.desc}</div>
+                      <div className="text-xs font-bold text-white tracking-tight">{f.label}</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5 leading-snug">{f.desc}</div>
                     </div>
                   </div>
                 ))}
@@ -296,16 +326,21 @@ export default function TrainLanding() {
             </motion.div>
           )}
 
-          {/* ── TRAINING: Progress screen ── */}
+          {/* ── TRAINING: High-Contrast Progress Screen ── */}
           {phase === "training" && (
             <motion.div key="training" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-              <div className="glass-strong rounded-[var(--radius-lg)] p-8">
+              <div className="glass-strong rounded-3xl p-8 border border-sky-500/30 shadow-2xl">
                 <div className="flex items-center gap-3 mb-6">
-                  <Loader2 className="w-5 h-5 text-[var(--sky-500)] animate-spin" />
-                  <h2 className="text-[17px] font-semibold text-[var(--gray-800)]">Processing Your Institution</h2>
+                  <div className="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-400/40 flex items-center justify-center">
+                    <Loader2 className="w-5 h-5 text-sky-400 animate-spin" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-white">Ingesting Institution Knowledge</h2>
+                    <p className="text-xs text-slate-400">Extracting content and building FAISS vector index</p>
+                  </div>
                 </div>
 
-                <div className="space-y-3">
+                <div className="space-y-3.5 my-6">
                   {STAGES.map((stage, i) => {
                     const done = completedStages.includes(i);
                     const active = currentStage === i;
@@ -314,23 +349,22 @@ export default function TrainLanding() {
                       <motion.div
                         key={stage.key}
                         initial={{ opacity: 0, x: -8 }}
-                        animate={{ opacity: pending ? 0.4 : 1, x: 0 }}
-                        transition={{ delay: i * 0.05 }}
-                        className="flex items-center gap-3"
+                        animate={{ opacity: pending ? 0.35 : 1, x: 0 }}
+                        className="flex items-center gap-3.5 p-3 rounded-xl bg-slate-900/60 border border-slate-800"
                       >
                         <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
-                          done ? "bg-emerald-50" : active ? "bg-[var(--sky-100)]" : "bg-[var(--gray-100)]"
+                          done ? "bg-emerald-500/20 border border-emerald-400/50" : active ? "bg-sky-500/20 border border-sky-400/50" : "bg-slate-800"
                         }`}>
                           {done ? (
-                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                           ) : active ? (
-                            <Loader2 className="w-4 h-4 text-[var(--sky-500)] animate-spin" />
+                            <Loader2 className="w-4 h-4 text-sky-400 animate-spin" />
                           ) : (
-                            <div className="w-2 h-2 rounded-full bg-[var(--gray-300)]" />
+                            <div className="w-2 h-2 rounded-full bg-slate-600" />
                           )}
                         </div>
-                        <span className={`text-[14px] ${
-                          done ? "text-emerald-700 font-medium" : active ? "text-[var(--sky-600)] font-medium" : "text-[var(--gray-400)]"
+                        <span className={`text-sm ${
+                          done ? "text-emerald-300 font-medium" : active ? "text-sky-300 font-semibold" : "text-slate-500"
                         }`}>
                           {stage.label}
                         </span>
@@ -339,59 +373,65 @@ export default function TrainLanding() {
                   })}
                 </div>
 
-                <div className="mt-6 h-1.5 bg-[var(--gray-100)] rounded-full overflow-hidden">
+                {/* Progress bar */}
+                <div className="mt-6 h-2 bg-slate-800 rounded-full overflow-hidden p-0.5 border border-slate-700">
                   <motion.div
-                    className="h-full bg-gradient-to-r from-[var(--sky-400)] to-[var(--sky-600)] rounded-full"
+                    className="h-full bg-gradient-to-r from-sky-400 via-blue-500 to-indigo-500 rounded-full shadow-[0_0_12px_rgba(56,189,248,0.5)]"
                     animate={{ width: `${Math.round((completedStages.length / STAGES.length) * 100)}%` }}
                     transition={{ duration: 0.4 }}
                   />
                 </div>
-                <p className="text-[12px] text-[var(--gray-500)] mt-2 text-right">
-                  {Math.round((completedStages.length / STAGES.length) * 100)}%
-                </p>
+                <div className="flex justify-between items-center text-xs text-slate-400 mt-2">
+                  <span>Processing...</span>
+                  <span className="font-mono text-sky-400 font-bold">
+                    {Math.round((completedStages.length / STAGES.length) * 100)}%
+                  </span>
+                </div>
               </div>
             </motion.div>
           )}
 
-          {/* ── READY: Agent ready screen ── */}
+          {/* ── READY: Agent Ready Screen ── */}
           {phase === "ready" && stats && (
             <motion.div key="ready" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
-              <div className="glass-strong rounded-[var(--radius-lg)] p-8 text-center">
-                <div className="w-16 h-16 rounded-2xl bg-[var(--sky-100)] flex items-center justify-center mx-auto mb-4">
-                  <CheckCircle2 className="w-8 h-8 text-[var(--sky-600)]" />
+              <div className="glass-strong rounded-3xl p-8 md:p-10 text-center border border-sky-500/40 shadow-2xl">
+                <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-emerald-500/20">
+                  <CheckCircle2 className="w-9 h-9 text-emerald-400" />
                 </div>
-                <h2 className="font-display text-3xl text-[var(--gray-800)]">Your agent is ready</h2>
-                <p className="text-[14px] text-[var(--gray-500)] mt-1.5">
+                <h2 className="text-3xl font-extrabold text-white tracking-tight">Your Agent is Ready</h2>
+                <p className="text-sm text-slate-300 mt-1.5">
                   {stats.institution_name || stats.document_name || file?.name}
                 </p>
 
-                {/* Stats */}
-                <div className="grid grid-cols-3 gap-3 mt-6 mb-6">
+                {/* Stat pills */}
+                <div className="grid grid-cols-3 gap-3 my-6">
                   {[
                     { label: "Knowledge Chunks", value: stats.chunks.toLocaleString() },
-                    { label: "Languages", value: "EN · TE · HI" },
-                    { label: "Voice", value: "Ready" },
+                    { label: "Languages", value: "EN · TE · HI · TA" },
+                    { label: "Voice Engine", value: "ElevenLabs" },
                   ].map((s) => (
-                    <div key={s.label} className="glass rounded-2xl p-3">
-                      <div className="text-[18px] font-bold text-[var(--gray-800)]">{s.value}</div>
-                      <div className="text-[11px] text-[var(--gray-500)] mt-0.5">{s.label}</div>
+                    <div key={s.label} className="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800">
+                      <div className="text-base font-bold text-sky-400">{s.value}</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">{s.label}</div>
                     </div>
                   ))}
                 </div>
 
                 {/* Capabilities */}
-                <div className="text-left bg-white/55 backdrop-blur-md border hairline rounded-2xl p-4 mb-6">
-                  <div className="text-[12px] font-semibold text-[var(--gray-500)] uppercase tracking-wide mb-3">Agent Capabilities</div>
+                <div className="text-left bg-slate-900/60 border border-slate-800 rounded-2xl p-4 mb-6">
+                  <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
+                    Active Telecaller Capabilities
+                  </div>
                   <div className="grid grid-cols-2 gap-y-2 gap-x-4">
                     {[
-                      "Admission guidance", "Parent questions",
-                      "Course information", "Fee information",
-                      "Objection handling", "Multilingual conversation",
-                      "Voice interaction", "Lead qualification",
+                      "Admission guidance", "Parent inquiries",
+                      "Course information", "Fee structures",
+                      "Objection handling", "Multilingual chat",
+                      "ElevenLabs speech", "RAG citations",
                     ].map((cap) => (
-                      <div key={cap} className="flex items-center gap-2 text-[13px] text-[var(--gray-700)]">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-[var(--sky-500)] shrink-0" />
-                        {cap}
+                      <div key={cap} className="flex items-center gap-2 text-xs text-slate-200">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                        <span>{cap}</span>
                       </div>
                     ))}
                   </div>
@@ -401,36 +441,36 @@ export default function TrainLanding() {
                 <div className="flex flex-col sm:flex-row gap-3">
                   <button
                     onClick={() => agentId && navigate(`/agent/${agentId}/test`)}
-                    className="flex-1 flex items-center justify-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white font-semibold text-[15px] rounded-xl py-3.5 transition-colors shadow-[0_8px_24px_rgba(14,147,232,0.35)]"
+                    className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white font-bold text-sm rounded-xl py-3.5 transition-all shadow-xl shadow-sky-500/30 border border-sky-400/40"
                   >
                     <Mic className="w-4 h-4" />
-                    Talk to Agent
+                    <span>Talk to Agent</span>
                   </button>
                   <button
                     onClick={() => agentId && navigate(`/agent/${agentId}/overview`)}
-                    className="flex-1 flex items-center justify-center gap-2 glass hover:bg-white/80 text-[var(--gray-800)] font-semibold text-[15px] rounded-xl py-3.5 transition-colors"
+                    className="flex-1 flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-sm rounded-xl py-3.5 transition-all border border-slate-700"
                   >
                     <ArrowRight className="w-4 h-4" />
-                    Publish Agent
+                    <span>Knowledge Hub</span>
                   </button>
                 </div>
 
-                <button onClick={reset} className="mt-4 text-[13px] text-[var(--gray-400)] hover:text-[var(--gray-700)] transition-colors">
-                  Train another agent
+                <button onClick={reset} className="mt-5 text-xs text-slate-400 hover:text-slate-200 transition-colors">
+                  Train another document
                 </button>
               </div>
             </motion.div>
           )}
 
-          {/* ── ERROR ── */}
+          {/* ── ERROR: Recovery Screen ── */}
           {phase === "error" && (
             <motion.div key="error" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
-              <div className="glass-strong rounded-[var(--radius-lg)] border-red-200 p-8 text-center">
-                <div className="text-[16px] font-semibold text-red-700 mb-2">Training Failed</div>
-                <p className="text-[13px] text-[var(--gray-500)] mb-6">{error}</p>
+              <div className="glass-strong rounded-3xl border border-red-500/40 p-8 text-center shadow-2xl">
+                <div className="text-base font-bold text-red-400 mb-2">Training Ingestion Encountered an Error</div>
+                <p className="text-xs text-slate-300 mb-6 max-w-md mx-auto">{error}</p>
                 <button
                   onClick={reset}
-                  className="bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white font-semibold text-[14px] rounded-xl px-6 py-3 transition-colors"
+                  className="bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs rounded-xl px-6 py-3 border border-slate-700 transition-all"
                 >
                   Try Again
                 </button>
@@ -442,8 +482,8 @@ export default function TrainLanding() {
       </main>
 
       {/* ── Footer ── */}
-      <footer className="text-center pb-8 text-[12px] text-[var(--gray-400)] relative z-10">
-        Doneswari AI Telecaller · Grounded answers · No hallucination · Multilingual
+      <footer className="text-center py-6 text-xs text-slate-500 relative z-10 border-t border-slate-800/60 mt-8">
+        Doneswari AI Telecaller · Strictly grounded RAG · Multilingual Voice & Text
       </footer>
     </div>
   );

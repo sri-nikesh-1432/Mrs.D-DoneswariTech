@@ -124,24 +124,24 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
   const busy = phase === "uploading" || phase === "processing" || phase === "validating";
 
   return (
-    <div className="glass rounded-[var(--radius-md)] p-5 shadow-[var(--shadow-sm)] mb-5">
-      <div className="flex items-center justify-between mb-1">
-        <h2 className="text-[15px] font-semibold text-[var(--gray-800)] flex items-center gap-2">
-          <GraduationCap className="w-4 h-4 text-[var(--sky-600)]" /> {t("train.trainAgent")}
+    <div className="glass-strong rounded-3xl p-6 shadow-2xl border border-slate-800 mb-6 text-slate-100">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-base font-bold text-white flex items-center gap-2">
+          <GraduationCap className="w-4 h-4 text-sky-400" /> {t("train.trainAgent")}
         </h2>
         {phase === "done" && validation?.validated && (
-          <span className="flex items-center gap-1 text-[12px] font-semibold text-emerald-700">
+          <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400 bg-emerald-500/15 border border-emerald-400/30 px-3 py-1 rounded-full">
             <ShieldCheck className="w-3.5 h-3.5" /> Knowledge validated
           </span>
         )}
       </div>
-      <p className="text-[12.5px] text-[var(--gray-500)] mb-4">
-        Upload a knowledge document and run the REAL pipeline: extract → chunk → embed → index → validate. All progress reflects actual backend operations.
+      <p className="text-xs text-slate-400 mb-4">
+        Upload a knowledge document and run the REAL pipeline: extract → chunk → embed → index → validate.
       </p>
 
       {/* File picker + TRAIN button */}
       {phase === "idle" || phase === "failed" ? (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3.5">
           <div
             onClick={() => fileInputRef.current?.click()}
             onDragOver={(e) => e.preventDefault()}
@@ -150,14 +150,14 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
               const f = e.dataTransfer.files?.[0];
               if (f) setFile(f);
             }}
-            className="border-2 border-dashed border-[var(--gray-300)] hover:border-[var(--sky-400)] rounded-[var(--radius-md)] py-6 flex flex-col items-center justify-center cursor-pointer transition-colors bg-white/40 backdrop-blur-sm"
+            className="border-2 border-dashed border-slate-700 hover:border-sky-400/70 rounded-2xl py-6 flex flex-col items-center justify-center cursor-pointer transition-all bg-slate-900/60 hover:bg-slate-900/90"
           >
             {file ? (
-              <div className="text-sm text-[var(--gray-700)]">{file.name} — {(file.size / 1024).toFixed(0)} KB</div>
+              <div className="text-xs font-semibold text-sky-300">{file.name} — {(file.size / 1024).toFixed(0)} KB</div>
             ) : (
               <>
-                <div className="text-sm font-medium text-[var(--gray-700)]">Drop knowledge document or click to upload</div>
-                <div className="text-[12px] text-[var(--gray-500)] mt-1">PDF, DOCX, TXT, CSV, XLSX — up to 50 MB</div>
+                <div className="text-xs font-semibold text-slate-200">Drop knowledge document or click to upload</div>
+                <div className="text-[11px] text-slate-500 mt-1">PDF, DOCX, TXT — up to 20 MB</div>
               </>
             )}
             <input
@@ -176,12 +176,12 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
             <button
               onClick={handleTrain}
               disabled={!file}
-              className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] shadow-[0_8px_24px_rgba(14,147,232,0.3)] disabled:opacity-50 disabled:shadow-none text-white text-sm font-semibold rounded-xl px-5 py-2.5"
+              className="flex items-center gap-2 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 shadow-lg shadow-sky-500/25 disabled:opacity-40 disabled:shadow-none text-white text-xs font-bold rounded-xl px-5 py-2.5 border border-sky-400/30 transition-all cursor-pointer"
             >
               <GraduationCap className="w-4 h-4" /> {t("train.trainAgent")}
             </button>
             {phase === "failed" && (
-              <button onClick={reset} className="glass hover:bg-white/80 text-[var(--gray-700)] text-sm font-medium rounded-xl px-4 py-2.5">
+              <button onClick={reset} className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl px-4 py-2.5 border border-slate-700 transition-all">
                 Reset
               </button>
             )}
@@ -189,15 +189,15 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
         </div>
       ) : null}
 
-      {/* Real pipeline stage display (spec §10) */}
+      {/* Real pipeline stage display */}
       {busy && (
         <div className="space-y-2.5">
           {phase === "uploading" && (
-            <div className="flex items-center gap-2.5 text-[13px] text-[var(--gray-600)]">
-              <Loader2 className="w-4 h-4 animate-spin text-[var(--sky-500)]" />
+            <div className="flex items-center gap-2.5 text-xs text-slate-300">
+              <Loader2 className="w-4 h-4 animate-spin text-sky-400" />
               Uploading document… {uploadPct}%
-              <div className="flex-1 h-1.5 bg-[var(--gray-100)] rounded-full overflow-hidden">
-                <div className="h-full bg-[var(--sky-500)] rounded-full transition-all" style={{ width: `${uploadPct}%` }} />
+              <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                <div className="h-full bg-sky-500 rounded-full transition-all" style={{ width: `${uploadPct}%` }} />
               </div>
             </div>
           )}
@@ -206,26 +206,26 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
             const done = stageIdx > i || phase === "validating";
             const active = (stageIdx === i && phase === "processing") || (phase === "validating" && s === "validating");
             return (
-              <div key={s} className={`flex items-center gap-2.5 text-[13px] ${done ? "text-emerald-700" : active ? "text-[var(--sky-700)] font-semibold" : "text-[var(--gray-400)]"}`}>
-                {done ? <CheckCircle2 className="w-4 h-4" /> : active ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="w-4 h-4 rounded-full border border-[var(--gray-300)] inline-block" />}
+              <div key={s} className={`flex items-center gap-2.5 text-xs ${done ? "text-emerald-400" : active ? "text-sky-300 font-bold" : "text-slate-500"}`}>
+                {done ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : active ? <Loader2 className="w-4 h-4 animate-spin text-sky-400" /> : <span className="w-4 h-4 rounded-full border border-slate-700 inline-block" />}
                 <span>{t(stageLabelKey(s))}</span>
                 {s === "extracted" && status?.page_count ? (
-                  <span className="text-[var(--gray-500)]">— {status.page_count} page(s), {status.extracted_word_count?.toLocaleString() ?? 0} words</span>
+                  <span className="text-slate-400">— {status.page_count} page(s), {status.extracted_word_count?.toLocaleString() ?? 0} words</span>
                 ) : null}
-                {s === "chunking" && status?.chunks ? <span className="text-[var(--gray-500)]">— {status.chunks.toLocaleString()} chunks created</span> : null}
+                {s === "chunking" && status?.chunks ? <span className="text-slate-400">— {status.chunks.toLocaleString()} chunks created</span> : null}
               </div>
             );
           })}
         </div>
       )}
 
-      {/* Done — REAL numbers (spec §10: do not fake values) */}
+      {/* Done */}
       {phase === "done" && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2 text-[13.5px] font-semibold text-emerald-700">
-            <CheckCircle2 className="w-4.5 h-4.5" /> Agent ready — knowledge indexed and validated
+        <div className="space-y-3.5">
+          <div className="flex items-center gap-2 text-xs font-bold text-emerald-400">
+            <CheckCircle2 className="w-4 h-4" /> Agent ready — knowledge indexed and validated
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5">
             <Stat label="Pages" value={status?.page_count ?? "—"} />
             <Stat label="Words" value={status?.extracted_word_count?.toLocaleString() ?? "—"} />
             <Stat label="Chunks" value={status?.chunks ?? 0} />
@@ -234,24 +234,24 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
             <Stat label="Validation" value={validation ? `${validation.pass_rate}%` : "—"} />
           </div>
           {validation && (
-            <div className={`text-[12.5px] rounded-xl px-3.5 py-2.5 border ${validation.validated ? "text-emerald-700 bg-emerald-50/70 border-emerald-200" : "text-amber-700 bg-amber-50/70 border-amber-200"}`}>
-              <div className="flex items-center gap-1.5 font-semibold mb-1">
+            <div className={`text-xs rounded-xl px-3.5 py-2.5 border ${validation.validated ? "text-emerald-300 bg-emerald-950/80 border-emerald-500/40" : "text-amber-300 bg-amber-950/80 border-amber-500/40"}`}>
+              <div className="flex items-center gap-1.5 font-bold mb-1">
                 {validation.validated ? <ShieldCheck className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
                 {validation.tests_passed}/{validation.tests_total} retrieval tests passed
               </div>
               {validation.message}
             </div>
           )}
-          <button onClick={reset} className="text-[13px] font-medium text-[var(--sky-600)] hover:underline">
+          <button onClick={reset} className="text-xs font-semibold text-sky-400 hover:text-sky-300">
             Upload another document
           </button>
         </div>
       )}
 
-      {/* REAL error (spec §78) */}
+      {/* Error */}
       {phase === "failed" && (
-        <div className="flex items-start gap-2 text-[12.5px] text-red-700 bg-red-50/70 border border-red-200 rounded-xl px-3.5 py-2.5">
-          <XCircle className="w-4 h-4 mt-0.5 shrink-0" />
+        <div className="flex items-start gap-2 text-xs text-red-200 bg-red-950/80 border border-red-500/50 rounded-xl px-4 py-3">
+          <XCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-400" />
           <span><strong>{t("train.failed")}:</strong> {error}</span>
         </div>
       )}
@@ -261,9 +261,9 @@ export default function TrainingPanel({ agentId, onReady }: Props) {
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="bg-white/70 backdrop-blur-md border hairline rounded-xl px-3.5 py-2.5">
-      <div className="text-[15px] font-semibold text-[var(--gray-800)] truncate">{value}</div>
-      <div className="text-[11px] text-[var(--gray-500)]">{label}</div>
+    <div className="bg-slate-900/90 border border-slate-800 rounded-xl px-3 py-2 text-center shadow-inner">
+      <div className="text-sm font-bold text-sky-400 truncate">{value}</div>
+      <div className="text-[10px] text-slate-400 uppercase tracking-wider">{label}</div>
     </div>
   );
 }

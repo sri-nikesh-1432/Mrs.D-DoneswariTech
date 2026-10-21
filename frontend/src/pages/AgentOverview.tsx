@@ -221,37 +221,37 @@ export default function AgentOverview() {
   const stageIdx = kStatus ? STAGES.indexOf(kStatus.stage) : -1;
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-8">
+    <div className="max-w-4xl mx-auto px-6 py-8 text-slate-100">
       {/* Header with knowledge stats (spec §62) */}
       <div className="flex items-start justify-between mb-6">
         <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[var(--sky-400)] to-[var(--sky-600)] flex items-center justify-center text-white font-bold text-lg">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-sky-400 via-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-lg shadow-lg shadow-sky-500/20 border border-sky-400/30">
             {(agent.agent_name || "A").slice(0, 1)}
           </div>
           <div>
             <div className="flex items-center gap-2.5">
-              <h1 className="text-xl font-semibold text-[var(--gray-800)] tracking-tight">{agent.agent_name}</h1>
+              <h1 className="text-xl font-extrabold text-white tracking-tight">{agent.agent_name}</h1>
               <StatusChip status={agent.status} />
             </div>
-            <p className="text-sm text-[var(--gray-500)]">{agent.name} · {agent.calling_purpose}</p>
-            <div className="flex items-center gap-3 mt-1 text-[11.5px] text-[var(--gray-500)]">
-              <span className="flex items-center gap-1">
-                <Database className="w-3 h-3" />
+            <p className="text-xs text-slate-400">{agent.name} · {agent.calling_purpose}</p>
+            <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-400">
+              <span className="flex items-center gap-1 text-sky-400">
+                <Database className="w-3.5 h-3.5" />
                 {kStatus?.chunks ? `${kStatus.chunks.toLocaleString()} chunks` : "no chunks"}
                 {kStatus?.indexed ? " · Indexed" : ""}
               </span>
-              <span className="flex items-center gap-1">
-                <Headphones className="w-3 h-3" /> Voice configured
+              <span className="flex items-center gap-1 text-slate-400">
+                <Headphones className="w-3.5 h-3.5 text-slate-400" /> Voice configured
               </span>
-              <span>
-                Preview: {isReady ? "Available" : "Locked until Save"}
+              <span className="text-slate-400">
+                Preview: <strong className={isReady ? "text-emerald-400" : "text-amber-400"}>{isReady ? "Available" : "Locked until Save"}</strong>
               </span>
             </div>
           </div>
         </div>
         <div className="flex gap-2">
           {agent.status === "published" ? (
-            <button onClick={handlePause} className="flex items-center gap-1.5 text-sm font-medium text-orange-700 bg-orange-50/70 hover:bg-orange-100 border border-orange-200 rounded-xl px-3.5 py-2">
+            <button onClick={handlePause} className="flex items-center gap-1.5 text-xs font-semibold text-orange-300 bg-orange-950/80 hover:bg-orange-900 border border-orange-500/40 rounded-xl px-4 py-2 transition-all">
               <Pause className="w-4 h-4" /> Pause
             </button>
           ) : (
@@ -259,7 +259,7 @@ export default function AgentOverview() {
               onClick={handlePublish}
               disabled={publishing || !isReady}
               title={isReady ? "" : "Agent must be READY first — click Save Changes"}
-              className="flex items-center gap-1.5 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] shadow-[0_8px_24px_rgba(14,147,232,0.3)] disabled:opacity-50 disabled:shadow-none text-white text-sm font-semibold rounded-xl px-4 py-2"
+              className="flex items-center gap-2 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 shadow-lg shadow-sky-500/25 disabled:opacity-40 disabled:shadow-none text-white text-xs font-bold rounded-xl px-4 py-2.5 border border-sky-400/30 transition-all"
             >
               {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
               Publish Agent
@@ -269,98 +269,97 @@ export default function AgentOverview() {
       </div>
 
       {toast && (
-        <div className={`mb-5 text-sm rounded-xl px-4 py-2.5 border ${
+        <div className={`mb-5 text-xs rounded-xl px-4 py-3 border ${
           toastKind === "error"
-            ? "text-red-800 bg-red-50/70 border-red-200"
-            : "text-[var(--sky-700)] bg-[var(--sky-50)] border-[var(--sky-200)]"
+            ? "text-red-200 bg-red-950/80 border-red-500/50"
+            : "text-sky-200 bg-sky-950/80 border-sky-500/50"
         }`}>{toast}</div>
       )}
 
-      {/* Save validation failures — the exact checks that failed (spec §15 §54) */}
+      {/* Save validation failures */}
       {saveErrors.length > 0 && (
-        <div className="mb-5 bg-amber-50/70 border border-amber-200 rounded-xl px-4 py-3">
-          <div className="flex items-center gap-2 text-[13px] font-semibold text-amber-800 mb-1.5">
+        <div className="mb-5 bg-amber-950/80 border border-amber-500/50 rounded-2xl px-4 py-3.5">
+          <div className="flex items-center gap-2 text-xs font-bold text-amber-300 mb-1.5">
             <AlertTriangle className="w-4 h-4" /> Cannot mark agent READY — fix these:
           </div>
           <ul className="space-y-1">
             {saveErrors.map((e, i) => (
-              <li key={i} className="text-[12.5px] text-amber-700 flex items-start gap-1.5">
-                <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {e}
+              <li key={i} className="text-xs text-amber-200 flex items-start gap-1.5">
+                <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-400" /> {e}
               </li>
             ))}
           </ul>
         </div>
       )}
 
-      {/* REAL training pipeline (spec §9 §10) — replaces the inline upload box */}
+      {/* REAL training pipeline */}
       <TrainingPanel agentId={agentId!} onReady={() => queryClient.invalidateQueries({ queryKey: ["agent", agentId] })} />
 
       {/* Knowledge documents list */}
-      <section className="glass rounded-[var(--radius-md)] p-5 shadow-[var(--shadow-sm)] mb-5">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-[15px] font-semibold text-[var(--gray-800)] flex items-center gap-2">
-            <FileText className="w-4 h-4 text-[var(--sky-600)]" /> Knowledge Base
+      <section className="glass-strong rounded-3xl p-6 shadow-2xl border border-slate-800 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-bold text-white flex items-center gap-2">
+            <FileText className="w-4 h-4 text-sky-400" /> Knowledge Base Documents
           </h2>
           {kStatus?.indexed && (
-            <span className="flex items-center gap-1 text-[12px] font-semibold text-emerald-700">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Indexed
+            <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400 bg-emerald-500/15 border border-emerald-400/30 px-3 py-1 rounded-full">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Indexed in FAISS
             </span>
           )}
         </div>
 
-        {/* Upload failure reason is shown inside TrainingPanel; list lives below */}
-
-        {/* Real failure reason (spec §54) */}
         {kStatus?.status === "error" && kStatus.error && (
-          <div className="mt-3 flex items-start gap-2 text-[12.5px] text-red-700 bg-red-50/70 border border-red-200 rounded-xl px-3.5 py-2.5">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <div className="mt-3 flex items-start gap-2 text-xs text-red-200 bg-red-950/80 border border-red-500/50 rounded-xl px-4 py-3">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-red-400" />
             <span><strong>Ingestion failed:</strong> {kStatus.error}</span>
           </div>
         )}
 
         {documents && documents.length > 0 ? (
-          <div className="mt-4 space-y-2">
+          <div className="mt-4 space-y-2.5">
             {documents.map((d) => (
-              <div key={d.id} className="flex items-center justify-between text-[13px] bg-white/70 backdrop-blur-md border hairline rounded-xl px-3.5 py-2.5">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <FileText className="w-4 h-4 text-[var(--gray-400)] shrink-0" />
-                  <span className="truncate text-[var(--gray-700)] font-medium">{d.name}</span>
+              <div key={d.id} className="flex items-center justify-between text-xs bg-slate-900/90 border border-slate-800 rounded-2xl px-4 py-3 shadow-inner">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-sky-500/15 border border-sky-400/30 flex items-center justify-center shrink-0">
+                    <FileText className="w-4 h-4 text-sky-400" />
+                  </div>
+                  <span className="truncate text-white font-medium">{d.name}</span>
                 </div>
-                <div className="flex items-center gap-3 text-[11.5px] text-[var(--gray-500)] shrink-0">
+                <div className="flex items-center gap-3 text-slate-400 shrink-0">
                   <span>{d.size_kb} KB</span>
-                  <span>{d.chunks} chunks</span>
-                  <span className="capitalize font-medium text-[var(--sky-700)] bg-sky-50 px-2 py-0.5 rounded-full">{d.status}</span>
+                  <span className="text-sky-400 font-mono">{d.chunks} chunks</span>
+                  <span className="capitalize font-semibold text-emerald-400 bg-emerald-500/15 border border-emerald-400/30 px-2.5 py-0.5 rounded-full">{d.status}</span>
                   <button
                     onClick={() => handleReindexDoc(d.id)}
                     disabled={actionLoadingId === d.id}
                     title="Re-index document into vector store"
-                    className="p-1 hover:text-[var(--sky-600)] transition-colors disabled:opacity-40"
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-sky-300 hover:bg-slate-800 transition-colors disabled:opacity-40"
                   >
-                    {actionLoadingId === d.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                    {actionLoadingId === d.id ? <Loader2 className="w-4 h-4 animate-spin text-sky-400" /> : <RefreshCw className="w-4 h-4" />}
                   </button>
                   <button
                     onClick={() => handleDeleteDoc(d.id)}
                     disabled={actionLoadingId === d.id}
                     title="Delete document"
-                    className="p-1 hover:text-red-600 transition-colors disabled:opacity-40"
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-slate-800 transition-colors disabled:opacity-40"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-[12.5px] text-[var(--gray-400)] mt-2 italic">No documents indexed yet.</p>
+          <p className="text-xs text-slate-500 mt-2 italic">No documents indexed yet.</p>
         )}
 
         {/* Live Retrieval Tester */}
-        <div className="mt-6 pt-5 border-t border-[var(--gray-200)]">
+        <div className="mt-6 pt-5 border-t border-slate-800">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[13px] font-semibold text-[var(--gray-700)] flex items-center gap-1.5">
-              <Search className="w-3.5 h-3.5 text-[var(--sky-500)]" /> Test Knowledge Retrieval
+            <span className="text-xs font-bold text-white flex items-center gap-2">
+              <Search className="w-3.5 h-3.5 text-sky-400" /> Test Knowledge Retrieval
             </span>
-            <span className="text-[11px] text-[var(--gray-400)]">Test what chunks will be retrieved for a student's query</span>
+            <span className="text-[11px] text-slate-400">Test what chunks will be retrieved for a student's query</span>
           </div>
           <form onSubmit={handleTestRetrieval} className="flex gap-2">
             <input
@@ -368,35 +367,35 @@ export default function AgentOverview() {
               value={retrievalQuery}
               onChange={(e) => setRetrievalQuery(e.target.value)}
               placeholder="e.g., What is the fee for MPC? Or: What courses are offered?"
-              className="flex-1 bg-white/70 backdrop-blur-md border hairline rounded-xl px-3.5 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
+              className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2 text-xs focus:outline-none focus:border-sky-400"
             />
             <button
               type="submit"
               disabled={testingRetrieval || !retrievalQuery.trim()}
-              className="flex items-center gap-1.5 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] disabled:opacity-50 text-white text-xs font-semibold rounded-xl px-3.5 py-2 transition-colors"
+              className="flex items-center gap-2 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 disabled:opacity-40 text-white text-xs font-bold rounded-xl px-4 py-2 transition-all shadow-md shadow-sky-500/20 border border-sky-400/30"
             >
               {testingRetrieval ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
-              Test Query
+              <span>Test Query</span>
             </button>
           </form>
 
           {retrievalResults !== null && (
-            <div className="mt-3 space-y-2">
-              <div className="text-[11.5px] font-medium text-[var(--gray-600)]">
+            <div className="mt-4 space-y-2.5">
+              <div className="text-xs font-semibold text-slate-300">
                 Found {retrievalResults.length} relevant chunks:
               </div>
               {retrievalResults.length === 0 ? (
-                <div className="text-xs text-[var(--gray-400)] italic bg-white/50 p-3 rounded-xl border hairline">
+                <div className="text-xs text-slate-400 italic bg-slate-900/60 p-4 rounded-xl border border-slate-800">
                   No matching chunks retrieved for this query.
                 </div>
               ) : (
                 retrievalResults.map((r, i) => (
-                  <div key={i} className="text-xs bg-white/80 p-3 rounded-xl border hairline space-y-1">
-                    <div className="flex items-center justify-between text-[11px] text-[var(--gray-500)] font-medium">
-                      <span>📖 {r.document_name || "Document"} {r.page ? `· Page ${r.page}` : ""} {r.section ? `· ${r.section}` : ""}</span>
-                      <span className="bg-sky-50 text-[var(--sky-700)] px-2 py-0.5 rounded-full font-mono">Score: {typeof r.score === 'number' ? r.score.toFixed(3) : r.score}</span>
+                  <div key={i} className="text-xs bg-slate-900/90 p-3.5 rounded-2xl border border-slate-800 space-y-1.5 shadow-sm">
+                    <div className="flex items-center justify-between text-[11px] text-slate-400 font-medium">
+                      <span className="text-slate-300">📖 {r.document_name || "Document"} {r.page ? `· Page ${r.page}` : ""} {r.section ? `· ${r.section}` : ""}</span>
+                      <span className="bg-sky-500/15 border border-sky-400/30 text-sky-300 px-2 py-0.5 rounded-full font-mono font-bold">Score: {typeof r.score === 'number' ? r.score.toFixed(3) : r.score}</span>
                     </div>
-                    <p className="text-[var(--gray-700)] leading-relaxed line-clamp-3">{r.text || r.content}</p>
+                    <p className="text-slate-300 leading-relaxed line-clamp-3">{r.text || r.content}</p>
                   </div>
                 ))
               )}
@@ -405,13 +404,13 @@ export default function AgentOverview() {
         </div>
       </section>
 
-      {/* Test Call — REAL phone call (spec §33) */}
-      <section className="glass rounded-[var(--radius-md)] p-5 shadow-[var(--shadow-sm)] mb-5">
-        <h2 className="text-[15px] font-semibold text-[var(--gray-800)] flex items-center gap-2 mb-1">
-          <PhoneCall className="w-4 h-4 text-[var(--sky-600)]" /> Test Call
+      {/* Test Call — REAL phone call */}
+      <section className="glass-strong rounded-3xl p-6 shadow-2xl border border-slate-800 mb-6">
+        <h2 className="text-base font-bold text-white flex items-center gap-2 mb-1">
+          <PhoneCall className="w-4 h-4 text-sky-400" /> Real Phone Test Call
         </h2>
-        <p className="text-[12.5px] text-[var(--gray-500)] mb-4">
-          Enter your real phone number — the agent will actually call you. Requires telephony credentials on the server.
+        <p className="text-xs text-slate-400 mb-4">
+          Enter your phone number to receive a live telecall from Mrs. D. Requires telephony credentials.
         </p>
         {isReady ? (
           <form onSubmit={handleTestCall} className="flex flex-col gap-3">
@@ -421,15 +420,15 @@ export default function AgentOverview() {
                 value={testPhone}
                 onChange={(e) => setTestPhone(e.target.value)}
                 placeholder="+91 98765 43210"
-                className="flex-1 bg-white/70 backdrop-blur-md border hairline rounded-xl px-3.5 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
+                className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs font-mono focus:outline-none focus:border-sky-400"
               />
               <button
                 type="submit"
                 disabled={testCalling || !testPhone.trim()}
-                className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] shadow-[0_8px_24px_rgba(14,147,232,0.3)] disabled:opacity-50 disabled:shadow-none text-white text-sm font-semibold rounded-xl px-5 py-2.5"
+                className="flex items-center gap-2 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 shadow-lg shadow-sky-500/25 disabled:opacity-50 disabled:shadow-none text-white text-xs font-bold rounded-xl px-5 py-2.5 border border-sky-400/30"
               >
                 {testCalling ? <Loader2 className="w-4 h-4 animate-spin" /> : <PhoneCall className="w-4 h-4" />}
-                Test Call
+                <span>Call Phone</span>
               </button>
             </div>
             {testError && (
@@ -461,16 +460,16 @@ export default function AgentOverview() {
             )}
           </form>
         ) : (
-          <div className="text-[12.5px] text-amber-700 bg-amber-50/70 border border-amber-200 rounded-xl px-3.5 py-2.5">
+          <div className="text-xs text-amber-300 bg-amber-950/80 border border-amber-500/40 rounded-xl px-4 py-3">
             Agent must be READY (or PUBLISHED) before test calls. Click <strong>Save Changes</strong> after the knowledge index finishes.
           </div>
         )}
       </section>
 
       {/* Agent settings */}
-      <section className="glass rounded-[var(--radius-md)] p-5 shadow-[var(--shadow-sm)]">
-        <h2 className="text-[15px] font-semibold text-[var(--gray-800)] flex items-center gap-2 mb-4">
-          <Bot className="w-4 h-4 text-[var(--sky-600)]" /> Agent Configuration
+      <section className="glass-strong rounded-3xl p-6 shadow-2xl border border-slate-800 mb-6">
+        <h2 className="text-base font-bold text-white flex items-center gap-2 mb-4">
+          <Bot className="w-4 h-4 text-sky-400" /> Telecaller Configuration & Behavior
         </h2>
         <div className="grid md:grid-cols-2 gap-4 mb-4">
           <LabeledInput label="Agent Name" value={form.agent_name ?? ""} onChange={(v) => setForm({ ...form, agent_name: v })} />
@@ -478,33 +477,36 @@ export default function AgentOverview() {
         </div>
         <LabeledTextarea label="Greeting Message" rows={2} value={form.greeting_message ?? ""} onChange={(v) => setForm({ ...form, greeting_message: v })} />
         <div className="mt-4">
-          <LabeledTextarea label="Special Instructions" rows={3} value={form.instructions ?? ""} onChange={(v) => setForm({ ...form, instructions: v })} />
+          <LabeledTextarea label="Special Admission Instructions" rows={3} value={form.instructions ?? ""} onChange={(v) => setForm({ ...form, instructions: v })} />
         </div>
-        <div className="flex justify-end mt-4">
+        <div className="flex justify-end mt-5">
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] shadow-[0_8px_24px_rgba(14,147,232,0.3)] text-white text-sm font-semibold rounded-xl px-4 py-2.5 disabled:opacity-60 disabled:shadow-none"
+            className="flex items-center gap-2 bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 shadow-xl shadow-sky-500/25 text-white text-xs font-bold rounded-xl px-5 py-2.5 border border-sky-400/30 disabled:opacity-50"
           >
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save Changes
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            <span>Save Changes</span>
           </button>
         </div>
-        <p className="text-[11.5px] text-[var(--gray-400)] mt-3">
+        <p className="text-[11px] text-slate-500 mt-3">
           Save runs full validation: name, knowledge ingestion, vector index, voice config. Agent becomes READY only when everything passes.
         </p>
       </section>
 
-      {/* Preview gate — only when READY (spec §15 §16 §29) */}
+      {/* Preview gate */}
       {isReady ? (
         <Link
           to={`/agent/${agentId}/test`}
-          className="mt-5 flex items-center justify-center gap-2 w-full glass rounded-[var(--radius-md)] p-4 text-sm font-semibold text-[var(--sky-700)] hover:bg-[var(--sky-50)] transition-colors"
+          className="mt-5 flex items-center justify-center gap-2 w-full p-4 text-xs font-bold text-sky-300 bg-sky-950/60 hover:bg-sky-900/60 border border-sky-500/40 rounded-2xl transition-all shadow-lg"
         >
-          <Headphones className="w-4 h-4" /> Open Voice Preview — talks to the real agent runtime
+          <Headphones className="w-4 h-4 text-sky-400" />
+          <span>Open Live Telecaller Console — Speak with Mrs. D</span>
         </Link>
       ) : (
-        <div className="mt-5 flex items-center justify-center gap-2 w-full glass rounded-[var(--radius-md)] p-4 text-[12.5px] text-[var(--gray-400)]">
-          <Headphones className="w-4 h-4" /> Preview unlocks after Save Changes marks the agent READY (spec §15)
+        <div className="mt-5 flex items-center justify-center gap-2 w-full p-4 text-xs text-slate-500 bg-slate-900/60 border border-slate-800 rounded-2xl">
+          <Headphones className="w-4 h-4" />
+          <span>Preview unlocks after Save Changes marks the agent READY</span>
         </div>
       )}
     </div>
@@ -514,12 +516,12 @@ export default function AgentOverview() {
 function LabeledInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
     <div>
-      <label className="block text-[13px] font-medium text-[var(--gray-700)] mb-1.5">{label}</label>
+      <label className="block text-xs font-semibold text-slate-300 mb-1.5">{label}</label>
       <input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-white/70 backdrop-blur-md border hairline rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
+        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-sky-400"
       />
     </div>
   );
@@ -528,12 +530,12 @@ function LabeledInput({ label, value, onChange }: { label: string; value: string
 function LabeledTextarea({ label, rows, value, onChange }: { label: string; rows: number; value: string; onChange: (v: string) => void }) {
   return (
     <div>
-      <label className="block text-[13px] font-medium text-[var(--gray-700)] mb-1.5">{label}</label>
+      <label className="block text-xs font-semibold text-slate-300 mb-1.5">{label}</label>
       <textarea
         rows={rows}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-white/70 backdrop-blur-md border hairline rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)] resize-none"
+        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-sky-400 resize-none leading-relaxed"
       />
     </div>
   );

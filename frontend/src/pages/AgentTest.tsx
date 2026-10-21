@@ -253,43 +253,53 @@ export default function AgentTest() {
   const isLiveAgent = agentStatus === "published" || agentStatus === "ready" || agentStatus === "testing";
   const badge =
     wsState === "disconnected" && isLiveAgent
-      ? { label: "Ready", color: "bg-emerald-50 text-emerald-700" }
-      : STATE_MAP[wsState] ?? STATE_MAP.disconnected;
+      ? { label: "Ready", color: "bg-emerald-500/15 border border-emerald-400/40 text-emerald-300" }
+      : {
+          disconnected: { label: "Voice Idle", color: "bg-slate-800 border border-slate-700 text-slate-400" },
+          connecting: { label: "Connecting…", color: "bg-amber-500/15 border border-amber-400/40 text-amber-300" },
+          connected: { label: "Voice Ready", color: "bg-sky-500/15 border border-sky-400/40 text-sky-300" },
+          greeting: { label: "Speaking…", color: "bg-sky-500/15 border border-sky-400/40 text-sky-300" },
+          listening: { label: "Listening…", color: "bg-emerald-500/15 border border-emerald-400/40 text-emerald-300" },
+          processing: { label: "Thinking…", color: "bg-amber-500/15 border border-amber-400/40 text-amber-300" },
+          speaking: { label: "Speaking…", color: "bg-sky-500/15 border border-sky-400/40 text-sky-300" },
+          error: { label: "Voice Error", color: "bg-red-500/15 border border-red-400/40 text-red-300" },
+        }[wsState] ?? { label: "Voice Idle", color: "bg-slate-800 border border-slate-700 text-slate-400" };
+
   const inConversation = wsState !== "disconnected" && wsState !== "error";
   const isSpeaking = wsState === "speaking" || wsState === "greeting" || activeAudio !== null;
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-6 flex flex-col" style={{ minHeight: "calc(100vh - 20px)" }}>
+    <div className="max-w-4xl mx-auto px-6 py-6 flex flex-col text-slate-100" style={{ minHeight: "calc(100vh - 20px)" }}>
       {/* ── Header ── */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4 pb-3 border-b hairline">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4 pb-4 border-b border-slate-800">
         <div>
-          <div className="flex items-center gap-2.5">
-            <h1 className="text-2xl font-display font-semibold text-[var(--gray-800)]">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <h1 className="text-2xl font-extrabold text-white tracking-tight">
               {agentName}
             </h1>
-            <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-sky-100 text-[var(--sky-700)]">
-              Doneswari AI Telecaller
+            <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-sky-500/15 border border-sky-400/30 text-sky-300 font-mono">
+              Mrs. D Telecaller
             </span>
-            <span className={`text-[12px] font-semibold px-3 py-0.5 rounded-full ${badge.color}`}>
+            <span className={`text-xs font-semibold px-3 py-0.5 rounded-full ${badge.color}`}>
               {badge.label}
             </span>
           </div>
-          <p className="text-[13px] text-[var(--gray-500)] mt-0.5">
-            Admissions Telecaller for {companyName} · Grounded in uploaded institutional PDF documents
+          <p className="text-xs text-slate-400 mt-1">
+            Admissions Telecaller for <strong className="text-slate-200">{companyName}</strong> · Grounded in uploaded institutional PDF documents
           </p>
         </div>
 
         {/* Language selector & actions */}
-        <div className="flex items-center gap-2 self-start md:self-auto">
-          <div className="flex items-center gap-1.5 bg-white/70 backdrop-blur-md border hairline rounded-xl px-2.5 py-1 text-[13px]">
-            <Globe className="w-3.5 h-3.5 text-[var(--sky-500)]" />
+        <div className="flex items-center gap-2.5 self-start md:self-auto">
+          <div className="flex items-center gap-2 bg-slate-900/90 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs shadow-inner">
+            <Globe className="w-3.5 h-3.5 text-sky-400 shrink-0" />
             <select
               value={selectedLanguage}
               onChange={(e) => handleLanguageChange(e.target.value as SupportedLanguage)}
-              className="bg-transparent text-[13px] font-medium text-[var(--gray-700)] outline-none cursor-pointer"
+              className="bg-transparent text-xs font-medium text-slate-200 outline-none cursor-pointer"
             >
               {SUPPORTED_LANGUAGES.map((lang) => (
-                <option key={lang} value={lang}>
+                <option key={lang} value={lang} className="bg-slate-900 text-slate-200">
                   {LANGUAGE_NATIVE_NAMES[lang]} ({lang})
                 </option>
               ))}
@@ -298,7 +308,7 @@ export default function AgentTest() {
 
           <button
             onClick={handleClearConversation}
-            className="p-2 rounded-xl text-[var(--gray-400)] hover:text-red-600 hover:bg-red-50 transition-colors"
+            className="p-2 rounded-xl text-slate-400 hover:text-red-400 hover:bg-slate-800 border border-transparent hover:border-slate-700 transition-colors"
             title="Clear Conversation"
           >
             <Trash2 className="w-4 h-4" />
@@ -307,68 +317,74 @@ export default function AgentTest() {
       </div>
 
       {toast && (
-        <div className="mb-3 text-sm text-[var(--sky-700)] glass-sky rounded-[var(--radius-md)] px-4 py-2">
+        <div className="mb-3 text-xs text-sky-300 bg-sky-950/80 border border-sky-500/40 rounded-xl px-4 py-2.5 shadow-lg">
           {toast}
         </div>
       )}
 
       {/* ── Voice Assistant Visualization ── */}
-      <div className="flex justify-center py-2">
+      <div className="flex flex-col items-center justify-center py-2 relative">
+        <div className="absolute w-64 h-64 rounded-full bg-sky-500/10 blur-3xl pointer-events-none" />
         <AgentOrb state={isSpeaking ? "speaking" : mapToOrbState(wsState)} amplitude={amplitude} />
       </div>
 
       {/* REAL waveforms */}
       <div className="flex justify-center h-14 mb-1">
         {isSpeaking ? (
-          <RealWaveform source="playback" amplitude={playAmplitude || 0.4} active={true} height={56} color="#0e93e8" />
+          <RealWaveform source="playback" amplitude={playAmplitude || 0.4} active={true} height={56} color="#38bdf8" />
         ) : (
-          <RealWaveform source="mic" amplitude={amplitude} active={wsState === "listening"} height={56} color="#3fb1f5" />
+          <RealWaveform source="mic" amplitude={amplitude} active={wsState === "listening"} height={56} color="#0ea5e9" />
         )}
       </div>
 
       {/* Audio Status & Interruption Notice */}
-      <div className="text-center text-[12px] text-[var(--gray-400)] mb-3 flex items-center justify-center gap-2">
+      <div className="text-center text-xs text-slate-400 mb-3 flex items-center justify-center gap-2">
         {isSpeaking ? (
           <>
-            <span className="inline-block w-2 h-2 rounded-full bg-sky-500 animate-ping" />
-            <span className="text-[var(--sky-700)] font-medium">Mrs. D is speaking — barge-in interrupts instantly</span>
+            <span className="inline-block w-2 h-2 rounded-full bg-sky-400 animate-ping" />
+            <span className="text-sky-300 font-medium">Mrs. D is speaking — barge-in interrupts instantly</span>
             <button
               onClick={stopCurrentAudio}
-              className="ml-2 inline-flex items-center gap-1 text-[11px] bg-red-50 text-red-600 px-2 py-0.5 rounded-md hover:bg-red-100"
+              className="ml-2 inline-flex items-center gap-1 text-[11px] bg-red-950/80 text-red-300 border border-red-500/40 px-2 py-0.5 rounded-md hover:bg-red-900"
             >
-              <Square className="w-3 h-3 fill-current" /> Stop
+              <Square className="w-3 h-3 fill-current" /> Stop Speaking
             </button>
           </>
         ) : wsState === "listening" ? (
-          <span className="text-emerald-600 font-medium">Listening to your question…</span>
+          <span className="text-emerald-400 font-medium flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            Listening to your question…
+          </span>
         ) : (
-          <span>Ask questions about admissions, courses, fees, or eligibility via voice or text below</span>
+          <span className="text-slate-400">Ask questions about admissions, courses, fees, or eligibility via voice or text below</span>
         )}
       </div>
 
       {/* ── Conversation Workspace / Transcript ── */}
       <div
         ref={transcriptRef}
-        className="flex-1 overflow-y-auto glass rounded-[var(--radius-lg)] p-4 mb-4 min-h-[220px] shadow-[inset_0_1px_3px_rgba(0,0,0,0.03)]"
+        className="flex-1 overflow-y-auto glass-strong rounded-3xl p-5 mb-4 min-h-[220px] border border-slate-800 shadow-2xl space-y-3"
       >
         {messages.length === 0 && !partialUser && !partialAgent && !isTypingLoading && (
-          <div className="h-full flex flex-col items-center justify-center text-center p-6 text-[var(--gray-400)]">
-            <Headphones className="w-8 h-8 text-[var(--gray-300)] mb-2" />
-            <p className="text-[14px] font-medium text-[var(--gray-600)]">Welcome to Admissions Support</p>
-            <p className="text-[12.5px] max-w-md mt-1 text-[var(--gray-400)]">
-              Click the microphone to start voice calling, or type any question below. Answers are strictly grounded in the institution's official documents.
+          <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
+            <div className="w-12 h-12 rounded-2xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 mb-3">
+              <Headphones className="w-6 h-6" />
+            </div>
+            <p className="text-base font-bold text-white">Welcome to Admissions Support</p>
+            <p className="text-xs max-w-md mt-1 text-slate-400 leading-relaxed">
+              Start voice calling or type any question below. Answers are strictly grounded in the institution's official documents.
             </p>
             <div className="flex flex-wrap justify-center gap-2 mt-4 max-w-lg">
               {[
                 "What courses are offered?",
-                "What is the fee structure?",
-                "Do you provide hostel facility?",
+                "What is the fee structure for MPC?",
+                "Do you provide hostel facilities?",
                 "What is the admission procedure?",
               ].map((sample) => (
                 <button
                   key={sample}
                   onClick={() => handleSendText(sample)}
-                  className="text-[11.5px] bg-white/70 hover:bg-sky-50 border hairline px-2.5 py-1.5 rounded-lg text-[var(--gray-700)] transition-colors"
+                  className="text-xs bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 px-3 py-1.5 rounded-xl text-slate-200 hover:text-white transition-all shadow-sm"
                 >
                   "{sample}"
                 </button>
@@ -378,19 +394,19 @@ export default function AgentTest() {
         )}
 
         {messages.map((m, i) => (
-          <div key={i} className={`mb-3 flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div
-              className={`max-w-[82%] rounded-2xl px-4 py-2.5 text-[13.5px] leading-relaxed ${
+              className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
                 m.role === "user"
-                  ? "bg-[var(--sky-500)] text-white rounded-br-md shadow-sm"
-                  : "bg-white/85 backdrop-blur-md border hairline text-[var(--gray-800)] rounded-bl-md shadow-sm"
+                  ? "bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-600 text-white rounded-br-md shadow-md border border-sky-400/30"
+                  : "bg-slate-900/95 border border-slate-800 text-slate-100 rounded-bl-md shadow-lg"
               }`}
             >
-              <div className="flex items-center justify-between gap-3 mb-1">
-                <span className={`text-[11px] font-semibold ${m.role === "user" ? "text-sky-100" : "text-[var(--sky-600)]"}`}>
+              <div className="flex items-center justify-between gap-3 mb-1.5">
+                <span className={`text-xs font-bold ${m.role === "user" ? "text-sky-100" : "text-sky-400"}`}>
                   {m.role === "user" ? "You" : agentName}
                 </span>
-                <span className={`text-[10px] ${m.role === "user" ? "text-sky-200" : "text-[var(--gray-400)]"}`}>
+                <span className={`text-[10px] ${m.role === "user" ? "text-sky-200" : "text-slate-500"} font-mono`}>
                   {m.timestamp}
                 </span>
               </div>
@@ -399,14 +415,14 @@ export default function AgentTest() {
 
               {/* Provenance citations */}
               {m.sources && m.sources.length > 0 && (
-                <div className="mt-2.5 pt-2 border-t border-[var(--gray-100)] flex flex-wrap gap-1.5">
+                <div className="mt-2.5 pt-2 border-t border-slate-800 flex flex-wrap gap-1.5">
                   {m.sources.slice(0, 2).map((s, idx) => (
                     <span
                       key={idx}
-                      className="inline-flex items-center gap-1 text-[11px] bg-sky-50 text-[var(--sky-700)] px-2 py-0.5 rounded-md font-medium"
+                      className="inline-flex items-center gap-1.5 text-[11px] bg-slate-950/90 border border-sky-500/30 text-sky-300 px-2.5 py-1 rounded-lg font-medium"
                       title={s.section}
                     >
-                      <BookOpen className="w-3 h-3 text-[var(--sky-500)]" />
+                      <BookOpen className="w-3 h-3 text-sky-400" />
                       {s.document_name || "Document"}{s.page ? ` · Page ${s.page}` : ""}
                     </span>
                   ))}
@@ -415,13 +431,13 @@ export default function AgentTest() {
 
               {/* Play synthesized audio button */}
               {m.role === "assistant" && m.audioData && (
-                <div className="mt-2 flex justify-end">
+                <div className="mt-2.5 pt-1.5 border-t border-slate-800/60 flex justify-end">
                   <button
                     onClick={() => playAudioData(m.audioData!, i)}
-                    className="inline-flex items-center gap-1 text-[11px] text-[var(--sky-600)] hover:text-[var(--sky-800)] font-medium"
+                    className="inline-flex items-center gap-1.5 text-xs text-sky-400 hover:text-sky-300 bg-sky-500/10 border border-sky-500/25 px-2.5 py-1 rounded-lg font-medium transition-all"
                   >
                     <Volume2 className="w-3.5 h-3.5" />
-                    {playingMsgIndex === i ? "Playing voice…" : "Listen"}
+                    <span>{playingMsgIndex === i ? "Playing voice…" : "Listen (ElevenLabs)"}</span>
                   </button>
                 </div>
               )}
@@ -430,25 +446,25 @@ export default function AgentTest() {
         ))}
 
         {partialUser && (
-          <div className="mb-3 flex justify-end">
-            <div className="max-w-[82%] rounded-2xl px-4 py-2.5 text-[13.5px] bg-[var(--sky-100)] text-[var(--sky-800)] italic rounded-br-md">
+          <div className="flex justify-end">
+            <div className="max-w-[85%] rounded-2xl px-4 py-3 text-sm bg-sky-950/80 border border-sky-500/40 text-sky-200 italic rounded-br-md">
               {partialUser}…
             </div>
           </div>
         )}
 
         {partialAgent && (
-          <div className="mb-3 flex justify-start">
-            <div className="max-w-[82%] rounded-2xl px-4 py-2.5 text-[13.5px] bg-white/80 backdrop-blur-md border hairline text-[var(--gray-800)] rounded-bl-md">
+          <div className="flex justify-start">
+            <div className="max-w-[85%] rounded-2xl px-4 py-3 text-sm bg-slate-900 border border-slate-800 text-slate-100 rounded-bl-md">
               {partialAgent}
             </div>
           </div>
         )}
 
         {isTypingLoading && (
-          <div className="mb-3 flex justify-start">
-            <div className="rounded-2xl px-4 py-2.5 text-[13px] bg-white/70 backdrop-blur-md border hairline text-[var(--gray-500)] flex items-center gap-2">
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--sky-500)]" />
+          <div className="flex justify-start">
+            <div className="rounded-2xl px-4 py-2.5 text-xs bg-slate-900/90 border border-slate-800 text-slate-400 flex items-center gap-2">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-400" />
               <span>Mrs. D is retrieving institutional documents…</span>
             </div>
           </div>
@@ -456,7 +472,7 @@ export default function AgentTest() {
       </div>
 
       {/* ── First-Class Text Input ── */}
-      <div className="mb-3">
+      <div className="mb-4">
         <TextInput
           voiceState={isSpeaking ? "speaking" : mapToOrbState(wsState)}
           onSendText={handleSendText}
@@ -475,9 +491,10 @@ export default function AgentTest() {
         {!inConversation ? (
           <button
             onClick={startConversation}
-            className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white font-semibold text-sm rounded-xl px-6 py-3 shadow-[0_8px_24px_rgba(14,147,232,0.35)] transition-all"
+            className="flex items-center gap-2.5 bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white font-bold text-sm rounded-xl px-7 py-3.5 shadow-xl shadow-sky-500/30 border border-sky-400/40 transition-all cursor-pointer"
           >
-            <Mic className="w-4.5 h-4.5" /> Start Voice Call
+            <Mic className="w-4.5 h-4.5" />
+            <span>Start Voice Call</span>
           </button>
         ) : (
           <>
@@ -485,28 +502,30 @@ export default function AgentTest() {
               onClick={toggleMic}
               className={`flex items-center gap-2 font-semibold text-sm rounded-xl px-5 py-3 border transition-colors ${
                 wsState === "listening"
-                  ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
-                  : "bg-white/80 backdrop-blur-md text-[var(--gray-800)] border-[var(--gray-200)] hover:bg-white"
+                  ? "bg-emerald-500/20 text-emerald-300 border-emerald-400/40 hover:bg-emerald-500/30"
+                  : "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700"
               }`}
             >
               {wsState === "listening" ? <Mic className="w-4.5 h-4.5" /> : <MicOff className="w-4.5 h-4.5" />}
-              {wsState === "listening" ? "Mute Mic" : "Unmute Mic"}
+              <span>{wsState === "listening" ? "Mute Mic" : "Unmute Mic"}</span>
             </button>
 
             {isSpeaking && (
               <button
                 onClick={stopCurrentAudio}
-                className="flex items-center gap-2 bg-red-50 hover:bg-red-100 text-red-600 font-semibold text-sm rounded-xl px-4 py-3 border border-red-200 transition-colors"
+                className="flex items-center gap-2 bg-rose-950/80 hover:bg-rose-900 text-rose-300 font-semibold text-sm rounded-xl px-4 py-3 border border-rose-500/40 transition-colors"
               >
-                <Square className="w-4 h-4 fill-current" /> Stop Speaking
+                <Square className="w-4 h-4 fill-current" />
+                <span>Stop Speaking</span>
               </button>
             )}
 
             <button
               onClick={restartConversation}
-              className="flex items-center gap-2 glass hover:bg-white/80 text-[var(--gray-800)] font-semibold text-sm rounded-xl px-5 py-3 transition-colors"
+              className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-sm rounded-xl px-5 py-3 border border-slate-700 transition-colors"
             >
-              <RotateCcw className="w-4 h-4" /> Restart Call
+              <RotateCcw className="w-4 h-4" />
+              <span>Restart Call</span>
             </button>
           </>
         )}
@@ -514,10 +533,10 @@ export default function AgentTest() {
         <button
           onClick={handlePublish}
           disabled={publishing}
-          className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-xl px-6 py-3 shadow-[0_8px_24px_rgba(16,185,129,0.35)] disabled:opacity-60 transition-all"
+          className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-sm rounded-xl px-6 py-3.5 shadow-xl shadow-emerald-500/30 border border-emerald-400/40 disabled:opacity-60 transition-all"
         >
           {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4.5 h-4.5" />}
-          Publish Telecaller
+          <span>Publish Telecaller</span>
         </button>
       </div>
     </div>
