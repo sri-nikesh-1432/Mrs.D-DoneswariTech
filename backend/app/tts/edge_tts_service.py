@@ -594,9 +594,27 @@ class EdgeTTSService:
                 "</speak>"
             )
             from app.tts.raw_ssml import get_raw_synth_pcm
-            return await asyncio.wait_for(
-                get_raw_synth_pcm().synthesize(ssml), timeout=20.0
-            )
+            try:
+                pcm = await asyncio.wait_for(
+                    get_raw_synth_pcm().synthesize(ssml), timeout=5.0
+                )
+                if pcm and len(pcm) > 0:
+                    return pcm
+            except Exception as e:
+                logger.debug("Raw SSML PCM synth failed: %s; decoding via pydub", e)
+
+            mp3_bytes = await self.synthesize(text, voice=voice_to_use, language=language, speed=speed)
+            if mp3_bytes:
+                import io
+                from pydub import AudioSegment
+                seg = (
+                    AudioSegment.from_file(io.BytesIO(mp3_bytes), format="mp3")
+                    .set_frame_rate(16000)
+                    .set_channels(1)
+                    .set_sample_width(2)
+                )
+                return seg.raw_data
+            return None
         except Exception as e:
             logger.error("PCM synthesis failed: %s", e)
             return None

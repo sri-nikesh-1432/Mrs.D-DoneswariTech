@@ -108,11 +108,11 @@ async def _create_with_fallback(
 
 async def stream_chat_fast(
     query: str,
-    lang: str = "English",
+    lang: str = "Telugu",
     conversation_history: Optional[List[Dict]] = None,
     context: Optional[str] = None,
-    agent_name: str = "Aadhya",
-    company_name: str = "Doneswari",
+    agent_name: str = "జానకి (Janaki)",
+    company_name: str = "Narayana Educational Institutions",
     instructions: Optional[str] = None,
     state_prompt: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:

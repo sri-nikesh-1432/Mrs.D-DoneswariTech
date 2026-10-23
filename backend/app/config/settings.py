@@ -85,14 +85,12 @@ class Settings(BaseSettings):
     STATIC_DIR: Path = Field(default_factory=lambda: (Path(__file__).parent.parent.parent / "static").resolve())
     AUDIO_DIR: Path = Field(default_factory=lambda: (Path(__file__).parent.parent.parent / "static" / "audio").resolve())
 
-    # Voice — Janaki, the premium Indian female neural voice from ElevenLabs.
-    # The agent's live voice is driven by ELEVENLABS_VOICE_ID (ElevenLabs engine),
-    # NOT the Edge-TTS default below. Set ELEVENLABS_API_KEY + ELEVENLABS_VOICE_ID
-    # in .env to let the agent speak with Janaki.
-    # Voice is chosen at runtime from the agent's `voice` field (a premade
-    # ElevenLabs id = Janaki when configured, otherwise a regional Edge voice).
-    TTS_VOICE: str = Field(default="en-IN-NeerjaNeural", env="TTS_VOICE")
-    TTS_RATE: str = Field(default="+7%", env="TTS_RATE")
+    # Voice — Janaki, the high-quality Indian female neural voice.
+    # Default engine is 'edge' (free, unlimited Microsoft Edge Neural TTS with te-IN-ShrutiNeural),
+    # which avoids any ElevenLabs free tier limit, credit quotas, or 402 payment errors.
+    TTS_ENGINE: str = Field(default="edge", env="TTS_ENGINE")
+    TTS_VOICE: str = Field(default="te-IN-ShrutiNeural", env="TTS_VOICE")
+    TTS_RATE: str = Field(default="+8%", env="TTS_RATE")
     TTS_VOLUME: str = Field(default="+1%", env="TTS_VOLUME")
     MAX_CONCURRENT_CALLS: int = Field(default=1, env="MAX_CONCURRENT_CALLS")
     CALL_RETRY_ATTEMPTS: int = Field(default=3, env="CALL_RETRY_ATTEMPTS")
@@ -171,8 +169,9 @@ class Settings(BaseSettings):
 
     @property
     def elevenlabs_enabled(self) -> bool:
-        """True when a real ElevenLabs API key is configured."""
-        return bool(self.ELEVENLABS_API_KEY) and self.ELEVENLABS_API_KEY.strip() != ""
+        """True when a real ElevenLabs API key is configured AND TTS_ENGINE is 'elevenlabs'."""
+        engine = getattr(self, "TTS_ENGINE", "edge").strip().lower()
+        return engine == "elevenlabs" and bool(self.ELEVENLABS_API_KEY) and self.ELEVENLABS_API_KEY.strip() != ""
 
     @property
     def elevenlabs_uses_janaki(self) -> bool:
