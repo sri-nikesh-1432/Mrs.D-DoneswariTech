@@ -167,17 +167,17 @@ async def chat_endpoint(
     company_name = agent.name or "the institution"
     instructions = agent.instructions or None
 
-    # Step 1: Retrieve grounded knowledge chunks
+    # Step 1: Fast contextual retrieval (with fast timeout so user never waits)
     chunks = []
     context = ""
     try:
-        chunks = await retrieve_context(search_query, top_k=4, agent_id=agent_id)
-        # If specific agent has no chunks, check agent 16 or default knowledge if available
-        if not chunks and agent_id != 16:
-            chunks = await retrieve_context(search_query, top_k=4, agent_id=16)
+        chunks = await asyncio.wait_for(
+            retrieve_context(search_query, top_k=3, agent_id=agent_id),
+            timeout=0.4
+        )
         context = format_context_for_prompt(chunks) if chunks else ""
     except Exception as e:
-        logger.warning("RAG retrieval in text chat failed: %s", e)
+        logger.debug("Fast RAG retrieval skipped, using trained knowledge: %s", e)
         chunks = []
         context = ""
 
@@ -278,12 +278,13 @@ async def chat_stream_endpoint(
     chunks = []
     context = ""
     try:
-        chunks = await retrieve_context(search_query, top_k=4, agent_id=agent_id)
-        if not chunks and agent_id != 16:
-            chunks = await retrieve_context(search_query, top_k=4, agent_id=16)
+        chunks = await asyncio.wait_for(
+            retrieve_context(search_query, top_k=3, agent_id=agent_id),
+            timeout=0.4
+        )
         context = format_context_for_prompt(chunks) if chunks else ""
     except Exception as e:
-        logger.warning("RAG retrieval in text stream failed: %s", e)
+        logger.debug("Fast RAG stream retrieval skipped: %s", e)
         chunks = []
         context = ""
 

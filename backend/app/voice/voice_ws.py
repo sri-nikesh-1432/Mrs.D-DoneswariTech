@@ -897,10 +897,13 @@ async def _process_turn(
                     retriever = get_json_retriever(knowledge_file)
                     return retriever.retrieve_context(llm_input, top_k=4) or ""
                 else:
-                    chunks = await retrieve_context(llm_input, top_k=4, agent_id=institute_id)
+                    chunks = await asyncio.wait_for(
+                        retrieve_context(llm_input, top_k=3, agent_id=institute_id),
+                        timeout=0.4
+                    )
                     return format_context_for_prompt(chunks) or ""
             except Exception as e:
-                logger.warning("RAG retrieval failed (conv=%s): %s", conversation_id, e)
+                logger.debug("Fast RAG skipped in voice turn (using pre-trained KB): %s", e)
                 return ""
 
         # Check audio cache BEFORE hitting the LLM at all

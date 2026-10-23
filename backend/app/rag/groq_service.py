@@ -145,18 +145,8 @@ async def stream_chat_fast(
         system += f"\n\n{state_prompt.strip()[:1200]}"
 
     if context and context.strip():
-        # Capped at 1600 chars to cover full admission details, fees, and course structures from the PDF
-        system += f"\n\nKNOWLEDGE:\n{context.strip()[:1600]}"
-    else:
-        # No knowledge retrieved (spec §43): silence in the KB is NOT evidence
-        # of absence — never confirm/deny facts about the org. Natural,
-        # varied fallback so it doesn't sound like a broken record.
-        system += (
-            "\n\nNO KNOWLEDGE FOUND for this question. Do NOT confirm or deny anything "
-            "about the organization. Say naturally, in your own words AND in " + lang + " (native script), "
-            "that you don't have that specific detail right now and offer to connect them with a counsellor. "
-            "If it was small talk or a pleasantry, just respond conversationally in " + lang + " without inventing facts."
-        )
+        # Additional retrieved context from RAG
+        system += f"\n\nADDITIONAL RETRIEVED KNOWLEDGE:\n{context.strip()[:1600]}"
 
     # ── Message list: system + last 3 turns + user ───────────────────────────
     messages: List[Dict] = [{"role": "system", "content": system}]

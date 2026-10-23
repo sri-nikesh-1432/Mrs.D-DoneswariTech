@@ -134,8 +134,15 @@ class TelephonyVoiceSession:
         from app.rag.groq_service import stream_chat_fast
 
         t0 = time.time()
-        chunks = await retrieve_context(user_text, top_k=4, agent_id=self.agent_id)
-        context = format_context_for_prompt(chunks)
+        chunks = []
+        try:
+            chunks = await asyncio.wait_for(
+                retrieve_context(user_text, top_k=3, agent_id=self.agent_id),
+                timeout=0.4
+            )
+            context = format_context_for_prompt(chunks) if chunks else ""
+        except Exception:
+            context = ""
         retrieval_ms = round((time.time() - t0) * 1000, 1)
 
         # Language lock + fact extraction happen BEFORE generation so the

@@ -85,31 +85,22 @@ class Settings(BaseSettings):
     STATIC_DIR: Path = Field(default_factory=lambda: (Path(__file__).parent.parent.parent / "static").resolve())
     AUDIO_DIR: Path = Field(default_factory=lambda: (Path(__file__).parent.parent.parent / "static" / "audio").resolve())
 
-    # Voice — Janaki, the high-quality Indian female neural voice.
-    # Default engine is 'edge' (free, unlimited Microsoft Edge Neural TTS with te-IN-ShrutiNeural),
-    # which avoids any ElevenLabs free tier limit, credit quotas, or 402 payment errors.
-    TTS_ENGINE: str = Field(default="edge", env="TTS_ENGINE")
-    TTS_VOICE: str = Field(default="te-IN-ShrutiNeural", env="TTS_VOICE")
+    # Voice — Janaki - Respectful Customer Care Agent from ElevenLabs (0U7pUcfIxJzwwTseQz75)
+    TTS_ENGINE: str = Field(default="elevenlabs", env="TTS_ENGINE")
+    TTS_VOICE: str = Field(default="0U7pUcfIxJzwwTseQz75", env="TTS_VOICE")
     TTS_RATE: str = Field(default="+8%", env="TTS_RATE")
     TTS_VOLUME: str = Field(default="+1%", env="TTS_VOLUME")
     MAX_CONCURRENT_CALLS: int = Field(default=1, env="MAX_CONCURRENT_CALLS")
     CALL_RETRY_ATTEMPTS: int = Field(default=3, env="CALL_RETRY_ATTEMPTS")
     CALL_TIMEOUT_SECONDS: int = Field(default=300, env="CALL_TIMEOUT_SECONDS")
 
-    # ElevenLabs premium TTS — when the API key is set, the voice agent
-    # speaks with an ElevenLabs voice instead of Edge TTS.
+    # ElevenLabs premium TTS — targeting Janaki - Respectful Customer Care Agent (0U7pUcfIxJzwwTseQz75)
     ELEVENLABS_API_KEY: str = Field(default="", env="ELEVENLABS_API_KEY")
-    # Default ElevenLabs voice id. The project targets Janaki (a warm noted
-    # Indian female voice). Because the Janaki library voice requires a paid
-    # plan and can return HTTP 402 on a Free account, the default below is the
-    # premade fallback that works on every plan. Set ELEVENLABS_VOICE_ID to a
-    # Janaki voice id in .env to use it; the ElevenLabs service will fall
-    # back automatically if the chosen voice is not permitted.
     ELEVENLABS_VOICE_ID: str = Field(
-        default="hpp4J3VqNfWAUOO0d1Us", env="ELEVENLABS_VOICE_ID"
+        default="0U7pUcfIxJzwwTseQz75", env="ELEVENLABS_VOICE_ID"
     )
     ELEVENLABS_MODEL_ID: str = Field(
-        default="eleven_turbo_v2_5", env="ELEVENLABS_MODEL_ID"
+        default="eleven_multilingual_v2", env="ELEVENLABS_MODEL_ID"
     )
     # Fallback premade voice used when the chosen voice is not permitted for
     # this ElevenLabs plan (a library voice on a Free account returns HTTP 402
