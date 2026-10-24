@@ -140,7 +140,7 @@ async def warm_tts_cache(tts_service, max_entries: int = 2) -> None:
 
 def find_cached_response(query: str, language: str = "English", institute_id: int = 1) -> Optional[str]:
     """Synchronous wrapper for legacy callers (conversation_routes.py)."""
-    key = _make_key(query, institute_id)
+    key = _make_key(query, institute_id, language=language)
     entry = _CACHE.get(key)
     if entry is None:
         return None
@@ -160,6 +160,6 @@ def get_cached_audio(text: str, language: str = "English") -> Optional[bytes]:
 
 def cache_response_sync(query: str, response: str, language: str = "English", institute_id: int = 1) -> None:
     """Synchronous cache write for legacy callers."""
-    key = _make_key(query, institute_id)
+    key = _make_key(query, institute_id, language=language)
     _evict_if_needed()
     _CACHE[key] = _CacheEntry(response)

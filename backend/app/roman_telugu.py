@@ -313,6 +313,10 @@ _MONEY_RE = re.compile(r"(?:₹|RS\.?|rs\.?|Rs\.?)?\s*([0-9][0-9,]*)\b", re.IGNO
 # Transport...) are NOT listed — the neural voices read them naturally in
 # Tenglish, and injecting Telugu script into an English reply breaks the voice.
 _ABBREV_PRON = {
+    "Mrs. D": "జానకి",
+    "Mrs D": "జానకి",
+    "Mrs.D": "జానకి",
+    "Mrs.": "మిసెస్",
     "24/7": "ఇరవై నాలుగు గంటల",
     "IIT-JEE Main": "ఐఐటి జెఈఈ మెయిన్",
     "JEE Advanced": "జెఈఈ అడ్వాన్స్డ్",
@@ -347,9 +351,24 @@ _ABBREV_PRON = {
     "B.Tech": "బీ టెక్",
     "BTech": "బీ టెక్",
     "IIT": "ఐఐటి",
+    "AI": "ఏఐ",
     "nLearn": "ఎన్ లెర్న్",
     "NLearn": "ఎన్ లెర్న్",
     "Olympiad": "ఒలింపియాడ్",
+    "10th": "టెన్త్",
+    "Class X": "టెన్త్ క్లాస్",
+    "Class 10": "టెన్త్ క్లాస్",
+    "Inter": "ఇంటర్",
+    "Intermediate": "ఇంటర్మీడియట్",
+    "Hostel": "హాస్టల్",
+    "College": "కాలేజీ",
+    "Campus": "క్యాంపస్",
+    "Admission": "అడ్మిషన్",
+    "Admissions": "అడ్మిషన్స్",
+    "Fee": "ఫీజు",
+    "Fees": "ఫీజు",
+    "Scholarship": "స్కాలర్‌షిప్",
+    "%": " శాతం",
 }
 
 # English-reply pronunciations for the same abbreviations (the English Indian

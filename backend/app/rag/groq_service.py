@@ -161,11 +161,10 @@ async def stream_chat_fast(
     messages.append({"role": "user", "content": query})
 
     try:
-        # max_tokens=140 → 1-2 crisp sentences. Temperature 0.55 gives natural
-        # human phrasing variety (spec §37) while staying grounded — the strict
-        # system prompt keeps facts locked to KNOWLEDGE even at this temp.
+        # max_tokens=260 allows 2 complete Telugu sentences without cutting off mid-word.
+        # Temperature 0.40 ensures consistent, natural Telugu telecalling slang.
         stream = await _create_with_fallback(
-            messages, temperature=0.55, max_tokens=140, stream=True
+            messages, temperature=0.40, max_tokens=260, stream=True
         )
         async for chunk in stream:
             if not chunk.choices:
