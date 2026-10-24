@@ -145,6 +145,7 @@ class TwilioService:
         base_url = self._public_base_url()
         twiml_url = f"{base_url}/api/telephony/outbound/twiml/{quote(call_id)}"
         status_url = f"{base_url}/api/telephony/outbound/status"
+        recording_url = f"{base_url}/api/telephony/outbound/recording"
 
         # Twilio REST API is synchronous — offload to a worker thread.
         def _create():
@@ -152,6 +153,9 @@ class TwilioService:
                 to=validation["e164"],
                 from_=settings.TWILIO_PHONE_NUMBER,
                 url=twiml_url,
+                record=True,
+                recording_status_callback=recording_url,
+                recording_status_callback_event=["completed"],
                 status_callback=status_url,
                 status_callback_event=["queued", "ringing", "answered", "completed"],
                 method="GET",

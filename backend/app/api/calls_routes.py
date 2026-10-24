@@ -85,6 +85,7 @@ def _serialize_call(call: CallHistory, report: Optional[CallReport] = None) -> d
         "lead_status": lead_status,
         "course": course,
         "outcome": _outcome_label(call.call_status),
+        "recording_url": call.recording_path,
         "summary": summary,
         "transcript": _parse_transcript(call.transcript),
         "questions_asked": questions,

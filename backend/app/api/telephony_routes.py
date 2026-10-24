@@ -177,6 +177,62 @@ async def handle_outbound_status(request: Request):
     return {"status": "ok", "call_id": call_id, "call_status": db_status}
 
 
+# ── Provider recording callback ───────────────────────────────────────────────
+
+@router.post("/outbound/recording")
+async def handle_outbound_recording(request: Request):
+    """
+    Twilio recording callback: receives the completed call recording URL.
+    Persists the MP3 recording URL on the CallHistory record.
+    """
+    sig = request.headers.get("X-Twilio-Signature")
+    if not await _twilio_signature_valid(request, sig):
+        logger.warning("Outbound recording webhook: invalid signature; rejecting")
+        raise HTTPException(status_code=403, detail="Invalid webhook signature")
+
+    try:
+        form = await request.form()
+        call_sid = str(form.get("CallSid", ""))
+        recording_url = str(form.get("RecordingUrl", ""))
+        recording_sid = str(form.get("RecordingSid", ""))
+        duration = str(form.get("RecordingDuration", ""))
+    except Exception:
+        call_sid = request.query_params.get("CallSid", "")
+        recording_url = request.query_params.get("RecordingUrl", "")
+        recording_sid = request.query_params.get("RecordingSid", "")
+        duration = ""
+
+    if not call_sid or not recording_url:
+        return {"status": "ignored"}
+
+    # Append .mp3 so standard audio players can stream and download it directly
+    if not recording_url.endswith(".mp3"):
+        mp3_url = f"{recording_url}.mp3"
+    else:
+        mp3_url = recording_url
+
+    logger.info("OUTBOUND_RECORDING | sid=%s | rec=%s | url=%s", call_sid, recording_sid, mp3_url)
+
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(
+            select(CallHistory).where(CallHistory.provider_call_id == call_sid)
+        )
+        call = res.scalar_one_or_none()
+        if call:
+            call.recording_path = mp3_url
+            session.add(CallEvent(
+                call_id=call.call_id,
+                event_type="recording_completed",
+                source="provider",
+                provider_call_id=call_sid,
+                detail={"recording_sid": recording_sid, "url": mp3_url, "duration": duration},
+            ))
+            await session.commit()
+            return {"status": "ok", "call_id": call.call_id, "recording_url": mp3_url}
+
+    return {"status": "call_not_found", "call_sid": call_sid}
+
+
 # ── Inbound calls (spec §63) ──────────────────────────────────────────────────
 
 @router.post("/incoming")
@@ -299,6 +355,7 @@ async def get_call_detail(call_id: str, session: AsyncSession = Depends(get_data
         "duration_seconds": call.duration_seconds,
         "interest_level": call.interest_level,
         "outcome": call.outcome,
+        "recording_url": call.recording_path,
         "transcript_messages": messages,
         "events": events,
         "report": report,
