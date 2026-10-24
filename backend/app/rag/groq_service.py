@@ -154,7 +154,7 @@ async def stream_chat_fast(
     if conversation_history:
         for turn in conversation_history[-4:]:          # last 2 exchanges (4 msgs)
             role = "user" if turn.get("role") == "user" else "assistant"
-            content = str(turn.get("content", ""))[:100]  # hard truncate per turn
+            content = str(turn.get("content", ""))[:250]  # retain sufficient context for Telugu dialogue
             if content.strip():
                 messages.append({"role": role, "content": content})
 

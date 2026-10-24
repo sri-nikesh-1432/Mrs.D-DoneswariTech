@@ -20,16 +20,16 @@ from app.logs.logger import get_logger
 logger = get_logger(__name__)
 
 
-async def get_tts_service() -> "DynamicTTSService":
-    """Proxy that returns either an ElevenLabs service or a DynamicTTSService."""
-    from app.tts.elevenlabs_service import get_elevenlabs_service
+async def get_tts_service():
+    """Proxy that returns either an ElevenLabs service or an EdgeTTSService."""
+    from app.tts.edge_tts_service import get_tts_service as get_edge_tts_service
     if settings.elevenlabs_enabled:
         try:
-            return await get_elevenlabs_service()
-        except Exception:
-            # Fall back to Edge TTS without logging to avoid circular logs.
-            pass
-    return DynamicTTSService()
+            from app.tts.elevenlabs_service import get_elevenlabs_service
+            return get_elevenlabs_service()
+        except Exception as e:
+            logger.warning("ElevenLabs service init failed, falling back to EdgeTTS: %s", e)
+    return get_edge_tts_service()
 
 
 def _looks_like_elevenlabs_voice_id(voice: Optional[str]) -> bool:
@@ -46,9 +46,17 @@ class DynamicTTSService:
     def __init__(self):
         self._service = None  # initialized on first use
 
-    async def _get(self):
+    def _get(self):
         if self._service is None:
-            self._service = await get_tts_service()
+            if settings.elevenlabs_enabled:
+                try:
+                    from app.tts.elevenlabs_service import get_elevenlabs_service
+                    self._service = get_elevenlabs_service()
+                except Exception:
+                    pass
+            if self._service is None:
+                from app.tts.edge_tts_service import get_tts_service as get_edge_tts_service
+                self._service = get_edge_tts_service()
         return self._service
 
     async def set_agent(self, persona: dict = None):
@@ -58,41 +66,39 @@ class DynamicTTSService:
         if not voice:
             self._service = None
             return
-        if _looks_like_elevenlabs_voice_id(voice):
-            # ElevenLabs id -> use ElevenLabs if available, else Edge fallback
-            if settings.elevenlabs_enabled:
-                try:
-                    self._service = await get_tts_service()
-                    logger.info("Dynamic TTS switched to ElevenLabs (agent voice=%s)", voice)
-                    return
-                except Exception:
-                    pass
-            self._service = await get_tts_service()
-        else:
-            self._service = None
+        if _looks_like_elevenlabs_voice_id(voice) and settings.elevenlabs_enabled:
+            try:
+                from app.tts.elevenlabs_service import get_elevenlabs_service
+                self._service = get_elevenlabs_service()
+                logger.info("Dynamic TTS switched to ElevenLabs (agent voice=%s)", voice)
+                return
+            except Exception:
+                pass
+        from app.tts.edge_tts_service import get_tts_service as get_edge_tts_service
+        self._service = get_edge_tts_service()
 
     async def synthesize(self, text: str, language: Optional[str] = None, voice=None, speed=None):
-        service = await self._get()
+        service = self._get()
         if service is None:
             return None
         return await service.synthesize(text, language=language, voice=voice, speed=speed)
 
     async def synthesize_sentences(self, text: str, language=None, voice=None, speed=None):
-        service = await self._get()
+        service = self._get()
         if service is None:
             return []
         return await service.synthesize_sentences(text, language=language, voice=voice, speed=speed)
 
     async def stream_sentences(self, text: str, language=None, voice=None, speed=None):
-        service = await self._get()
-        if service is None:
-            return []
-        return service.stream_sentences(text, language=language, voice=voice, speed=speed)
-
-    async def initialize(self):
-        service = await self._get()
+        service = self._get()
         if service is None:
             return
-        await service.initialize()
+        async for chunk in service.stream_sentences(text, language=language, voice=voice, speed=speed):
+            yield chunk
+
+    async def initialize(self):
+        service = self._get()
+        if service is not None:
+            await service.initialize()
 
 

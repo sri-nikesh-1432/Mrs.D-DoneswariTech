@@ -439,16 +439,23 @@ _FIRST_CHUNK_MAX_CHARS = 40
 
 
 def _pop_complete_sentences(buffer: str):
-    """Return (complete_sentences, remainder) from a streaming buffer."""
+    """Return (complete_sentences, remainder) from a streaming buffer with smooth threshold."""
     sentences = []
     start = 0
+    accumulated = ""
     for m in _SENT_BOUNDARY.finditer(buffer):
         end = m.end()
         piece = buffer[start:end].strip()
-        if piece:
-            sentences.append(piece)
         start = end
-    return sentences, buffer[start:]
+        if piece:
+            accumulated = f"{accumulated} {piece}".strip() if accumulated else piece
+            if len(accumulated) >= 35 or accumulated.endswith("?"):
+                sentences.append(accumulated)
+                accumulated = ""
+    remainder = buffer[start:]
+    if accumulated:
+        remainder = f"{accumulated} {remainder}".strip() if remainder else accumulated
+    return sentences, remainder
 
 
 def _build_history(memory: list) -> list:
@@ -961,26 +968,6 @@ async def _process_turn(
                     if not ai_parts:
                         latency.mark_llm_first_token()
                     buf += delta
-
-                    # First chunk: emit at the first clause boundary (or a
-                    # ~40-char word boundary) so TTS synthesis starts on a
-                    # SHORT unit — the single biggest TTFA lever.
-                    if not first_chunk_sent:
-                        m = _FIRST_CLAUSE_BOUNDARY.search(buf)
-                        cut = m.end() if m else None
-                        if cut is None and len(buf) >= _FIRST_CHUNK_MAX_CHARS:
-                            head = buf[:_FIRST_CHUNK_MAX_CHARS]
-                            sp = head.rfind(" ")
-                            if sp > 10:
-                                cut = sp
-                        if cut:
-                            clause = buf[:cut].strip().rstrip(",")
-                            buf = buf[cut:]
-                            if clause:
-                                first_chunk_sent = True
-                                idx = len(ai_parts)
-                                ai_parts.append(clause)
-                                await sentence_q.put(("sentence", idx, clause))
 
                     sentences, buf = _pop_complete_sentences(buf)
                     for s in sentences:

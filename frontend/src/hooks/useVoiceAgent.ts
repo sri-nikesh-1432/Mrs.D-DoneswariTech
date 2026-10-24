@@ -667,21 +667,17 @@ export function useVoiceAgent({
     }
   }, [setFsm, startListening, startVAD, vadSupported]);
 
-  // Natural inter-sentence pause (the "breathing" cadence). Humans do NOT
-  // pause the same length after every sentence — uniform gaps are exactly
-  // what makes TTS sound robotic. Questions get a thinking beat, a long
-  // thought a deeper breath, short acknowledgements flow fast.
+  // Natural, smooth inter-sentence pause for telecalling.
+  // Short and clean so sentences flow naturally without halting or breaking.
   const pauseAfterSentence = useCallback((sentence: string): number => {
     const s = sentence.trim();
     let base: number;
-    if (s.endsWith("?")) base = 560;
-    else if (s.endsWith("!")) base = 460;
-    else if (s.length > 140) base = 620;
-    else if (s.length < 20) base = 300;
-    else base = 380;
-    // ±12% organic jitter — real people never pause for exactly the same
-    // length; identical gaps are precisely what reads as mechanical.
-    return Math.round(base * (0.88 + Math.random() * 0.24));
+    if (s.endsWith("?")) base = 240;
+    else if (s.endsWith("!")) base = 180;
+    else if (s.length > 140) base = 220;
+    else if (s.length < 20) base = 120;
+    else base = 160;
+    return Math.round(base * (0.92 + Math.random() * 0.16));
   }, []);
 
   // How deep the breath before the next sentence should be. Questions and

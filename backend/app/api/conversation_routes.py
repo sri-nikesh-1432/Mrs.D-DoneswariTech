@@ -37,57 +37,13 @@ router = APIRouter(prefix="/api/conversation", tags=["Conversation"])
 # In production, this would be per-call memory managed by CallHandler
 conversation_memory = {}
 
+# Master dynamic TTS instance
+_tts_service = DynamicTTSService()
+
+
 async def resolve_tts_service(persona: dict = None):
     """Switch the underlying TTS engine to match the agent's voice config."""
     return await _tts_service.set_agent(persona)
-
-
-class DynamicTTSService:
-    """Dynamic TTS service that routes to Edge TTS or ElevenLabs based on the
-    agent's configured voice. When the agent's voice is a premade ElevenLabs
-    id (or Janaki), use ElevenLabs; otherwise fall back to Edge TTS.""",
-
-    def __init__(self):
-        self._service = EdgeTTSService()
-
-    async def set_agent(self, persona: dict = None):
-        """Switch the underlying TTS engine to match the agent's voice."""
-        persona = persona or {}
-        voice = persona.get("voice")
-        if not voice:
-            self._service = EdgeTTSService()
-            return
-        # ElevenLabs premade ids are ~11-30 chars, no dashes/dots.
-        # Edge-TTS names always contain '-' (e.g. en-IN-NeerjaNeural).
-        if len(voice) >= 11 and len(voice) <= 30 and '-' not in voice and '.' not in voice:
-            if settings.elevenlabs_enabled:
-                try:
-                    self._service = await get_tts_service()
-                    return
-                except Exception:
-                    pass
-            self._service = EdgeTTSService()
-        else:
-            self._service = EdgeTTSService()
-
-    async def synthesize(self, text: str, language: str = None, voice=None, speed=None):
-        return await self._service.synthesize(text, language=language, voice=voice, speed=speed)
-
-    async def synthesize_sentences(self, text: str, language=None, voice=None, speed=None):
-        return await self._service.synthesize_sentences(text, language=language, voice=voice, speed=speed)
-
-    async def stream_sentences(self, text: str, language=None, voice=None, speed=None):
-        return self._service.stream_sentences(text, language=language, voice=voice, speed=speed)
-
-    async def initialize(self):
-        await self._service.initialize()
-
-
-# We cannot hold a live DynamicTTSService here because the factory function
-# (get_tts_service) is defined in the tts package and may not be importable
-# at module load time; callers must use resolve_tts_service() to swap engines
-# for a specific agent persona.
-_tts_service = DynamicTTSService()
 
 
 LANGUAGE_INSTRUCTION = (
@@ -124,39 +80,26 @@ def _build_history(memory: list, conversation_id: str) -> list:
 # is terminal punctuation followed by whitespace/end (which naturally protects
 # "B.Tech", "e.g.") or a newline. Nothing is ever emitted half-split.
 _SENT_BOUNDARY = _re.compile(r"[.!?](?=\s|$|\n)|\n")
-# Clause-level boundary: emit TTS on commas/conjunctions for faster TTFA.
-_CLAUSE_BOUNDARY = _re.compile(r",\s+|\band\s+|\bbut\s+|\bso\s+|\bnow\s+|\bwell\s+")
 
 
 def _pop_complete_sentences(buffer: str):
-    """Return (complete_sentences, remainder) from a streaming buffer.
-    
-    Also emits clause-level chunks (after commas/conjunctions) for the FIRST
-    sentence only, so TTS can start ~200ms earlier. Later sentences wait for
-    proper sentence boundaries to avoid choppy audio.
-    """
+    """Return (complete_sentences, remainder) from a streaming buffer with smooth threshold."""
     sentences = []
     start = 0
-    found_sentence = False
+    accumulated = ""
     for m in _SENT_BOUNDARY.finditer(buffer):
         end = m.end()
         piece = buffer[start:end].strip()
-        if piece:
-            sentences.append(piece)
-            found_sentence = True
         start = end
-    # If no full sentence found yet but buffer is long, try clause-level split
-    # for faster TTFA on the first chunk only.
-    if not found_sentence and len(buffer) > 25:
-        last_clause = None
-        for m in _CLAUSE_BOUNDARY.finditer(buffer):
-            last_clause = m
-        if last_clause and last_clause.end() > 20:
-            piece = buffer[:last_clause.end()].strip()
-            if piece:
-                sentences.append(piece)
-                start = last_clause.end()
-    return sentences, buffer[start:]
+        if piece:
+            accumulated = f"{accumulated} {piece}".strip() if accumulated else piece
+            if len(accumulated) >= 35 or accumulated.endswith("?"):
+                sentences.append(accumulated)
+                accumulated = ""
+    remainder = buffer[start:]
+    if accumulated:
+        remainder = f"{accumulated} {remainder}".strip() if remainder else accumulated
+    return sentences, remainder
 
 
 def _detect_language(user_input: str, hint: Optional[str] = None) -> str:
@@ -317,12 +260,22 @@ async def stream_conversation(
                         )
             else:
                 _r0 = time.time()
+                context = ""
                 if mode == "test":
-                    retriever = get_json_retriever(knowledge_file)
-                    context = retriever.retrieve_context(llm_input, top_k=5)
+                    try:
+                        retriever = get_json_retriever(knowledge_file)
+                        context = retriever.retrieve_context(llm_input, top_k=5)
+                    except Exception as e:
+                        logger.debug("JSON retriever skipped: %s", e)
                 else:
-                    retrieved_chunks = await retrieve_context(llm_input, top_k=5)
-                    context = format_context_for_prompt(retrieved_chunks)
+                    try:
+                        retrieved_chunks = await asyncio.wait_for(
+                            retrieve_context(llm_input, top_k=3),
+                            timeout=0.35,
+                        )
+                        context = format_context_for_prompt(retrieved_chunks) if retrieved_chunks else ""
+                    except Exception as e:
+                        logger.debug("Fast RAG retrieval skipped, using trained knowledge: %s", e)
                 retrieval_ms = (time.time() - _r0) * 1000
 
                 memory = conversation_memory.setdefault(conv_id, [])

@@ -165,8 +165,11 @@ class ElevenLabsTTSService:
         candidates: list = []
         if primary and primary not in self._blocked_voices:
             candidates.append(primary)
+
+        is_telugu = any("\u0c00" <= c <= "\u0c7f" for c in text)
         fallback = self.fallback_voice_id
-        if fallback and fallback not in candidates and fallback not in self._blocked_voices:
+        # Never fall back to an English voice (like Bella) for Telugu text
+        if fallback and not is_telugu and fallback not in candidates and fallback not in self._blocked_voices:
             candidates.append(fallback)
 
         for cand in candidates:
@@ -200,9 +203,10 @@ class ElevenLabsTTSService:
         """Last-resort Edge-TTS synthesis (MP3) so the agent is never silent."""
         try:
             svc = _get_edge_fallback()
-            # Do NOT pass the ElevenLabs voice id to Edge (it is not an Edge
-            # voice name); let Edge pick by the text's script / its default.
-            return await svc.synthesize(text, voice=None, language=None, speed=None)
+            is_telugu = any("\u0c00" <= c <= "\u0c7f" for c in text)
+            v = "te-IN-ShrutiNeural" if is_telugu else None
+            lang = "Telugu" if is_telugu else None
+            return await svc.synthesize(text, voice=v, language=lang, speed=None)
         except Exception as e:
             logger.error("Edge-TTS fallback failed: %s", e)
             return None

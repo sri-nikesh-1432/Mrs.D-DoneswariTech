@@ -52,8 +52,8 @@ export function playBreath(options: BreathOptions = {}): void {
   const duration = Math.min(Math.max(options.durationMs ?? 420, 200), 650) / 1000;
   const intensity = Math.min(Math.max(options.intensity ?? 0.35, 0), 1);
 
-  // Very quiet — an inhale, not a sound effect (~-22 to -30 dBFS peak).
-  const peakGain = 0.04 + intensity * 0.05;
+  // Ultra-subtle inhale so it never sounds like a crackle or audio break
+  const peakGain = 0.01 + intensity * 0.015;
 
   const frames = Math.max(1, Math.floor(ctx.sampleRate * duration));
   const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
