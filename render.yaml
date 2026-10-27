@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: mrsd-backend
+    runtime: docker
+    repo: https://github.com/sri-nikesh-1432/Mrs.D-DoneswariTech.git
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    healthCheckTimeout: 120
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: EMBEDDING_WARMUP
+        value: 'false'
+      - key: ALLOWED_ORIGINS
+        value: '["https://mrsd-telecaller.netlify.app","https://dtechp1.netlify.app","https://dllp.netlify.app","https://dllp.netlify.com","http://localhost:5176","*"]'
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:////app/mrsd_campaign.db
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ELEVENLABS_VOICE_ID
+        value: '0U7pUcfIxJzwwTseQz75'
+      - key: ELEVENLABS_FALLBACK_VOICE_ID
+        value: 'hpp4J3VqNfWAUOO0d1Us'
+      - key: ELEVENLABS_MODEL_ID
+        value: 'eleven_turbo_v2_5'
+      - key: ELEVENLABS_ALLOW_EDGE_FALLBACK
+        value: '1'

@@ -6,12 +6,10 @@
 [build.environment]
   NODE_VERSION = "20"
 
-# Production build must talk to the DLLP deploy (Netlify) backend.
-# Vite bakes this value in at build time; if you override it in the Netlify
-# UI, that value wins — so keep it consistent with ALLOWED_ORIGINS below.
+# Production build talks to Render backend
 [context.production.environment]
-  VITE_API_URL = "https://dllp.netlify.app"
-  VITE_WS_URL = "wss://dllp.netlify.app"
+  VITE_API_URL = "https://d-tech-pid6.onrender.com"
+  VITE_WS_URL = "wss://d-tech-pid6.onrender.com"
 
 # Netlify site origin MUST be listed in backend ALLOWED_ORIGINS (settings.py
 # and Render env) for cross-origin REST + voice WebSocket.
@@ -19,7 +17,7 @@
   for = "/*"
   [headers.values]
     # The voice WebSocket is upgraded cross-origin; CORS must support it.
-    Access-Control-Allow-Origin = "https://dllp.netlify.app"
+    Access-Control-Allow-Origin = "*"
     Access-Control-Allow-Methods = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
     Access-Control-Allow-Headers = "Content-Type,Authorization,X-Requested-With,Accept"
     Access-Control-Max-Age = "86400"

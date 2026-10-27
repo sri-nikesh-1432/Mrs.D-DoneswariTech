@@ -19,7 +19,7 @@ services:
       # deployed Netlify site(s) here — REST is called cross-origin from the
       # browser. The voice WebSocket connects to the same origin.
       - key: ALLOWED_ORIGINS
-        value: '["https://dtechp1.netlify.app","https://dllp.netlify.app","https://dllp.netlify.com","http://localhost:5176"]'
+        value: '["https://mrsd-telecaller.netlify.app","https://dtechp1.netlify.app","https://dllp.netlify.app","https://dllp.netlify.com","http://localhost:5176","*"]'
       - key: DATABASE_URL
         value: sqlite+aiosqlite:////app/mrsd_campaign.db
       # ── ElevenLabs premium voice ────────────────────────────────────

@@ -1,0 +1,2 @@
+# Forward root pip install to backend requirements
+-r backend/requirements.txt

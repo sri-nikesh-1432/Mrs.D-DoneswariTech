@@ -51,8 +51,8 @@ audioop-lts>=0.2.1; python_version >= '3.13'
 # Text-to-Speech
 edge-tts>=6.1.12
 
-# Speech-to-Text
-openai-whisper>=20231117
+# Speech-to-Text (Cloud Groq Whisper API used in production; local whisper optional)
+# openai-whisper>=20231117
 
 # Twilio for phone calls
 twilio>=8.11.0
