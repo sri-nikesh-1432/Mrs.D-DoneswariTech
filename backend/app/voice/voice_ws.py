@@ -1522,7 +1522,12 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
                     except Exception:
                         pass
                     continue
+                if mtype in ("interim_text", "interim_transcript"):
+                    # Spec §10 / Test K: Interim transcripts update live UI but must not trigger generation or commit turn
+                    continue
                 if mtype == "text":
+                    if data.get("is_final") is False:
+                        continue
                     text = str(data.get("text") or "").strip()
                     if text:
                         await utterance_q.put(("text", text))

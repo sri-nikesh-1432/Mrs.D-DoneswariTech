@@ -147,6 +147,9 @@ CATEGORY_KEYWORDS: Dict[str, List[str]] = {
     "deadline": ["last date", "deadline", "date eppudu", "eppudu lopala", "చివరి తేదీ", "లాస్ట్ డేట్", "ఎప్పుడు లోపల"],
     "scholarship": ["scholarship", "nsat", "concession", "discount", "స్కాలర్‌షిప్", "రాయితీ"],
     "campus": ["campus", "location", "address", "branch", "where", "ekkada", "క్యాంపస్", "ఎక్కడ", "చిరునామా"],
+    "eligibility": ["eligibility", "eligible", "qualify", "qualification", "అర్హత", "ఎవరు అర్హులు"],
+    "application": ["application", "apply", "form", "online", "submit", "దరఖాస్తు"],
+    "guarantee": ["guarantee", "గ్యారెంటీ", "పక్కా సీటు", "confirm seat", "seat confirm", "guarantee chesthara"],
 }
 
 # Regional colloquial verb & question stems (Telangana & Andhra)
@@ -331,6 +334,12 @@ class TeluguLanguageProcessor:
         if "last date" in query.lower() or "deadline" in query.lower() or "చివరి తేదీ" in query:
             query = f"admission deadline last date application schedule {query}"
 
+        if "scholarship" in query.lower() or "nsat" in query.lower() or "స్కాలర్‌షిప్" in query:
+            query = f"scholarship eligibility criteria NSAT fee concession {query}"
+
+        if "online" in query.lower() or "apply" in query.lower() or "application" in query.lower() or "submit" in query.lower():
+            query = f"admission online application process submission {query}"
+
         return query.strip()
 
     @classmethod
@@ -385,6 +394,17 @@ class TeluguLanguageProcessor:
                 elif cat == "admission":
                     intent = "admission_inquiry"
                     active_entities.append("admission")
+                elif cat == "eligibility":
+                    if intent == "general_inquiry":
+                        intent = "eligibility_inquiry"
+                    active_entities.append("eligibility")
+                elif cat == "application":
+                    if intent == "general_inquiry":
+                        intent = "application_inquiry"
+                    active_entities.append("application")
+                elif cat == "guarantee":
+                    intent = "guarantee_inquiry"
+                    active_entities.append("guarantee_request")
 
         for course, full_name in COURSE_ALIASES.items():
             pattern = rf"(?:\b|^){re.escape(course)}(?:\b|$)"

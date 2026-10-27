@@ -204,7 +204,7 @@ _HOSTEL_NO = ("day scholar", "from home", "ఇంటి నుంచి", "intik
               "home nunchi", "తోటి", "not required", "అవసరం లేదు")
 # A negation in the same sentence flips a mentioned facility to "not needed"
 # ("hostel ledu" = no hostel — NOT "the student is not interested").
-_NEGATIONS = ("ledu", "ledhu", "లేదు", "vaddu", "వద్దు", "voddu", "no need",
+_NEGATIONS = ("ledu", "ledhu", "లేదు", "vaddu", "వద్దు", "voddu", "kaadu", "kadu", "కాదు", "no need",
               "not needed", "don't need", "dont need", "not required", "no hostel")
 _HOSTEL_POSITIVE = ("kavali", "kaavali", "కావాలి", "kaavala", "kavala", "yes",
                     "అవును", "అవసరం")
@@ -359,6 +359,39 @@ class ConversationState:
         self.student_turns += 1
         self.student_asked_question = student_asked_question
 
+        # Integrate Telugu NLP entities and self-corrections into conversation state
+        try:
+            from app.language.telugu_nlp import TeluguLanguageProcessor
+            nlp_proc = TeluguLanguageProcessor.process_utterance(text)
+        except Exception:
+            nlp_proc = None
+
+        if nlp_proc:
+            if nlp_proc.has_correction or nlp_proc.negated_entities:
+                if "hostel" in nlp_proc.negated_entities:
+                    new["hostel"] = False
+                    self.slots["hostel"] = False
+                    self.slots["fee_category"] = "tuition_fee"
+                if any("cse" in neg for neg in nlp_proc.negated_entities):
+                    if self.slots.get("active_course") and "Computer Science" in str(self.slots["active_course"]):
+                        self.slots.pop("active_course", None)
+
+            if nlp_proc.active_entities:
+                for ent in nlp_proc.active_entities:
+                    if any(c in ent for c in ("Engineering", "Artificial Intelligence", "Computer Science", "B.Tech")):
+                        new["active_course"] = ent
+                        self.slots["active_course"] = ent
+                        self.slots["career_interest"] = "engineering"
+                        self.slots.setdefault("current_situation", "decided")
+                    elif "Intermediate" in ent:
+                        new["course_group"] = ent
+                        self.slots["course_group"] = ent
+                        self.slots.setdefault("current_situation", "decided")
+
+            if nlp_proc.intent == "guarantee_inquiry":
+                new["guarantee_requested"] = True
+                self.slots["guarantee_requested"] = True
+
         group_match = _GROUP_RE.search(text)
         if group_match:
             raw = re.sub(r"\s+", "", group_match.group(1).lower())
@@ -392,8 +425,8 @@ class ConversationState:
         elif any(k in low or k in text for k in _HOSTEL_YES):
             # "hostel kavali" is a clear yes; "hostel ledu" is a clear no; a
             # bare mention counts as yes only when nothing negates it.
-            explicit_yes = any(k in low or k in text for k in _HOSTEL_POSITIVE)
-            negated = any(k in low or k in text for k in _NEGATIONS)
+            negated = any(k in low or k in text for k in _NEGATIONS) or bool(nlp_proc and "hostel" in nlp_proc.negated_entities)
+            explicit_yes = any(k in low or k in text for k in _HOSTEL_POSITIVE) and not negated
             value = True if explicit_yes or not negated else False
             new["hostel"] = value
             self.slots["hostel"] = value
