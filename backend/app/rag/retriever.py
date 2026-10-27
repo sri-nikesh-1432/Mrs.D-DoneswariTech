@@ -189,12 +189,14 @@ async def retrieve_context(
     institute_id: Optional[int] = None,
     agent_id: Optional[int] = None,
     conversation_history: Optional[List[Dict]] = None,
+    negated_entities: Optional[List[str]] = None,
 ) -> List[Dict]:
     """
     Hybrid retrieval strictly isolated to this agent (spec §10):
-    vector search + BM25 lexical search + RRF fusion + rerank.
+    vector search + BM25 lexical search + RRF fusion + rerank + negation filtering.
     """
     from app.rag.reranker import rerank_chunks
+    from app.language.telugu_nlp import TeluguLanguageProcessor
 
     target_agent_id = agent_id or institute_id or 1
     store = vector_store_manager.get_store(target_agent_id)
@@ -206,10 +208,18 @@ async def retrieve_context(
     if top_k is None:
         top_k = settings.TOP_K_RESULTS
 
+    # Extract negation if not explicitly provided
+    if negated_entities is None:
+        _, extracted_neg, clean_query = TeluguLanguageProcessor.extract_negation_and_corrections(query)
+        negated_entities = extracted_neg
+        if clean_query and clean_query != query:
+            query = clean_query
+
     # 1. Query rewrite for follow-ups.
     effective_query = rewrite_query(query, conversation_history)
 
-    cache_key = _get_cache_key(effective_query, top_k, min_score, target_agent_id)
+    neg_suffix = f":neg={','.join(sorted(negated_entities or []))}" if negated_entities else ""
+    cache_key = _get_cache_key(f"{effective_query}{neg_suffix}", top_k, min_score, target_agent_id)
     if cache_key in _query_cache:
         return _query_cache[cache_key]
 
@@ -237,7 +247,29 @@ async def retrieve_context(
 
         candidates = list(merged.values())
 
-        # 4. Rerank + threshold.
+        # 4. Filter out chunks matching negated entities (e.g. "hostel fee kaadu, tuition fee")
+        if negated_entities:
+            filtered_candidates = []
+            for c in candidates:
+                text_lower = c.get("text", "").lower()
+                section_lower = str(c.get("section", "")).lower()
+                is_negated = False
+                for neg in negated_entities:
+                    neg_term = neg.lower().strip()
+                    if neg_term == "hostel":
+                        if "hostel" in section_lower or text_lower.startswith("hostel") or "hostel fee" in text_lower:
+                            if "tuition fee" not in text_lower and "academic fee" not in text_lower:
+                                is_negated = True
+                                break
+                    elif neg_term and (neg_term in section_lower or text_lower.startswith(neg_term)):
+                        is_negated = True
+                        break
+                if not is_negated:
+                    filtered_candidates.append(c)
+            if filtered_candidates:
+                candidates = filtered_candidates
+
+        # 5. Rerank + threshold.
         reranked = rerank_chunks(effective_query, candidates, top_k=top_k)
         filtered = [r for r in reranked if r.get("score", 0) >= min_score or r.get("bm25_rank") is not None]
 
@@ -246,8 +278,8 @@ async def retrieve_context(
         _query_cache[cache_key] = filtered
 
         logger.info(
-            "Agent %d hybrid-retrieved %d chunks for query: %s (%d sub-queries)",
-            target_agent_id, len(filtered), query[:40], len(sub_queries),
+            "Agent %d hybrid-retrieved %d chunks for query: %s (%d sub-queries, neg=%s)",
+            target_agent_id, len(filtered), query[:40], len(sub_queries), negated_entities,
         )
         return filtered
 
@@ -328,12 +360,21 @@ def _hybrid_search(agent_id: int, query: str, store, top_k: int) -> List[Dict]:
 
 
 def format_context_for_prompt(chunks: List[Dict]) -> str:
-    """Format retrieved chunks into clean text for system context injection."""
+    """Format retrieved chunks into clean text with provenance for system context injection."""
     if not chunks:
         return ""
     parts = []
     for i, c in enumerate(chunks):
         text = c.get("text", "").strip()
+        source = c.get("source") or c.get("document") or "Institutional Document"
+        page = c.get("page_number")
+        section = c.get("section")
+        provenance_parts = [f"Source: {source}"]
+        if page is not None:
+            provenance_parts.append(f"Page: {page}")
+        if section:
+            provenance_parts.append(f"Section: {section}")
+        prov_str = ", ".join(provenance_parts)
         if text:
-            parts.append(f"[Fact {i+1}]: {text}")
+            parts.append(f"[Fact {i+1} ({prov_str})]: {text}")
     return "\n\n".join(parts)

@@ -77,6 +77,7 @@ class VoiceWebSocket {
 
   // Transcript assembly
   private agentTextBuffer = "";
+  private activeGenerationId: string | null = null;
 
   private state: VoiceWSState = "disconnected";
 
@@ -320,6 +321,14 @@ class VoiceWebSocket {
   // ─── Interrupt playback (local barge-in) ──────────────────────
   interrupt(): void {
     this._stopPlayback();
+    this.activeGenerationId = null;
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify({ type: "interrupt" }));
+      } catch {
+        // socket may be closing
+      }
+    }
   }
 
   // ─── Message handler ──────────────────────────────────────────
@@ -336,6 +345,14 @@ class VoiceWebSocket {
         break;
 
       case "sentence": {
+        const genId = msg.generation_id as string | undefined;
+        if (genId && this.activeGenerationId && genId !== this.activeGenerationId) {
+          console.debug("[VoiceWS] dropping stale sentence for gen:", genId, "active:", this.activeGenerationId);
+          break;
+        }
+        if (genId && !this.activeGenerationId) {
+          this.activeGenerationId = genId;
+        }
         const text = String(msg.text ?? "");
         const audioB64 = msg.audio_data as string | null;
         // Every sentence that arrives is REAL agent speech streamed from the
@@ -352,6 +369,11 @@ class VoiceWebSocket {
       }
 
       case "turn_done": {
+        const genId = msg.generation_id as string | undefined;
+        if (genId && this.activeGenerationId && genId !== this.activeGenerationId) {
+          console.debug("[VoiceWS] ignoring stale turn_done for gen:", genId, "active:", this.activeGenerationId);
+          break;
+        }
         const full = String(msg.ai_response ?? "");
         if (full) {
           this.callbacks.onAgentFinal?.(full);
@@ -367,6 +389,10 @@ class VoiceWebSocket {
       }
 
       case "transcript": {
+        const genId = msg.generation_id as string | undefined;
+        if (genId) {
+          this.activeGenerationId = genId;
+        }
         const text = String(msg.text ?? "");
         if (text) {
           this.callbacks.onTranscriptPartial?.(text);
@@ -377,12 +403,17 @@ class VoiceWebSocket {
       }
 
       case "processing":
+        if (msg.generation_id) {
+          this.activeGenerationId = String(msg.generation_id);
+        }
         this._setState("processing");
         break;
 
+      case "interrupted":
       case "speech_start":
-        // Barge-in: caller started talking over the agent → cut audio now
+        // Barge-in: caller started talking over the agent or server cancelled turn → cut audio now
         this._stopPlayback();
+        this.activeGenerationId = null;
         break;
 
       case "error":

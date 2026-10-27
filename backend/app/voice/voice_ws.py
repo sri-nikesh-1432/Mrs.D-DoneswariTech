@@ -62,6 +62,14 @@ logger = get_logger(__name__)
 router = APIRouter(tags=["Voice WebSocket"])
 
 
+async def _safe_send(ws: WebSocket, data: dict) -> None:
+    """Best-effort send that does not raise if socket disconnected."""
+    try:
+        await ws.send_json(data)
+    except Exception:
+        pass
+
+
 # Dynamic TTS service router for the WebSocket pipeline.
 # When the agent's voice is a premade ElevenLabs id, route to ElevenLabs;
 # otherwise fall back to Edge-TTS with regional voice per language.
@@ -745,6 +753,8 @@ async def _process_turn(
     institute_id: int = 1,
     persona: Optional[dict] = None,
     state: Optional[ConversationState] = None,
+    generation_id: str = "",
+    active_generation: Optional[list] = None,
 ):
     """Process one turn end-to-end and stream sentences back over the WS.
 
@@ -770,7 +780,7 @@ async def _process_turn(
 
         turn_start = time.time()
         ai_state["generating"] = True
-        await websocket.send_json({"type": "processing"})
+        await _safe_send(websocket, {"type": "processing", "generation_id": generation_id})
 
         # -- STT (skip when the turn came from typed text) --------------------
         user_text = ""
@@ -791,19 +801,37 @@ async def _process_turn(
         if not user_text:
             logger.info("WS STT empty (conv=%s)", conversation_id)
             ai_state["generating"] = False
-            await websocket.send_json({
+            await _safe_send(websocket, {
                 "type": "turn_done",
+                "generation_id": generation_id,
                 "ai_response": "",
                 "debug_info": {"stt_ms": round(stt_ms)},
             })
             return
 
+        # Check generation freshness before continuing
+        if active_generation and active_generation[0] != generation_id:
+            logger.info("Generation stale after STT (conv=%s, gen=%s, active=%s)", conversation_id, generation_id, active_generation[0])
+            ai_state["generating"] = False
+            return
+
+        # -- Multi-representation language processing (spec §2.2, §3.2, §3.3) ---
+        from app.language.telugu_nlp import TeluguLanguageProcessor
+        proc = TeluguLanguageProcessor.process_utterance(user_text, stt_hint_lang=detected_lang_code)
+
+        # Floor-holding / hesitation check: do not hallucinate an answer for "ante...", "umm..."
+        if proc.is_filler_only:
+            logger.info("Floor-holding filler-only utterance: '%s' (conv=%s)", user_text, conversation_id)
+            ai_state["generating"] = False
+            await _safe_send(websocket, {
+                "type": "turn_done",
+                "generation_id": generation_id,
+                "ai_response": "",
+                "debug_info": {"stt_ms": round(stt_ms), "filtered": "floor_holding_filler"},
+            })
+            return
+
         # -- Phantom input prevention -----------------------------------------
-        # While the agent's audio is still playing, STT hears that playback
-        # through speaker leakage even with echo cancellation. Treat any
-        # transcript captured during playback as suspect unless it clearly
-        # differs from what the agent is saying (adaptive interruption, spec §5:
-        # distinguish genuine barge-ins from echoes/backchannels).
         if ai_state.get("playback_active"):
             last_ai_text = next(
                 (m["content"] for m in reversed(memory) if m.get("role") == "assistant"),
@@ -814,8 +842,9 @@ async def _process_turn(
                     "Phantom input filtered (agent-echo during playback): %s", user_text[:50]
                 )
                 ai_state["speaking"] = False
-                await websocket.send_json({
+                await _safe_send(websocket, {
                     "type": "turn_done",
+                    "generation_id": generation_id,
                     "ai_response": "",
                     "debug_info": {"stt_ms": round(stt_ms), "filtered": "agent_echo"},
                 })
@@ -829,8 +858,9 @@ async def _process_turn(
         if _is_noise(user_text):
             logger.info("Phantom input filtered (noise): %s", user_text[:50])
             ai_state["generating"] = False
-            await websocket.send_json({
+            await _safe_send(websocket, {
                 "type": "turn_done",
+                "generation_id": generation_id,
                 "ai_response": "",
                 "debug_info": {"stt_ms": round(stt_ms), "filtered": "noise"},
             })
@@ -839,8 +869,9 @@ async def _process_turn(
         if _is_backchannel(user_text):
             logger.info("Phantom input filtered (backchannel): %s", user_text[:50])
             ai_state["generating"] = False
-            await websocket.send_json({
+            await _safe_send(websocket, {
                 "type": "turn_done",
+                "generation_id": generation_id,
                 "ai_response": "",
                 "debug_info": {"stt_ms": round(stt_ms), "filtered": "backchannel"},
             })
@@ -849,8 +880,9 @@ async def _process_turn(
         if _is_echo(user_text, last_ai_text):
             logger.info("Phantom input filtered (echo): %s", user_text[:50])
             ai_state["generating"] = False
-            await websocket.send_json({
+            await _safe_send(websocket, {
                 "type": "turn_done",
+                "generation_id": generation_id,
                 "ai_response": "",
                 "debug_info": {"stt_ms": round(stt_ms), "filtered": "echo"},
             })
@@ -859,54 +891,61 @@ async def _process_turn(
         should_process, utterance_id = duplicates.should_process(user_text)
         if not should_process:
             ai_state["generating"] = False
-            await websocket.send_json({
+            await _safe_send(websocket, {
                 "type": "turn_done",
+                "generation_id": generation_id,
                 "ai_response": "",
                 "debug_info": {"stt_ms": round(stt_ms), "filtered": "duplicate"},
             })
             return
 
-        await websocket.send_json({
+        await _safe_send(websocket, {
             "type": "transcript",
-            "text": user_text,
+            "generation_id": generation_id,
+            "text": proc.original_transcript,
+            "display_text": proc.display_transcript,
             "language": detected_lang_code or "en",
+            "language_mode": proc.language_mode,
+            "intent": proc.intent,
             "utterance_id": utterance_id,
         })
 
         # LANGUAGE LOCK (spec §6 §7 §10): the spoken language is resolved from
-        # the conversation state — an explicit request locks it, and it never
-        # drifts because a sentence came out in English or because the
-        # retrieved knowledge happens to be written in English.
+        # the conversation state — an explicit request locks it.
         detected_lang_name = lang_detector.detect(user_text, stt_language=detected_lang_code)
-        detected_lang = state.resolve_language(user_text, detected_lang_name)
+        detected_lang = state.resolve_language(user_text, proc.detected_language or detected_lang_name)
 
-        # Fold the student's answer into the counselling state (group, career
-        # interest, joining year, hostel, location, objections, interest).
+        # Fold student's answer into counselling state
         state.observe(user_text, student_asked_question=response_has_question(user_text))
         state.mark_question_asked(
             next((m["content"] for m in reversed(memory) if m.get("role") == "assistant"), "")
         )
         logger.info(
-            "COUNSELLING | conv=%s lang=%s stage=%s slots=%s",
-            conversation_id, detected_lang, state.stage, state.slots,
+            "COUNSELLING | conv=%s lang=%s mode=%s stage=%s slots=%s neg=%s",
+            conversation_id, detected_lang, proc.language_mode, state.stage, state.slots, proc.negated_entities,
         )
 
-        llm_input = transliterate_roman_telugu(user_text)
+        llm_input = proc.normalized_text
+        retrieval_query = proc.retrieval_query
+        negated_entities = proc.negated_entities
 
         # ── PARALLEL: RAG retrieval (fires immediately, does NOT block LLM start) ──
-        # We fire RAG as a background task right away so the network round-trip
-        # to the embedding model overlaps with the LLM context-building below.
         latency.start_rag()
 
         async def _rag_task() -> str:
             try:
                 if mode == "test":
                     retriever = get_json_retriever(knowledge_file)
-                    return retriever.retrieve_context(llm_input, top_k=4) or ""
+                    return retriever.retrieve_context(retrieval_query, top_k=4) or ""
                 else:
                     chunks = await asyncio.wait_for(
-                        retrieve_context(llm_input, top_k=3, agent_id=institute_id),
-                        timeout=0.4
+                        retrieve_context(
+                            retrieval_query,
+                            top_k=3,
+                            agent_id=institute_id,
+                            negated_entities=negated_entities,
+                        ),
+                        timeout=0.4,
                     )
                     return format_context_for_prompt(chunks) or ""
             except Exception as e:
@@ -917,8 +956,6 @@ async def _process_turn(
         from app.rag.response_cache import get_cached_response, cache_response
         cached_text = await get_cached_response(llm_input, institute_id, detected_lang)
         if cached_text:
-            # Never replay a passive chatbot ask from the cache; the counselling
-            # state supplies the real next question at the end of the turn.
             cached_text = strip_passive_phrases(cached_text) or cached_text
 
         rag_future = asyncio.create_task(_rag_task())
@@ -1008,6 +1045,7 @@ async def _process_turn(
                 latency.mark_tts_first_audio()
                 await websocket.send_json({
                     "type": "sentence",
+                    "generation_id": generation_id,
                     "index": 0,
                     "text": cached_text,
                     "audio_data": cached_audio,
@@ -1019,12 +1057,15 @@ async def _process_turn(
                 async for chunk in tts.stream_sentences(
                     cached_text, language=detected_lang, voice=agent_voice, speed=agent_speed
                 ):
+                    if active_generation and active_generation[0] != generation_id:
+                        break
                     audio = chunk.get("audio_data")
                     if not audio:
                         continue
                     latency.mark_tts_first_audio()
                     await websocket.send_json({
                         "type": "sentence",
+                        "generation_id": generation_id,
                         "index": sentence_count,
                         "text": chunk["text"],
                         "audio_data": audio,
@@ -1048,6 +1089,9 @@ async def _process_turn(
             try:
                 latency.start_tts()
                 while True:
+                    if active_generation and active_generation[0] != generation_id:
+                        logger.info("Turn cancelled before processing next sentence (gen=%s)", generation_id)
+                        break
                     kind = await sentence_q.get()
                     if kind[0] in ("end", "error"):
                         if kind[0] == "error":
@@ -1067,12 +1111,15 @@ async def _process_turn(
                     async for chunk in tts.stream_sentences(
                         payload, language=detected_lang, voice=agent_voice, speed=agent_speed
                     ):
+                        if active_generation and active_generation[0] != generation_id:
+                            break
                         audio = chunk.get("audio_data")
                         if not audio:
                             continue
                         latency.mark_tts_first_audio()
                         await websocket.send_json({
                             "type": "sentence",
+                            "generation_id": generation_id,
                             "index": sentence_count,
                             "text": chunk["text"],
                             "audio_data": audio,
@@ -1113,14 +1160,17 @@ async def _process_turn(
         # silently degrades into "answer, wait, answer" chatbot behaviour.
         if ai_response:
             follow_up = enforce_follow_up(state, ai_response)
-            if follow_up:
+            if follow_up and (not active_generation or active_generation[0] == generation_id):
                 logger.info("COUNSELLING | conv=%s follow-up question: %.60s", conversation_id, follow_up)
                 async for chunk in tts.stream_sentences(
                     follow_up, language=detected_lang, voice=agent_voice, speed=agent_speed
                 ):
+                    if active_generation and active_generation[0] != generation_id:
+                        break
                     if chunk.get("audio_data"):
                         await websocket.send_json({
                             "type": "sentence",
+                            "generation_id": generation_id,
                             "index": sentence_count,
                             "text": chunk["text"],
                             "audio_data": chunk["audio_data"],
@@ -1129,7 +1179,7 @@ async def _process_turn(
                 ai_response = f"{ai_response.strip()} {follow_up}".strip()
 
         # Graceful spoken fallback so the call never goes silent.
-        if not ai_response:
+        if not ai_response and (not active_generation or active_generation[0] == generation_id):
             if llm_error:
                 logger.error("WS LLM error (conv=%s): %s", conversation_id, llm_error)
             ai_response = (
@@ -1142,9 +1192,12 @@ async def _process_turn(
             async for chunk in tts.stream_sentences(
                 ai_response, language=detected_lang, voice=agent_voice, speed=agent_speed
             ):
+                if active_generation and active_generation[0] != generation_id:
+                    break
                 if chunk.get("audio_data"):
                     await websocket.send_json({
                         "type": "sentence",
+                        "generation_id": generation_id,
                         "index": sentence_count,
                         "text": chunk["text"],
                         "audio_data": chunk["audio_data"],
@@ -1202,6 +1255,7 @@ async def _process_turn(
 
         await websocket.send_json({
             "type": "turn_done",
+            "generation_id": generation_id,
             "ai_response": ai_response,
             "debug_info": metrics,
         })
@@ -1211,6 +1265,7 @@ async def _process_turn(
         try:
             await websocket.send_json({
                 "type": "turn_done",
+                "generation_id": generation_id,
                 "ai_response": "",
                 "debug_info": {"error": str(e)},
             })
@@ -1354,8 +1409,10 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
     # -- Worker: process queued utterances sequentially ------------------------
     utterance_q: asyncio.Queue = asyncio.Queue()
     current_turn_task: dict = {"task": None}
+    active_generation: list = ["none"]
+    gen_counter: list = [0]
 
-    def _cancel_current_turn(reason: str) -> None:
+    def _cancel_current_turn(reason: str) -> str:
         """Barge-in: hard-cancel the in-flight turn (spec §35 §LATENCY spec).
 
         Cancelling the turn task tears down the LLM stream and pending TTS
@@ -1363,22 +1420,33 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
         keep playing. The client simultaneously stops playback via the
         speech_start message.
         """
+        gen_counter[0] += 1
+        old_gen = active_generation[0]
+        new_cancelled = f"cancelled_{gen_counter[0]}_{int(time.time()*1000)}"
+        active_generation[0] = new_cancelled
         t = current_turn_task.get("task")
         if t and not t.done():
             t.cancel()
-            logger.info("BARGE_IN | conv=%s turn cancelled (%s)", conversation_id, reason)
+            logger.info("BARGE_IN | conv=%s turn cancelled (%s) [prev_gen=%s -> new=%s]",
+                        conversation_id, reason, old_gen, new_cancelled)
         current_turn_task["task"] = None
+        return old_gen
 
     async def _worker():
         while True:
             kind, payload = await utterance_q.get()
             try:
+                gen_counter[0] += 1
+                current_gen = f"gen_{gen_counter[0]}_{int(time.time()*1000)}"
+                active_generation[0] = current_gen
+
                 if kind == "text":
                     coro = _process_turn(
                         websocket, conversation_id, mode, knowledge_file,
                         language, memory, ai_state, latency, duplicates,
                         lang_detector, text_override=payload,
                         institute_id=institute_id, persona=persona, state=state,
+                        generation_id=current_gen, active_generation=active_generation,
                     )
                 else:
                     coro = _process_turn(
@@ -1386,12 +1454,13 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
                         language, memory, ai_state, latency, duplicates,
                         lang_detector, pcm_bytes=payload,
                         institute_id=institute_id, persona=persona, state=state,
+                        generation_id=current_gen, active_generation=active_generation,
                     )
                 current_turn_task["task"] = asyncio.create_task(coro)
                 try:
                     await current_turn_task["task"]
                 except asyncio.CancelledError:
-                    logger.info("WS turn cancelled by barge-in (conv=%s)", conversation_id)
+                    logger.info("WS turn cancelled by barge-in (conv=%s, gen=%s)", conversation_id, current_gen)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -1440,6 +1509,19 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
                 if mtype == "ping":
                     await websocket.send_json({"type": "pong"})
                     continue
+                if mtype == "interrupt":
+                    old_gen = _cancel_current_turn("client explicit interrupt")
+                    ai_state["speaking"] = False
+                    ai_state["playback_active"] = False
+                    try:
+                        await websocket.send_json({
+                            "type": "interrupted",
+                            "generation_id": old_gen,
+                            "reason": "client explicit interrupt",
+                        })
+                    except Exception:
+                        pass
+                    continue
                 if mtype == "text":
                     text = str(data.get("text") or "").strip()
                     if text:
@@ -1481,11 +1563,16 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
             else:
                 barge_in_frames = 0
             if barge_in_frames >= 3 and ai_state.get("speaking"):
-                _cancel_current_turn("speech while agent speaking")
+                old_gen = _cancel_current_turn("speech while agent speaking")
                 ai_state["speaking"] = False
                 ai_state["playback_active"] = False
                 try:
-                    await websocket.send_json({"type": "speech_start"})
+                    await websocket.send_json({"type": "speech_start", "generation_id": old_gen})
+                    await websocket.send_json({
+                        "type": "interrupted",
+                        "generation_id": old_gen,
+                        "reason": "speech while agent speaking",
+                    })
                 except Exception:
                     pass
 

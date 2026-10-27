@@ -8,7 +8,10 @@ import pickle
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import numpy as np
-import faiss
+try:
+    import faiss
+except Exception:
+    faiss = None
 
 from app.config.settings import settings
 from app.logs.logger import get_logger

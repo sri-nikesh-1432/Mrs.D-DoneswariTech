@@ -28,6 +28,7 @@ from app.config.settings import settings
 from app.stt.groq_stt import transcribe_audio as groq_transcribe_audio
 from app.logs.logger import get_logger
 from app.roman_telugu import looks_roman_telugu, transliterate_roman_telugu
+from app.language.telugu_nlp import TeluguLanguageProcessor
 
 logger = get_logger(__name__)
 
@@ -195,12 +196,30 @@ async def stream_conversation(
                     },
                 )
                 return
-            # ── Same detection/transliteration as the non-streaming routes ──
-            detected_lang = _detect_language(user_input, hint=language)
-            llm_input = transliterate_roman_telugu(user_input)
+            # ── Telugu NLP intelligence & multi-representation parsing ──
+            proc = TeluguLanguageProcessor.process_utterance(user_input)
+            if proc.is_filler_only:
+                yield sse_event(
+                    "done",
+                    {
+                        "ai_response": "",
+                        "debug_info": {
+                            "total_time_ms": round((time.time() - turn_start) * 1000),
+                            "sentence_count": 0,
+                            "knowledge_source": "none",
+                            "dropped_filler_turn": True,
+                        },
+                    },
+                )
+                return
+
+            detected_lang = proc.detected_language or _detect_language(user_input, hint=language)
+            llm_input = proc.normalized_text
+            retrieval_query = proc.retrieval_query
+            negated_entities = proc.negated_entities
             yield sse_event(
                 "turn",
-                {"conversation_id": conv_id, "detected_language": detected_lang},
+                {"conversation_id": conv_id, "detected_language": detected_lang, "language_mode": proc.language_mode},
             )
 
             # Greeting: no LLM needed — reuse the JSON greeting (test mode)
@@ -270,7 +289,7 @@ async def stream_conversation(
                 else:
                     try:
                         retrieved_chunks = await asyncio.wait_for(
-                            retrieve_context(llm_input, top_k=3),
+                            retrieve_context(retrieval_query, top_k=3, negated_entities=negated_entities),
                             timeout=0.35,
                         )
                         context = format_context_for_prompt(retrieved_chunks) if retrieved_chunks else ""

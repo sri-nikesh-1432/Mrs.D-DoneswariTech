@@ -24,6 +24,7 @@ from sqlalchemy import select
 from app.database.connection import get_database
 from app.database.models import Institute, Knowledge, KnowledgeStatus, CallHistory, CallStatus
 from app.rag.retriever import retrieve_context, format_context_for_prompt, is_knowledge_ready
+from app.language.telugu_nlp import TeluguLanguageProcessor
 from app.rag.groq_service import generate_response
 from app.tts.dynamic_tts import DynamicTTSService, get_tts_service
 from app.config.settings import settings
@@ -31,9 +32,11 @@ from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/api/single-call", tags=["Single Call"])    # Per-call conversation memory (same in-memory pattern as conversation_routes).
-    # Created when a call starts and deleted when the call ends.
-    _call_memory: dict = {}
+router = APIRouter(prefix="/api/single-call", tags=["Single Call"])
+
+# Per-call conversation memory (same in-memory pattern as conversation_routes).
+# Created when a call starts and deleted when the call ends.
+_call_memory: dict = {}
 
 
 LANGUAGE_INSTRUCTION = (
@@ -206,9 +209,24 @@ async def process_speech(
             raise HTTPException(status_code=404, detail="Call not found")
 
         memory = _get_memory(call_id)
+        proc = TeluguLanguageProcessor.process_utterance(speech_text)
+        if proc.is_filler_only:
+            return {
+                "success": True,
+                "call_id": call_id,
+                "response": "",
+                "audio_data": None,
+                "knowledge_ready": is_knowledge_ready(),
+                "filler_only": True,
+            }
+
         memory.append(speech_text)
 
-        retrieved = await retrieve_context(speech_text, top_k=5)
+        retrieved = await retrieve_context(
+            proc.retrieval_query,
+            top_k=5,
+            negated_entities=proc.negated_entities,
+        )
         context_text = format_context_for_prompt(retrieved)
 
         lang_hint = LANGUAGE_INSTRUCTION.format(language=language or "English")
