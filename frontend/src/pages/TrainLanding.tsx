@@ -179,7 +179,7 @@ export default function TrainLanding() {
       <main className="max-w-2xl w-full mx-auto px-6 py-4 relative z-10">
         <AnimatePresence mode="wait">
 
-          {/* ── IDLE: Upload & Direct Launch ── */}
+          {/* ── IDLE: Upload Institutional Document ── */}
           {phase === "idle" && (
             <motion.div
               key="idle"
@@ -188,32 +188,6 @@ export default function TrainLanding() {
               exit={{ opacity: 0, y: -8 }}
               className="space-y-6"
             >
-              {/* Ready Telecaller Quick Action */}
-              <div className="p-4 rounded-2xl bg-gradient-to-r from-sky-950/80 via-slate-900/90 to-indigo-950/80 border border-sky-500/30 backdrop-blur-xl shadow-xl flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-400/30 flex items-center justify-center text-sky-300 shrink-0 shadow-inner">
-                    <Sparkles className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-semibold text-white flex items-center gap-2">
-                      <span>Mrs. D is live with knowledge</span>
-                      <span className="text-[10px] bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 px-2 py-0.5 rounded-full font-mono">
-                        361 Chunks
-                      </span>
-                    </div>
-                    <div className="text-xs text-slate-300">Narayana College Admissions & Fees</div>
-                  </div>
-                </div>
-                <button
-                  onClick={() => navigate("/agent/1/test")}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-semibold text-xs tracking-wide shadow-lg shadow-sky-500/25 border border-sky-400/30 active:scale-95 transition-all shrink-0"
-                >
-                  <PhoneCall className="w-3.5 h-3.5" />
-                  <span>Launch Telecaller</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
               {/* Upload Card */}
               <div className="glass-strong rounded-3xl p-7 md:p-9 shadow-2xl border border-slate-700/80">
                 <div className="flex items-center justify-between mb-2">
@@ -291,15 +265,20 @@ export default function TrainLanding() {
 
                 {/* Primary Action Button — High Contrast & Clear Text */}
                 <button
-                  onClick={trainAgent}
-                  disabled={!file}
-                  className={`mt-6 w-full flex items-center justify-center gap-2.5 font-bold text-sm tracking-wide rounded-xl py-4 transition-all duration-200 ${
+                  onClick={() => {
+                    if (file) {
+                      trainAgent();
+                    } else {
+                      fileInputRef.current?.click();
+                    }
+                  }}
+                  className={`mt-6 w-full flex items-center justify-center gap-2.5 font-bold text-sm tracking-wide rounded-xl py-4 transition-all duration-200 cursor-pointer ${
                     file
-                      ? "bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white shadow-xl shadow-sky-500/30 border border-sky-400/40 active:scale-[0.99] cursor-pointer"
-                      : "bg-slate-800/90 text-slate-400 border border-slate-700/80 cursor-not-allowed shadow-none"
+                      ? "bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white shadow-xl shadow-sky-500/30 border border-sky-400/40 active:scale-[0.99]"
+                      : "bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700 shadow-md active:scale-[0.99]"
                   }`}
                 >
-                  <Zap className={`w-4 h-4 ${file ? "text-white fill-current" : "text-slate-400"}`} />
+                  <Zap className={`w-4 h-4 ${file ? "text-white fill-current" : "text-sky-400"}`} />
                   <span>{file ? "Train Agent from Document" : "Select Document to Train Agent"}</span>
                 </button>
               </div>

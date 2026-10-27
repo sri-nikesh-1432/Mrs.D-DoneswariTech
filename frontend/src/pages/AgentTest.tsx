@@ -107,6 +107,11 @@ export default function AgentTest() {
   }, [agentId]);
 
   const startConversation = async () => {
+    if (!isLiveAgent) {
+      setToast("Upload an institutional PDF document and train the agent first.");
+      setTimeout(() => setToast(""), 4000);
+      return;
+    }
     connect();
     await voiceWS.startMic();
   };
@@ -235,6 +240,11 @@ export default function AgentTest() {
   };
 
   const handlePublish = async () => {
+    if (!isLiveAgent) {
+      setToast("Upload an institutional PDF document and train the agent first before publishing.");
+      setTimeout(() => setToast(""), 4000);
+      return;
+    }
     const id = agentId || "1";
     setPublishing(true);
     try {
@@ -319,6 +329,25 @@ export default function AgentTest() {
       {toast && (
         <div className="mb-3 text-xs text-sky-300 bg-sky-950/80 border border-sky-500/40 rounded-xl px-4 py-2.5 shadow-lg">
           {toast}
+        </div>
+      )}
+
+      {/* ── Document Training Required Banner ── */}
+      {!isLiveAgent && agentStatus !== undefined && (
+        <div className="mb-4 p-4 rounded-2xl bg-amber-950/70 border border-amber-500/50 text-amber-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-400 shrink-0" />
+            <div>
+              <div className="font-bold text-amber-300">Document Training Required</div>
+              <div className="text-slate-300 mt-0.5">Mrs. D has not been trained on institutional documents yet. Please upload your institution's brochure or fee PDF first to ground admissions guidance before testing or publishing.</div>
+            </div>
+          </div>
+          <button
+            onClick={() => navigate("/")}
+            className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-bold text-xs shadow-md transition-all shrink-0 cursor-pointer self-start sm:self-auto"
+          >
+            Upload Document & Train
+          </button>
         </div>
       )}
 
@@ -491,7 +520,12 @@ export default function AgentTest() {
         {!inConversation ? (
           <button
             onClick={startConversation}
-            className="flex items-center gap-2.5 bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white font-bold text-sm rounded-xl px-7 py-3.5 shadow-xl shadow-sky-500/30 border border-sky-400/40 transition-all cursor-pointer"
+            disabled={!isLiveAgent}
+            className={`flex items-center gap-2.5 font-bold text-sm rounded-xl px-7 py-3.5 shadow-xl transition-all ${
+              isLiveAgent
+                ? "bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white shadow-sky-500/30 border border-sky-400/40 cursor-pointer"
+                : "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed opacity-60 shadow-none"
+            }`}
           >
             <Mic className="w-4.5 h-4.5" />
             <span>Start Voice Call</span>
@@ -532,8 +566,8 @@ export default function AgentTest() {
 
         <button
           onClick={handlePublish}
-          disabled={publishing}
-          className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-sm rounded-xl px-6 py-3.5 shadow-xl shadow-emerald-500/30 border border-emerald-400/40 disabled:opacity-60 transition-all"
+          disabled={publishing || !isLiveAgent}
+          className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-sm rounded-xl px-6 py-3.5 shadow-xl shadow-emerald-500/30 border border-emerald-400/40 disabled:opacity-50 disabled:shadow-none transition-all cursor-pointer"
         >
           {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4.5 h-4.5" />}
           <span>Publish Telecaller</span>
