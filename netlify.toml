@@ -11,17 +11,28 @@
   VITE_API_URL = "https://d-tech-pid6.onrender.com"
   VITE_WS_URL = "wss://d-tech-pid6.onrender.com"
 
-# Netlify site origin MUST be listed in backend ALLOWED_ORIGINS (settings.py
-# and Render env) for cross-origin REST + voice WebSocket.
 [[headers]]
   for = "/*"
   [headers.values]
-    # The voice WebSocket is upgraded cross-origin; CORS must support it.
+    # The voice WebSocket and REST CORS headers
     Access-Control-Allow-Origin = "*"
     Access-Control-Allow-Methods = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
     Access-Control-Allow-Headers = "Content-Type,Authorization,X-Requested-With,Accept"
     Access-Control-Max-Age = "86400"
     Vary = "Origin"
+
+# Reverse-proxy API calls directly to Render backend
+[[redirects]]
+  from = "/api/*"
+  to = "https://d-tech-pid6.onrender.com/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/health"
+  to = "https://d-tech-pid6.onrender.com/health"
+  status = 200
+  force = true
 
 # SPA fallback: all client-side routes (e.g. /agents, /settings) serve index.html.
 [[redirects]]

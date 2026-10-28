@@ -18,10 +18,14 @@ import type {
   AgentCallRecord,
 } from "../types";
 
-const BASE = import.meta.env.VITE_API_URL ?? "";
+const envBase = (import.meta.env.VITE_API_URL || "").trim();
+const isLocalhost =
+  typeof window !== "undefined" &&
+  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
 
-/** Absolute backend origin (empty in dev, where Vite proxies /api). */
-export const API_BASE = BASE;
+// In production, fallback directly to the Render backend origin
+export const API_BASE = envBase || (isLocalhost ? "" : "https://d-tech-pid6.onrender.com");
+const BASE = API_BASE;
 
 // ─── Auth token handling ───────────────────────────────────────────
 const TOKEN_KEY = "doneswari_token";
@@ -288,14 +292,39 @@ export async function uploadAgentDocument(
 ): Promise<{ message: string; chunks_count: number; agent: AgentProfile }> {
   const fd = new FormData();
   fd.append("file", file);
-  const res = await api.post(`/api/agents/${agentId}/documents`, fd, {
-    headers: { "Content-Type": "multipart/form-data" },
-    timeout: HEAVY_TIMEOUT_MS,
-    onUploadProgress: (e) => {
-      if (onUploadProgress && e.total) onUploadProgress(Math.round((e.loaded * 100) / e.total));
-    },
-  });
-  return res.data;
+  const targetId = Number(agentId) || 1;
+
+  try {
+    const res = await api.post(`/api/agents/${targetId}/documents`, fd, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: HEAVY_TIMEOUT_MS,
+      onUploadProgress: (e) => {
+        if (onUploadProgress && e.total) onUploadProgress(Math.round((e.loaded * 100) / e.total));
+      },
+    });
+    return res.data;
+  } catch (err: any) {
+    if (err?.response?.status === 404) {
+      try {
+        const directUrl = `https://d-tech-pid6.onrender.com/api/agents/${targetId}/documents`;
+        const token = getToken();
+        const res = await axios.post(directUrl, fd, {
+          headers: {
+            "Content-Type": "multipart/form-data",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          timeout: HEAVY_TIMEOUT_MS,
+          onUploadProgress: (e) => {
+            if (onUploadProgress && e.total) onUploadProgress(Math.round((e.loaded * 100) / e.total));
+          },
+        });
+        return res.data;
+      } catch (fallbackErr) {
+        console.warn("Direct upload fallback failed", fallbackErr);
+      }
+    }
+    throw err;
+  }
 }
 
 export async function listAgentDocuments(agentId: string | number): Promise<Array<{
@@ -419,8 +448,26 @@ export interface KnowledgeStatus {
 }
 
 export async function getKnowledgeStatus(agentId: string | number): Promise<KnowledgeStatus> {
-  const res = await api.get<KnowledgeStatus>(`/api/agents/${agentId}/knowledge/status`);
-  return res.data;
+  const targetId = Number(agentId) || 1;
+  try {
+    const res = await api.get<KnowledgeStatus>(`/api/agents/${targetId}/knowledge/status`);
+    return res.data;
+  } catch (err: any) {
+    if (err?.response?.status === 404) {
+      try {
+        const directUrl = `https://d-tech-pid6.onrender.com/api/agents/${targetId}/knowledge/status`;
+        const token = getToken();
+        const res = await axios.get<KnowledgeStatus>(directUrl, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          timeout: 15_000,
+        });
+        return res.data;
+      } catch (fallbackErr) {
+        console.warn("Direct status fallback failed", fallbackErr);
+      }
+    }
+    throw err;
+  }
 }
 
 export async function saveSimulatorCall(payload: {

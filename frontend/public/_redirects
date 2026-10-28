@@ -1,1 +1,6 @@
-/*    /index.html   200
+# Reverse-proxy API calls directly to Render backend (keeps POST/PUT/DELETE methods intact)
+/api/*  https://d-tech-pid6.onrender.com/api/:splat  200!
+/health https://d-tech-pid6.onrender.com/health  200!
+
+# SPA fallback: all client-side routes serve index.html
+/*      /index.html                                   200

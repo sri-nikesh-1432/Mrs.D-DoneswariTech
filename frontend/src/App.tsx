@@ -2,6 +2,7 @@ import React from "react";
 import { Routes, Route, Navigate, useLocation, Outlet } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import Sidebar from "./components/Sidebar";
+import Butterflies from "./components/Butterflies";
 import Home from "./pages/Home";
 import Dashboard from "./pages/Dashboard";
 import Agents from "./pages/Agents";
@@ -41,36 +42,39 @@ export default function App() {
   const location = useLocation();
 
   return (
-    <AnimatePresence mode="wait">
-      <Routes location={location} key={location.pathname}>
-        {/* Public train landing — the entry point per spec */}
-        <Route path="/" element={<PageWrap><TrainLanding /></PageWrap>} />
+    <>
+      <Butterflies />
+      <AnimatePresence mode="wait">
+        <Routes location={location} key={location.pathname}>
+          {/* Public train landing — the entry point per spec */}
+          <Route path="/" element={<PageWrap><TrainLanding /></PageWrap>} />
 
-        {/* App shell */}
-        <Route element={<AppLayout />}>
-          <Route path="/home" element={<PageWrap><Home /></PageWrap>} />
-          <Route path="/dashboard" element={<PageWrap><Dashboard /></PageWrap>} />
-          <Route path="/agents" element={<PageWrap><Agents /></PageWrap>} />
-          <Route path="/agents/new" element={<PageWrap><Agents /></PageWrap>} />
+          {/* App shell */}
+          <Route element={<AppLayout />}>
+            <Route path="/home" element={<PageWrap><Home /></PageWrap>} />
+            <Route path="/dashboard" element={<PageWrap><Dashboard /></PageWrap>} />
+            <Route path="/agents" element={<PageWrap><Agents /></PageWrap>} />
+            <Route path="/agents/new" element={<PageWrap><Agents /></PageWrap>} />
 
-          <Route path="/agent/:agentId/overview" element={<PageWrap><AgentOverview /></PageWrap>} />
-          <Route path="/agent/:agentId/test" element={<PageWrap><AgentTest /></PageWrap>} />
-          <Route path="/agent/:agentId/students" element={<PageWrap><Students /></PageWrap>} />
-          <Route path="/agent/:agentId/campaign" element={<PageWrap><Campaign /></PageWrap>} />
-          <Route path="/agent/:agentId/analytics" element={<PageWrap><AgentAnalytics /></PageWrap>} />
+            <Route path="/agent/:agentId/overview" element={<PageWrap><AgentOverview /></PageWrap>} />
+            <Route path="/agent/:agentId/test" element={<PageWrap><AgentTest /></PageWrap>} />
+            <Route path="/agent/:agentId/students" element={<PageWrap><Students /></PageWrap>} />
+            <Route path="/agent/:agentId/campaign" element={<PageWrap><Campaign /></PageWrap>} />
+            <Route path="/agent/:agentId/analytics" element={<PageWrap><AgentAnalytics /></PageWrap>} />
 
-          <Route path="/calls" element={<PageWrap><Calls /></PageWrap>} />
-          <Route path="/settings" element={<PageWrap><Settings /></PageWrap>} />
-        </Route>
+            <Route path="/calls" element={<PageWrap><Calls /></PageWrap>} />
+            <Route path="/settings" element={<PageWrap><Settings /></PageWrap>} />
+          </Route>
 
-        {/* Redirects */}
-        <Route path="/login" element={<Navigate to="/" replace />} />
-        <Route path="/signup" element={<Navigate to="/" replace />} />
-        <Route path="/onboarding" element={<Navigate to="/home" replace />} />
-        <Route path="/agent" element={<Navigate to="/agents" replace />} />
-        <Route path="/agent/:agentId" element={<Navigate to="overview" replace />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </AnimatePresence>
+          {/* Redirects */}
+          <Route path="/login" element={<Navigate to="/" replace />} />
+          <Route path="/signup" element={<Navigate to="/" replace />} />
+          <Route path="/onboarding" element={<Navigate to="/home" replace />} />
+          <Route path="/agent" element={<Navigate to="/agents" replace />} />
+          <Route path="/agent/:agentId" element={<Navigate to="overview" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </AnimatePresence>
+    </>
   );
 }
