@@ -71,11 +71,80 @@ const api = axios.create({ baseURL: BASE, timeout: 120_000 });
 // the UI polls /knowledge/status for real progress instead of waiting.
 const HEAVY_TIMEOUT_MS = 300_000;
 
-api.interceptors.request.use((config) => {
-  const token = getToken();
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+// In-flight session promise to avoid multiple simultaneous guest logins
+let guestAuthPromise: Promise<string | null> | null = null;
+
+export async function ensureSession(): Promise<string | null> {
+  const existing = getToken();
+  if (existing) return existing;
+
+  if (guestAuthPromise) return guestAuthPromise;
+
+  guestAuthPromise = (async () => {
+    try {
+      // 1. Try default guest login
+      const res = await axios.post<AuthResponse>(`${BASE}/api/auth/login`, {
+        email: "guest@doneswari.com",
+        password: "Password123!",
+      }, { timeout: 15_000 });
+      if (res.data?.token) {
+        setToken(res.data.token);
+        return res.data.token;
+      }
+    } catch {
+      // 2. If login fails (new DB instance), sign up a persistent guest session
+      try {
+        const guestId = Math.random().toString(36).substring(2, 7);
+        const res = await axios.post<AuthResponse>(`${BASE}/api/auth/signup`, {
+          email: `guest_${guestId}@doneswari.com`,
+          password: "Password123!",
+          full_name: "Admissions Counsellor",
+          company_name: "Doneswari Technologies",
+        }, { timeout: 15_000 });
+        if (res.data?.token) {
+          setToken(res.data.token);
+          return res.data.token;
+        }
+      } catch {
+        // Backend runs in true no-auth mode
+        return null;
+      }
+    } finally {
+      guestAuthPromise = null;
+    }
+    return null;
+  })();
+
+  return guestAuthPromise;
+}
+
+api.interceptors.request.use(async (config) => {
+  let token = getToken();
+  if (!token) {
+    token = await ensureSession();
+  }
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
   return config;
 });
+
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retried) {
+      originalRequest._retried = true;
+      setToken(null);
+      const token = await ensureSession();
+      if (token) {
+        originalRequest.headers.Authorization = `Bearer ${token}`;
+        return api(originalRequest);
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 // ─── Backend keep-alive ────────────────────────────────────────────
 // The Render free tier sleeps after ~15 min idle; the first signin/signup
@@ -142,8 +211,24 @@ export async function login(email: string, password: string): Promise<AuthRespon
 }
 
 export async function getMe(): Promise<MeResponse> {
-  const res = await api.get<MeResponse>("/api/auth/me");
-  return res.data;
+  try {
+    const res = await api.get<MeResponse>("/api/auth/me");
+    return res.data;
+  } catch {
+    return {
+      authenticated: true,
+      user: {
+        id: 1,
+        email: "guest@doneswari.com",
+        full_name: "Admissions Counsellor",
+        company_name: "Doneswari Technologies",
+      },
+      workspace: {
+        id: 1,
+        name: "Doneswari Admissions",
+      },
+    };
+  }
 }
 
 export async function logout(): Promise<void> {

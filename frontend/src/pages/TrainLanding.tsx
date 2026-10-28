@@ -29,6 +29,8 @@ export default function TrainLanding() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [phase, setPhase] = useState<Phase>("idle");
+  const [agentName, setAgentName] = useState("Mrs. D");
+  const [collegeName, setCollegeName] = useState("Doneswari Educational Institutions");
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [currentStage, setCurrentStage] = useState(-1);
@@ -69,8 +71,8 @@ export default function TrainLanding() {
 
     try {
       const newAgent = await createAgent({
-        name: file.name.replace(/\.[^.]+$/, ""),
-        company_name: "Institution",
+        name: agentName.trim() || "Mrs. D",
+        company_name: collegeName.trim() || "Doneswari Educational Institutions",
         calling_purpose: "Admissions and Student Enquiry",
       });
       const newAgentId = Number(newAgent.id);
@@ -167,6 +169,14 @@ export default function TrainLanding() {
           </span>
         </div>
 
+        <div className="flex justify-end mb-2">
+          <button
+            onClick={() => navigate("/agents")}
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
+          >
+            Go to Agents Dashboard →
+          </button>
+        </div>
         <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight text-white mb-4 leading-[1.1]">
           The AI Admissions <span className="text-gradient">Telecaller</span>
         </h1>
@@ -192,13 +202,37 @@ export default function TrainLanding() {
               <div className="glass-strong rounded-3xl p-7 md:p-9 shadow-2xl border border-slate-700/80">
                 <div className="flex items-center justify-between mb-2">
                   <h2 className="text-lg font-bold text-white tracking-tight">
-                    Upload Institution Information
+                    Create & Train Admissions Telecaller
                   </h2>
-                  <span className="text-xs text-slate-400 font-mono">Step 1 of 2</span>
+                  <span className="text-xs text-slate-400 font-mono">Instant Setup</span>
                 </div>
-                <p className="text-xs text-slate-300 mb-6 leading-relaxed">
-                  Prospectus · Admission Brochure · Fee Structure · Course Document · FAQ Document
+                <p className="text-xs text-slate-300 mb-4 leading-relaxed">
+                  Enter your agent and college details, then upload your admission brochure or fee structure document.
                 </p>
+
+                {/* Name & College Inputs */}
+                <div className="grid sm:grid-cols-2 gap-3 mb-4 text-left">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Agent Name</label>
+                    <input
+                      type="text"
+                      value={agentName}
+                      onChange={(e) => setAgentName(e.target.value)}
+                      placeholder="e.g. Mrs. D, Aadhya"
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">College / Institution</label>
+                    <input
+                      type="text"
+                      value={collegeName}
+                      onChange={(e) => setCollegeName(e.target.value)}
+                      placeholder="e.g. Narayana College"
+                      className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    />
+                  </div>
+                </div>
 
                 {/* Dropzone */}
                 <div

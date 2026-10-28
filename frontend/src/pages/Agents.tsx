@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, Bot, Loader2, FileUp, Sparkles } from "lucide-react";
-import { createAgent, listAgents, uploadAgentDocument } from "../services/api";
+import { Plus, Bot, FileUp, Sparkles, PhoneCall, ShieldCheck } from "lucide-react";
+import { listAgents } from "../services/api";
 import { StatusChip } from "./Dashboard";
+import CreateAgentModal from "../components/CreateAgentModal";
 
 export default function Agents() {
   const navigate = useNavigate();
@@ -11,31 +12,6 @@ export default function Agents() {
   const { data: agents, isLoading } = useQuery({ queryKey: ["agents"], queryFn: listAgents });
 
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ name: "", company_name: "", calling_purpose: "Admissions and Student Enquiry", instructions: "" });
-  const [creating, setCreating] = useState(false);
-  const [error, setError] = useState("");
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    setCreating(true);
-    try {
-      const agent = await createAgent({
-        name: form.name.trim() || "Aadhya",
-        company_name: form.company_name.trim() || "Doneswari Technologies",
-        calling_purpose: form.calling_purpose,
-        instructions: form.instructions || undefined,
-      });
-      await queryClient.invalidateQueries({ queryKey: ["agents"] });
-      setShowCreate(false);
-      navigate(`/agent/${agent.id}/overview`);
-    } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      setError(detail || "Failed to create agent");
-    } finally {
-      setCreating(false);
-    }
-  };
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
@@ -48,13 +24,31 @@ export default function Agents() {
           onClick={() => setShowCreate(true)}
           className="flex items-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-xl px-4 py-2.5 transition-colors shadow-[0_8px_24px_rgba(14,147,232,0.3)]"
         >
-          <Plus className="w-4 h-4" /> New Agent
+          <Plus className="w-4 h-4" /> Create Agent
         </button>
       </div>
 
       {isLoading ? (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[1, 2, 3].map((i) => <div key={i} className="skeleton h-44 rounded-[var(--radius-md)]" />)}
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="skeleton h-44 rounded-[var(--radius-md)]" />
+          ))}
+        </div>
+      ) : (agents ?? []).length === 0 ? (
+        <div className="glass rounded-[var(--radius-md)] p-12 text-center border border-slate-700/50 bg-slate-900/40">
+          <div className="w-16 h-16 rounded-2xl bg-sky-500/20 text-sky-400 border border-sky-400/30 flex items-center justify-center mx-auto mb-4">
+            <Bot className="w-8 h-8" />
+          </div>
+          <div className="text-lg font-bold text-white">No agents yet</div>
+          <p className="text-sm text-slate-400 mt-1.5 max-w-sm mx-auto">
+            Create your first admissions telecaller by providing an agent name, institution name, and uploading the syllabus or fee structure document.
+          </p>
+          <button
+            onClick={() => setShowCreate(true)}
+            className="mt-6 inline-flex items-center gap-2 bg-gradient-to-r from-sky-500 to-indigo-500 hover:from-sky-600 hover:to-indigo-600 text-white text-sm font-bold rounded-xl px-6 py-3 shadow-[0_8px_24px_rgba(14,147,232,0.35)] transition-all"
+          >
+            <Plus className="w-4 h-4" /> Create New Agent
+          </button>
         </div>
       ) : (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -62,22 +56,28 @@ export default function Agents() {
             <Link
               key={a.id}
               to={`/agent/${a.id}/overview`}
-              className="glass rounded-[var(--radius-md)] p-5 shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] transition-shadow"
+              className="glass rounded-[var(--radius-md)] p-5 shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] transition-shadow border border-slate-800/80 hover:border-sky-500/40 bg-slate-900/60"
             >
               <div className="flex items-center justify-between mb-3">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[var(--sky-400)] to-[var(--sky-600)] flex items-center justify-center text-white font-bold">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center text-white font-bold text-sm shadow-md">
                   {(a.agent_name || "A").slice(0, 1)}
                 </div>
                 <StatusChip status={a.status} />
               </div>
-              <div className="font-semibold text-[var(--gray-800)]">{a.agent_name}</div>
-              <div className="text-[12.5px] text-[var(--gray-500)] truncate">{a.name}</div>
-              <div className="text-[12px] text-[var(--gray-500)] mt-0.5 truncate">{a.calling_purpose}</div>
-              <div className="flex gap-4 mt-3 pt-3 border-t hairline text-[12px] text-[var(--gray-500)]">
-                <span className="flex items-center gap-1"><Bot className="w-3.5 h-3.5" /> {a.total_students ?? 0} students</span>
-                <span className="flex items-center gap-1">
-                  <FileUp className="w-3.5 h-3.5" />
-                  {a.knowledge_ready ? "Knowledge ready" : "No knowledge"}
+              <div className="font-bold text-white text-base">{a.agent_name}</div>
+              <div className="text-xs text-sky-400 truncate mt-0.5">{a.name}</div>
+              <div className="text-[12px] text-slate-400 mt-1 truncate">{a.calling_purpose}</div>
+              <div className="flex gap-4 mt-4 pt-3 border-t border-slate-800 text-[12px] text-slate-400">
+                <span className="flex items-center gap-1.5">
+                  <Bot className="w-3.5 h-3.5 text-slate-500" /> {a.total_students ?? 0} students
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <FileUp className="w-3.5 h-3.5 text-slate-500" />
+                  {a.knowledge_ready ? (
+                    <span className="text-emerald-400 font-medium">Knowledge ready</span>
+                  ) : (
+                    <span className="text-amber-400 font-medium">Training needed</span>
+                  )}
                 </span>
               </div>
             </Link>
@@ -85,60 +85,13 @@ export default function Agents() {
         </div>
       )}
 
-      {/* Create modal */}
-      {showCreate && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 px-4" onClick={() => setShowCreate(false)}>
-          <div className="glass-strong bg-white/85 rounded-[var(--radius-lg)] shadow-[var(--shadow-lg)] w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-2.5 mb-5">
-              <div className="w-9 h-9 rounded-xl bg-sky-100/70 text-[var(--sky-600)] flex items-center justify-center">
-                <Sparkles className="w-4.5 h-4.5" />
-              </div>
-              <h2 className="text-lg font-semibold text-[var(--gray-800)]">Create New Agent</h2>
-            </div>
-
-            <form onSubmit={handleCreate} className="space-y-4">
-              <Field label="Agent Name" placeholder='e.g. "Aadhya"' value={form.name} onChange={(v) => setForm({ ...form, name: v })} />
-              <Field label="Company / Institution" placeholder="e.g. Narayana College" value={form.company_name} onChange={(v) => setForm({ ...form, company_name: v })} />
-              <Field label="Calling Purpose" placeholder="Admissions and Student Enquiry" value={form.calling_purpose} onChange={(v) => setForm({ ...form, calling_purpose: v })} />
-              <div>
-                <label className="block text-[13px] font-medium text-[var(--gray-700)] mb-1.5">Instructions <span className="text-[var(--gray-400)] font-normal">(optional)</span></label>
-                <textarea
-                  rows={3}
-                  value={form.instructions}
-                  onChange={(e) => setForm({ ...form, instructions: e.target.value })}
-                  placeholder="Be polite, highlight placements, mention scholarship deadlines..."
-                  className="w-full bg-white/70 backdrop-blur-md border hairline rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)] resize-none"
-                />
-              </div>
-
-              {error && <div className="text-[13px] text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
-
-              <div className="flex gap-2.5 pt-1">
-                <button type="button" onClick={() => setShowCreate(false)} className="flex-1 text-sm font-medium text-[var(--gray-700)] glass hover:bg-white/80 rounded-xl py-2.5">
-                  Cancel
-                </button>
-                <button type="submit" disabled={creating} className="flex-1 flex items-center justify-center gap-2 bg-[var(--sky-500)] hover:bg-[var(--sky-600)] text-white text-sm font-semibold rounded-xl py-2.5 disabled:opacity-60">
-                  {creating && <Loader2 className="w-4 h-4 animate-spin" />} Create
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Field({ label, placeholder, value, onChange }: { label: string; placeholder: string; value: string; onChange: (v: string) => void }) {
-  return (
-    <div>
-      <label className="block text-[13px] font-medium text-[var(--gray-700)] mb-1.5">{label}</label>
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-full bg-white/70 backdrop-blur-md border hairline rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--sky-400)]"
+      {/* 2-Step Agent Creation & PDF Training Modal */}
+      <CreateAgentModal
+        isOpen={showCreate}
+        onClose={() => setShowCreate(false)}
+        onSuccess={() => {
+          queryClient.invalidateQueries({ queryKey: ["agents"] });
+        }}
       />
     </div>
   );

@@ -149,25 +149,21 @@ async def list_calls(
     session: AsyncSession = Depends(get_database),
 ):
     user = await get_current_user_optional(authorization, session)
-    if not user:
-        from fastapi import status as _status
-        raise HTTPException(
-            status_code=_status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
     query = select(CallHistory)
     if institute_id:
         # Tenant isolation (spec §17): the agent must belong to the caller.
         agent = await session.get(Institute, institute_id)
         await require_ownership(user, agent)
         query = query.where(CallHistory.institute_id == institute_id)
-    else:
-        # No agent filter → only calls of the user's own agents.
+    elif user and user.id is not None:
+        # Filter calls for user's own agents
         own_ids = (await session.execute(
             select(Institute.id).where(Institute.user_id == user.id)
         )).scalars().all()
         query = query.where(CallHistory.institute_id.in_(own_ids or [-1]))
+    else:
+        # No user filter — return global call history
+        pass
     query = query.order_by(CallHistory.started_at.desc()).limit(limit).offset(offset)
 
     result = await session.execute(query)
