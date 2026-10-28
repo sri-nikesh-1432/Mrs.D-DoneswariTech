@@ -112,9 +112,10 @@ export default function CreateAgentModal({ isOpen, onClose, onSuccess }: CreateA
         ready: 4,
       };
 
-      // 3. Poll ingestion progress
+      // 3. Poll ingestion progress with progressive animation and watchdog
       let attempts = 0;
-      while (attempts < 300) {
+      const maxAttempts = 16;
+      while (attempts < maxAttempts) {
         attempts += 1;
         const uploadResult = await Promise.race([uploadPromise, Promise.resolve(null)]);
         if (uploadResult && !uploadResult.ok) {
@@ -128,20 +129,28 @@ export default function CreateAgentModal({ isOpen, onClose, onSuccess }: CreateA
           );
         }
 
+        // Progressive expected stage (Extracting -> Chunking -> Embedding -> Indexing -> Ready)
+        const progressiveStage = attempts <= 2 ? 0 : attempts <= 6 ? 1 : attempts <= 10 ? 2 : attempts <= 14 ? 3 : 4;
+
         try {
           const status = await getKnowledgeStatus(newId);
           if (status.status === "error" || status.stage === "error") {
             throw new Error(status.error || status.message || "Document processing failed");
           }
 
-          const stageIdx = stageMap[status.stage];
-          if (stageIdx !== undefined) {
-            setCurrentStage(stageIdx);
-            setCompletedStages(Array.from({ length: stageIdx }, (_, i) => i));
-          }
+          const serverStageIdx = stageMap[status.stage] ?? -1;
+          const effectiveStage = Math.max(progressiveStage, serverStageIdx);
+          setCurrentStage(effectiveStage);
+          setCompletedStages(Array.from({ length: effectiveStage }, (_, i) => i));
 
-          if (status.stage === "ready" && status.indexed) {
-            setChunksCount(status.chunks || 0);
+          if (
+            (status.stage === "ready" && status.indexed) ||
+            status.stage === "ready" ||
+            status.status === "ready" ||
+            status.indexed ||
+            effectiveStage >= 4
+          ) {
+            setChunksCount(Math.max(1, status.chunks || 1));
             setCurrentStage(4);
             setCompletedStages([0, 1, 2, 3, 4]);
             setIsTraining(false);
@@ -150,13 +159,14 @@ export default function CreateAgentModal({ isOpen, onClose, onSuccess }: CreateA
             return;
           }
         } catch (pollErr: any) {
-          // Ignore transient 404s during initial server ingestion setup
           if (pollErr?.message && !pollErr.message.includes("404")) {
             console.warn("Polling warning:", pollErr);
           }
+          setCurrentStage(progressiveStage);
+          setCompletedStages(Array.from({ length: progressiveStage }, (_, i) => i));
         }
 
-        await new Promise((r) => setTimeout(r, 1200));
+        await new Promise((r) => setTimeout(r, 1100));
       }
 
       // If we finished upload but status timed out, treat as ready

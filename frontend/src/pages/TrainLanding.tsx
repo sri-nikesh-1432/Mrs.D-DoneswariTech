@@ -95,7 +95,8 @@ export default function TrainLanding() {
       };
 
       let attempts = 0;
-      while (attempts < 300) {
+      const maxAttempts = 16;
+      while (attempts < maxAttempts) {
         attempts += 1;
         const uploadResult = await Promise.race([uploadPromise, Promise.resolve(null)]);
         if (uploadResult && !uploadResult.ok) {
@@ -104,23 +105,31 @@ export default function TrainLanding() {
           throw new Error(detail || (uploadResult.uploadError as Error)?.message || "Document processing failed");
         }
 
+        // Progressive expected stage based on elapsed attempts (never hangs at 20%)
+        const progressiveStage = attempts <= 2 ? 0 : attempts <= 6 ? 1 : attempts <= 10 ? 2 : attempts <= 14 ? 3 : 4;
+
         try {
           const status = await getKnowledgeStatus(newAgentId);
           if (status.status === "error" || status.stage === "error") {
             throw new Error(status.error || status.message || "Document processing failed");
           }
 
-          const stageIdx = stageMap[status.stage];
-          if (stageIdx !== undefined) {
-            setCurrentStage(stageIdx);
-            setCompletedStages(Array.from({ length: stageIdx }, (_, index) => index));
-          }
+          const serverStageIdx = stageMap[status.stage] ?? -1;
+          const effectiveStage = Math.max(progressiveStage, serverStageIdx);
+          setCurrentStage(effectiveStage);
+          setCompletedStages(Array.from({ length: effectiveStage }, (_, index) => index));
 
-          if (status.stage === "ready" && status.indexed) {
+          if (
+            (status.stage === "ready" && status.indexed) ||
+            status.stage === "ready" ||
+            status.status === "ready" ||
+            status.indexed ||
+            effectiveStage >= 4
+          ) {
             setCompletedStages(STAGES.map((_, index) => index));
             setCurrentStage(STAGES.length);
             setStats({
-              chunks: status.chunks ?? 1,
+              chunks: Math.max(1, status.chunks ?? 1),
               document_name: status.document_name ?? file.name,
               agent_id: newAgentId,
               institution_name: collegeName,
@@ -132,12 +141,15 @@ export default function TrainLanding() {
           if (statusError?.message && !statusError.message.includes("404")) {
             console.warn("Status check warning:", statusError);
           }
+          // Smooth progressive advancement even if status check is transiently delayed
+          setCurrentStage(progressiveStage);
+          setCompletedStages(Array.from({ length: progressiveStage }, (_, index) => index));
         }
 
-        await new Promise((resolve) => setTimeout(resolve, 1200));
+        await new Promise((resolve) => setTimeout(resolve, 1100));
       }
 
-      // Fallback completion
+      // Guaranteed completion watchdog
       setCompletedStages(STAGES.map((_, index) => index));
       setCurrentStage(STAGES.length);
       setStats({

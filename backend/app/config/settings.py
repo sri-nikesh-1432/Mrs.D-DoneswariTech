@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     # (Groq's free tier caps tokens per DAY per model — a 429 on one model
     # must not end the call; the next model keeps Mrs. D talking).
     GROQ_FALLBACK_MODELS: list = Field(
-        default=["openai/gpt-oss-120b"],
+        default=["openai/gpt-oss-120b", "qwen/qwen3.8-27b"],
         env="GROQ_FALLBACK_MODELS",
     )
     

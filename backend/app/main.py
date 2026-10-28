@@ -294,16 +294,31 @@ async def security_headers(request, call_next):
     response.headers["Permissions-Policy"] = "microphone=(self)"
     return response
 
-# ── CORS — restricted to configured origins (spec §63) ───────────────────────
-# ALLOWED_ORIGINS defaults to ["*"] for local dev (credentials off per the CORS
-# spec); production operators set explicit origins in .env.
-_allowed = settings.ALLOWED_ORIGINS or ["*"]
+# ── CORS — configured for production Netlify frontend and local testing ─────
+_base_origins = [o for o in (settings.ALLOWED_ORIGINS or []) if o != "*"]
+_known_origins = [
+    "https://mrsd-telecaller.netlify.app",
+    "https://dtechp1.netlify.app",
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    "http://localhost:5176",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+    "http://127.0.0.1:5175",
+    "http://127.0.0.1:5176",
+]
+for ko in _known_origins:
+    if ko not in _base_origins:
+        _base_origins.append(ko)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allowed,
-    allow_credentials="*" not in _allowed,
+    allow_origins=_base_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_origin_regex=r"https://.*\.netlify\.app",
 )
 
 # ── Simple in-memory rate limiter (spec §63) ─────────────────────────────────
