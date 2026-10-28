@@ -16,13 +16,19 @@ services:
         value: '["https://mrsd-telecaller.netlify.app","https://dtechp1.netlify.app","https://dllp.netlify.app","https://dllp.netlify.com","http://localhost:5176","*"]'
       - key: DATABASE_URL
         value: sqlite+aiosqlite:////app/mrsd_campaign.db
+      - key: TTS_VOICE
+        value: 'en-IN-NeerjaExpressiveNeural'
+      - key: TTS_RATE
+        value: '-2%'
+      - key: TTS_VOLUME
+        value: '-1%'
       - key: ELEVENLABS_API_KEY
         sync: false
       - key: ELEVENLABS_VOICE_ID
-        value: '0U7pUcfIxJzwwTseQz75'
+        value: 'EXAVITQu4vr4xnSDxMaL'
       - key: ELEVENLABS_FALLBACK_VOICE_ID
-        value: 'hpp4J3VqNfWAUOO0d1Us'
+        value: '21m00Tcm4TlvDq8ikWAM'
       - key: ELEVENLABS_MODEL_ID
-        value: 'eleven_turbo_v2_5'
+        value: 'eleven_multilingual_v2'
       - key: ELEVENLABS_ALLOW_EDGE_FALLBACK
         value: '1'

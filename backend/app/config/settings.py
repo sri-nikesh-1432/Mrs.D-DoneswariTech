@@ -85,41 +85,34 @@ class Settings(BaseSettings):
     STATIC_DIR: Path = Field(default_factory=lambda: (Path(__file__).parent.parent.parent / "static").resolve())
     AUDIO_DIR: Path = Field(default_factory=lambda: (Path(__file__).parent.parent.parent / "static" / "audio").resolve())
 
-    # Voice — Janaki - Respectful Customer Care Agent from ElevenLabs (0U7pUcfIxJzwwTseQz75)
+    # Voice — Soft, natural, humanized female admissions counsellor
     TTS_ENGINE: str = Field(default="elevenlabs", env="TTS_ENGINE")
-    TTS_VOICE: str = Field(default="0U7pUcfIxJzwwTseQz75", env="TTS_VOICE")
-    TTS_RATE: str = Field(default="+8%", env="TTS_RATE")
-    TTS_VOLUME: str = Field(default="+1%", env="TTS_VOLUME")
+    TTS_VOICE: str = Field(default="en-IN-NeerjaExpressiveNeural", env="TTS_VOICE")
+    TTS_RATE: str = Field(default="-2%", env="TTS_RATE")
+    TTS_VOLUME: str = Field(default="-1%", env="TTS_VOLUME")
     MAX_CONCURRENT_CALLS: int = Field(default=1, env="MAX_CONCURRENT_CALLS")
     CALL_RETRY_ATTEMPTS: int = Field(default=3, env="CALL_RETRY_ATTEMPTS")
     CALL_TIMEOUT_SECONDS: int = Field(default=300, env="CALL_TIMEOUT_SECONDS")
 
-    # ElevenLabs premium TTS — targeting Janaki - Respectful Customer Care Agent (0U7pUcfIxJzwwTseQz75)
+    # ElevenLabs premium TTS — Sarah (Soft, warm, conversational female: EXAVITQu4vr4xnSDxMaL)
     ELEVENLABS_API_KEY: str = Field(default="", env="ELEVENLABS_API_KEY")
     ELEVENLABS_VOICE_ID: str = Field(
-        default="0U7pUcfIxJzwwTseQz75", env="ELEVENLABS_VOICE_ID"
+        default="EXAVITQu4vr4xnSDxMaL", env="ELEVENLABS_VOICE_ID"
     )
     ELEVENLABS_MODEL_ID: str = Field(
         default="eleven_multilingual_v2", env="ELEVENLABS_MODEL_ID"
     )
-    # Fallback premade voice used when the chosen voice is not permitted for
-    # this ElevenLabs plan (a library voice on a Free account returns HTTP 402
-    # "paid_plan_required"). Premade voices are always allowed on every plan.
-    # Bella — Professional, Bright, Warm (female).
+    # Rachel — Calm, gentle, friendly female premade voice (always allowed on all plans)
     ELEVENLABS_FALLBACK_VOICE_ID: str = Field(
-        default="hpp4J3VqNfWAUOO0d1Us", env="ELEVENLABS_FALLBACK_VOICE_ID"
+        default="21m00Tcm4TlvDq8ikWAM", env="ELEVENLABS_FALLBACK_VOICE_ID"
     )
     # Last resort: if ElevenLabs returns no audio at all, fall back to Edge TTS
     # so the voice agent is never silent.
     ELEVENLABS_ALLOW_EDGE_FALLBACK: bool = Field(
         default=True, env="ELEVENLABS_ALLOW_EDGE_FALLBACK"
     )
-    # Best-effort ElevenLabs voice detection. If the ELEVENLABS_VOICE_ID is a
-    # premade voice (no dashes, no dots), it is assumed to be a known-premade
-    # voice that works on a Free plan. Configure a Janaki voice id here to lock
-    # the agent's live voice to Janaki's Telugu voice (elevenlabs.io/voices/).
     JANAKI_VOICE_ID: str = Field(
-        default="0U7pUcfIxJzwwTseQz75", env="JANAKI_VOICE_ID"
+        default="EXAVITQu4vr4xnSDxMaL", env="JANAKI_VOICE_ID"
     )
     # Fifteen default assistant replies that handle the most common admissions
     # questions instantly. Real LLM is used for everything else, so the agent
@@ -134,11 +127,11 @@ class Settings(BaseSettings):
             "Fees vary by course. Can I share the rough fee structure?",
         ],
         "te": [
-            "హలో! మా సంస్థకు స్వాగతం. నేను ఇక్కడ ఉన్నాను. మీరు ఏమి సహాయం కావాలనుకుంటున్నారు?",
-            "స్వాగతం! మీకు ఎలా సహాయం చేయగలను? మా కోర్సుల గురించి మరియు ప్రోగ్రామ్‌ల గురించి మీకు తెలుసుకోవాలనుకుంటున్నాము.",
-            "అవును, మా కోర్సులు మిక్కిలి ఉన్నత నాణ్యతను కలిగి ఉంటాయి. మీకు అదనపు సమాచారం అవసరంగా ఉందా?",
-            "మా అడ్మిషన్ ప్రక్రియ సరళంగా ఉంటుంది. దశలు తెలుసుకోవాలనుకుంటున్నారా?",
-            "చదువుల ఆధారంగా చెల్లింపులు మారుతాయి. సుమారు చెల్లింపు నిర్మాణాన్ని పంచుకోవచ్చా?",
+            "నమస్కారం అండి! మా సంస్థకు సాదర స్వాగతం. అడ్మిషన్ల వివరాల కోసం నేను మీకు ఎలా సహాయపడగలను?",
+            "స్వాగతం అండి! మా కాలేజీలో అందుబాటులో ఉన్న కోర్సులు, ఫీజుల వివరాలను మీకు సంతోషంగా వివరిస్తాను. మీరు ఏ కోర్సు గురించి తెలుసుకోవాలనుకుంటున్నారు?",
+            "అవునండి, మా కోర్సులు అత్యుత్తమ విద్యా ప్రమాణాలు మరియు అనుభవజ్ఞులైన ఫ్యాకల్టీతో నడుస్తాయి. మీకు వివరాలు అందించమంటారా అండి?",
+            "మా అడ్మిషన్ ప్రక్రియ చాలా సులభంగా ఉంటుందండి. ఆ దశల గురించి మీకు వివరించమంటారా?",
+            "కోర్సు మరియు బ్రాంచ్ ఆధారంగా ఫీజు నిర్మాణం ఉంటుందండి. సుమారు ఫీజు వివరాలను మీకు తెలియజేయమంటారా అండి?",
         ],
         "hi": [
             "नमस्ते! हमारे संस्थान में आपका स्वागत है। आप कैसे मदद चाहते हैं?",

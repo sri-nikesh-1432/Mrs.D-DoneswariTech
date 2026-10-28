@@ -466,7 +466,7 @@ export default function AgentTest() {
                     className="inline-flex items-center gap-1.5 text-xs text-sky-400 hover:text-sky-300 bg-sky-500/10 border border-sky-500/25 px-2.5 py-1 rounded-lg font-medium transition-all"
                   >
                     <Volume2 className="w-3.5 h-3.5" />
-                    <span>{playingMsgIndex === i ? "Playing voice…" : "Listen (ElevenLabs)"}</span>
+                    <span>{playingMsgIndex === i ? "Speaking…" : "Listen Voice"}</span>
                   </button>
                 </div>
               )}

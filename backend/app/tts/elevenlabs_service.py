@@ -79,7 +79,7 @@ class ElevenLabsTTSService:
             v = voice.strip()
             if v not in self._blocked_voices and len(v) >= 11 and len(v) <= 30 and "-" not in v and "." not in v:
                 return v
-        return self.voice_id or self.fallback_voice_id or "hpp4J3VqNfWAUOO0d1Us"
+        return self.voice_id or self.fallback_voice_id or "EXAVITQu4vr4xnSDxMaL"
 
     # ── Core synthesis ──────────────────────────────────────────────────
     async def _post_tts(
@@ -102,7 +102,7 @@ class ElevenLabsTTSService:
             "voice_settings": {
                 "stability": stability,
                 "similarity_boost": similarity_boost,
-                "style": 0.35,
+                "style": 0.15,  # Soft, natural conversational warmth (reduces robotic/dramatic artifacts)
                 "use_speaker_boost": True,
             },
         }
@@ -127,16 +127,17 @@ class ElevenLabsTTSService:
 
     @staticmethod
     def _settings_for_speed(speed: Optional[float]) -> tuple[float, float]:
-        """Map the agent's configured pace to (stability, similarity_boost)."""
-        stability = 0.5
+        """Map the agent's configured pace to (stability, similarity_boost) for soft human speech."""
+        stability = 0.72  # High stability eliminates robotic pitch jitters
+        similarity_boost = 0.75  # 0.75 provides smooth, warm audio without digital distortion
         if speed is not None:
             try:
                 s = float(speed)
                 if abs(s - 1.0) >= 0.05:
-                    stability = max(0.2, min(0.75, 0.5 + (1.0 - s) * 0.2))
+                    stability = max(0.55, min(0.85, 0.72 + (1.0 - s) * 0.15))
             except (TypeError, ValueError):
                 pass
-        return stability, 0.85
+        return stability, similarity_boost
 
     async def _synthesize_mp3(
         self, text: str, voice: Optional[str] = None, speed: Optional[float] = None,

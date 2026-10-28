@@ -5,9 +5,6 @@ services:
     repo: https://github.com/sri-nikesh-1432/Mrs.D-DoneswariTech.git
     plan: free
     dockerfilePath: ./backend/Dockerfile
-    # NOTE: Render free tier sleeps after ~15 min idle and takes ~60s to cold
-    # start, which violates the 700ms voice KPI on the first turn. Upgrade to
-    # Starter/Pro or ping it (curl /health keeps it awake) for always-on voice.
     healthCheckPath: /health
     healthCheckTimeout: 120
     envVars:
@@ -15,23 +12,23 @@ services:
         sync: false
       - key: EMBEDDING_WARMUP
         value: 'false'
-      # CORS: every frontend origin allowed to call this backend. Add the
-      # deployed Netlify site(s) here — REST is called cross-origin from the
-      # browser. The voice WebSocket connects to the same origin.
       - key: ALLOWED_ORIGINS
         value: '["https://mrsd-telecaller.netlify.app","https://dtechp1.netlify.app","https://dllp.netlify.app","https://dllp.netlify.com","http://localhost:5176","*"]'
       - key: DATABASE_URL
         value: sqlite+aiosqlite:////app/mrsd_campaign.db
-      # ── ElevenLabs premium voice ────────────────────────────────────
-      # The API key is a real secret — set it in the Render dashboard
-      # (or `render.yaml` sync:false prompts for it), never commit it.
+      - key: TTS_VOICE
+        value: 'en-IN-NeerjaExpressiveNeural'
+      - key: TTS_RATE
+        value: '-2%'
+      - key: TTS_VOLUME
+        value: '-1%'
       - key: ELEVENLABS_API_KEY
         sync: false
       - key: ELEVENLABS_VOICE_ID
-        value: '0U7pUcfIxJzwwTseQz75'
+        value: 'EXAVITQu4vr4xnSDxMaL'
       - key: ELEVENLABS_FALLBACK_VOICE_ID
-        value: 'hpp4J3VqNfWAUOO0d1Us'
+        value: '21m00Tcm4TlvDq8ikWAM'
       - key: ELEVENLABS_MODEL_ID
-        value: 'eleven_turbo_v2_5'
+        value: 'eleven_multilingual_v2'
       - key: ELEVENLABS_ALLOW_EDGE_FALLBACK
         value: '1'

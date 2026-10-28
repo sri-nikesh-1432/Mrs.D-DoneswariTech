@@ -631,8 +631,8 @@ class ConversationState:
 # ── Greeting (outbound opener) ──────────────────────────────────────────────
 
 GREETING_PERMISSION = {
-    "English": "Hi, this is {agent_name} calling from {company_name}. Is this a good time for a quick conversation?",
-    "Telugu": "నమస్కారం, నేను {company_name} నుంచి {agent_name} మాట్లాడుతున్నాను. ఇప్పుడు రెండు నిమిషాలు మాట్లాడొచ్చా?",
+    "English": "Hello! This is {agent_name} calling from {company_name}. I'm reaching out to help with your college admission queries. Is this a good time for a brief, friendly conversation?",
+    "Telugu": "నమస్కారం అండి! నేను {company_name} నుంచి {agent_name} ని మాట్లాడుతున్నానండి. కాలేజ్ అడ్మిషన్ల వివరాల కోసం మాట్లాడటానికి ఇది సరైన సమయమేనా అండి?",
 }
 
 

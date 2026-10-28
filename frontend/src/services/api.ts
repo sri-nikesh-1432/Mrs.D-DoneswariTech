@@ -247,7 +247,7 @@ export async function listAgents(): Promise<AgentProfile[]> {
 
 /** Default ElevenLabs voice id (see elevenlabs.io/voices/0U7pUcfIxJzwwTseQz75).
  *  Used for every new agent unless the caller picks another voice. */
-export const DEFAULT_AGENT_VOICE = "0U7pUcfIxJzwwTseQz75";
+export const DEFAULT_AGENT_VOICE = "en-IN-NeerjaExpressiveNeural";
 
 export async function createAgent(payload: {
   name: string;

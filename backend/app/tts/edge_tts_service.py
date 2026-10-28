@@ -56,8 +56,8 @@ class EdgeTTSService:
             "Malayalam-Alt": "ml-IN-MidhunNeural",   # Malayalam male
         }
         self.voice = os.getenv("TTS_VOICE", "en-IN-NeerjaExpressiveNeural")
-        self.rate = os.getenv("TTS_RATE", "+14%")  # ~1.14x speed, lively phone pace
-        self.pitch = os.getenv("TTS_PITCH", "+0Hz")
+        self.rate = os.getenv("TTS_RATE", "-2%")   # Soft, humanized, relaxed conversational pace
+        self.pitch = os.getenv("TTS_PITCH", "-1Hz") # Warm, gentle female tone
         self.is_initialized = False
     
     async def initialize(self):
@@ -301,9 +301,9 @@ class EdgeTTSService:
     #   - Long sentences : a touch slower     (clear, unhurried information)
     # All deltas are deliberately small — big swings are what make TTS sound
     # robotic or theatrical.
-    _BASE_RATE = os.getenv("TTS_RATE", "+14%")  # lively, natural phone pace
-    _BASE_PITCH = os.getenv("TTS_PITCH", "+1Hz")  # slight warmth boost
-    _BASE_VOLUME = os.getenv("TTS_VOLUME", "+2%")  # confident, clear voice
+    _BASE_RATE = os.getenv("TTS_RATE", "-2%")   # Soft, humanized, calm conversational pace
+    _BASE_PITCH = os.getenv("TTS_PITCH", "-1Hz") # Warm, gentle female pitch (never screechy/robotic)
+    _BASE_VOLUME = os.getenv("TTS_VOLUME", "-1%") # Soft, pleasant conversational volume
 
     @staticmethod
     def _parse_pct(value: str, default: int = 10) -> int:
@@ -438,9 +438,10 @@ class EdgeTTSService:
         # wider starts to sound theatrical. The rate floor is deliberately
         # NEGATIVE so a tenant who configures a slower pace (voice_speed < 1.0)
         # actually hears it instead of being clamped back to normal speed.
-        rate = max(-12, min(25, base_rate + rate_delta))
-        pitch = max(-6, min(10, base_pitch + pitch_delta))
-        volume = max(-3, min(8, base_volume + volume_delta))
+        # Natural human range: prevents robotic chipmunk speed or artificial pitch spikes
+        rate = max(-8, min(4, base_rate + rate_delta))
+        pitch = max(-4, min(3, base_pitch + pitch_delta))
+        volume = max(-4, min(1, base_volume + volume_delta))
         return f"{rate:+d}%", f"{pitch:+d}Hz", f"{volume:+d}%"
 
     # NOTE: inter-sentence breathing pauses are played by the CLIENT between
@@ -480,7 +481,7 @@ class EdgeTTSService:
         )
         try:
             from app.tts.raw_ssml import get_raw_synth
-            fast_audio = await get_raw_synth().synthesize_fast(ssml, timeout=6.0)
+            fast_audio = await get_raw_synth().synthesize_fast(ssml, timeout=1.5)
             if fast_audio:
                 return fast_audio
             logger.debug("raw-ssml fast path empty; falling back to Communicate")
@@ -519,15 +520,8 @@ class EdgeTTSService:
     ) -> str:
         """
         Choose the Edge-TTS voice for the given text.
-
-        Priority:
-          1. Script of the actual text (Telugu/Hindi/Tamil/Kannada/Malayalam
-             characters -> the matching regional voice). This guarantees the
-             voice can read the text even when the caller's language hint is
-             wrong.
-          2. Explicit `voice` argument.
-          3. `language` hint mapped to a voice.
-          4. Default configured voice.
+        Always returns a soft, human-like female neural voice.
+        Safely rejects non-Edge tokens (such as ElevenLabs IDs) so synthesis never crashes.
         """
         if text:
             script_checks = [
@@ -539,23 +533,21 @@ class EdgeTTSService:
             ]
             for pattern, lang_name, locale in script_checks:
                 if re.search(pattern, text):
-                    # The tenant's own choice wins when that voice can already
-                    # read this script (e.g. a Telugu MALE voice for Telugu) —
-                    # otherwise the configured voice would be silently ignored.
-                    if voice and voice.startswith(locale):
+                    if voice and voice.startswith(locale) and "Neural" in voice:
                         return voice
                     script_voice = self.voices.get(lang_name)
                     if script_voice:
-                        logger.debug(
-                            "Picked %s voice from script (%s)", script_voice, lang_name
-                        )
                         return script_voice
 
-        if voice:
+        # Only accept explicit voice if it is a genuine Edge-TTS voice (contains 'Neural')
+        if voice and "-" in voice and ("Neural" in voice or voice in self.voices.values()):
             return voice
+
         if language and language in self.voices:
             return self.voices[language]
-        return self.voice
+
+        # Default soft, expressive Indian English female voice for English & Tenglish
+        return self.voices.get("English", "en-IN-NeerjaExpressiveNeural")
 
     async def synthesize_pcm(
         self,

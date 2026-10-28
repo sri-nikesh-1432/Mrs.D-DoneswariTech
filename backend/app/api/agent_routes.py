@@ -381,7 +381,7 @@ async def create_agent(
         calling_purpose=body.calling_purpose,
         description=body.description,
         language=body.language or "en",
-        voice=body.voice or "0U7pUcfIxJzwwTseQz75",
+        voice=body.voice or "en-IN-NeerjaExpressiveNeural",
         voice_speed=body.voice_speed or 1.0,
         greeting_message=greeting,
         instructions=body.instructions,
