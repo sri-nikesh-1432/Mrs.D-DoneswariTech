@@ -100,9 +100,18 @@ export default function TrainLanding() {
         attempts += 1;
         const uploadResult = await Promise.race([uploadPromise, Promise.resolve(null)]);
         if (uploadResult && !uploadResult.ok) {
-          const detail = (uploadResult.uploadError as { response?: { data?: { detail?: string } } })
-            ?.response?.data?.detail;
-          throw new Error(detail || (uploadResult.uploadError as Error)?.message || "Document processing failed");
+          const err = uploadResult.uploadError as any;
+          const status = err?.response?.status;
+          const isTimeout = err?.code === "ECONNABORTED" || String(err?.message || "").toLowerCase().includes("timeout");
+          // Only fatal client errors (like bad file format 400) should abort immediately;
+          // timeouts or network socket flushes continue polling background completion.
+          if (status === 400 || (status && status >= 400 && status < 500 && status !== 408 && status !== 404)) {
+            const detail = err?.response?.data?.detail;
+            throw new Error(detail || err?.message || "Document processing failed");
+          }
+          if (!isTimeout) {
+            console.warn("Upload notice, awaiting background completion via status polling:", err);
+          }
         }
 
         // Progressive expected stage based on elapsed attempts (never hangs at 20%)

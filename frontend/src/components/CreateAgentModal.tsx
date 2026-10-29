@@ -119,14 +119,16 @@ export default function CreateAgentModal({ isOpen, onClose, onSuccess }: CreateA
         attempts += 1;
         const uploadResult = await Promise.race([uploadPromise, Promise.resolve(null)]);
         if (uploadResult && !uploadResult.ok) {
-          const detail =
-            (uploadResult.uploadError as { response?: { data?: { detail?: string } } })?.response?.data
-              ?.detail;
-          throw new Error(
-            typeof detail === "string"
-              ? detail
-              : (uploadResult.uploadError as Error)?.message || "Document processing failed",
-          );
+          const err = uploadResult.uploadError as any;
+          const status = err?.response?.status;
+          const isTimeout = err?.code === "ECONNABORTED" || String(err?.message || "").toLowerCase().includes("timeout");
+          if (status === 400 || (status && status >= 400 && status < 500 && status !== 408 && status !== 404)) {
+            const detail = err?.response?.data?.detail;
+            throw new Error(typeof detail === "string" ? detail : err?.message || "Document processing failed");
+          }
+          if (!isTimeout) {
+            console.warn("Upload notice, awaiting background completion via status polling:", err);
+          }
         }
 
         // Progressive expected stage (Extracting -> Chunking -> Embedding -> Indexing -> Ready)

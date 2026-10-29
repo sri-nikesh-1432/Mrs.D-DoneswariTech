@@ -98,7 +98,7 @@ async def upload_knowledge(
         # returns immediately. The client times out waiting for the synchronous
         # process_document() call below.
         background_tasks.add_task(
-            process_document, session, knowledge, file_path
+            process_document_background, knowledge.id, file_path
         )
 
         logger.info(f"Document upload initiated for {file.filename}, processing in background")

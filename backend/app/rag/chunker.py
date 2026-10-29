@@ -39,10 +39,13 @@ _CHARS_PER_TOKEN = 4
 
 def _looks_like_heading(line: str) -> bool:
     s = line.strip()
-    if not s or len(s) > 140 or s.endswith((".", "?", "!", ",")):
-        # Long prose or sentence endings are not headings.
-        if not (s.endswith(":") and len(s) <= 140):
-            return False
+    if not s or len(s) < 4 or len(s) > 130 or s.endswith((".", "?", "!", ",")):
+        return False
+    # Avoid classifying short metrics, ratings, times or single numbers as headings
+    if re.match(r"^\d+\s*(?:am|pm|★|\*|k|%|inr|rs)?$", s, re.IGNORECASE):
+        return False
+    if not (s.endswith(":") or len(s.split()) >= 2 or re.match(r"^\d+[\.\)]", s)):
+        return False
     return bool(_HEADING_RE.match(s))
 
 
@@ -179,12 +182,13 @@ def chunk_text(
 
     for block in blocks:
         block_len = len(block.text)
-        # A block that fits joins the current chunk when it belongs to the
-        # same section; a new section always opens a new chunk boundary.
         same_section = (block.section == cur_section) or (cur_section is None)
         fits = cur_len + block_len <= chunk_size
+        # Only split on section boundary if the current chunk already has substantial context (>=450 chars)
+        split_for_section = (not same_section) and (cur_len >= 450)
+        split_for_size = not fits
 
-        if cur_parts and (not fits or not same_section):
+        if cur_parts and (split_for_size or split_for_section):
             _emit(cur_parts, cur_pages, cur_section)
             # Carry a character-overlap tail from the previous chunk so
             # answers that straddle a boundary stay retrievable.
