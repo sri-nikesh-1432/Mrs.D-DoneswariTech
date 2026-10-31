@@ -594,6 +594,7 @@ export async function sendTextMessage(
   message: string,
   sessionId?: string,
   language?: string,
+  returnAudio: boolean = false,
 ): Promise<{
   response: string;
   message?: string;
@@ -612,7 +613,7 @@ export async function sendTextMessage(
     session_id: sessionId,
     conversation_id: sessionId,
     language: language || "English",
-    return_audio: true,
+    return_audio: returnAudio,
   });
   return res.data;
 }

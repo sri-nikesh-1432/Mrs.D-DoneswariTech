@@ -23,13 +23,14 @@ _client = None
 
 
 def _model_chain() -> list:
-    """Primary model first, then fallbacks (deduplicated)."""
-    models = [settings.GROQ_MODEL] + list(settings.GROQ_FALLBACK_MODELS or [])
-    seen = []
-    for m in models:
-        if m and m not in seen:
+    """Primary model first, then verified active fallbacks (deduplicated)."""
+    ACTIVE_MODELS = ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3.8-27b"]
+    preferred = settings.GROQ_MODEL if settings.GROQ_MODEL in ACTIVE_MODELS else "openai/gpt-oss-20b"
+    seen = [preferred]
+    for m in list(settings.GROQ_FALLBACK_MODELS or []) + ACTIVE_MODELS:
+        if m and m in ACTIVE_MODELS and m not in seen:
             seen.append(m)
-    return seen or ["openai/gpt-oss-20b", "openai/gpt-oss-120b"]
+    return seen
 
 
 def _is_gpt_oss(model: str) -> bool:
@@ -209,7 +210,7 @@ def _get_client():
         logger.info(f"=== STEP 9: LLM INITIALIZATION ===")
         key = (settings.GROQ_API_KEY or get_groq_fallback_key()).strip()
         logger.info(f"Using model: {settings.GROQ_MODEL}")
-        _client = AsyncGroq(api_key=key)
+        _client = AsyncGroq(api_key=key, max_retries=0)
         logger.info("✓ Groq client initialized successfully")
         logger.info(f"=== STEP 9 COMPLETE: LLM INITIALIZATION SUCCESSFUL ===")
     return _client

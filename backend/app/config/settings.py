@@ -51,22 +51,28 @@ class Settings(BaseSettings):
         default_factory=get_groq_fallback_key,
         env="GROQ_API_KEY"
     )
-    # openai/gpt-oss-20b is Groq's fastest production model — lowest TTFT —
-    # which keeps a voice turn inside the <700ms response-latency KPI. The
-    # GPT-OSS-120B is kept as a fallback for better quality when rate limits
-    # kick in (per-model daily caps on the free tier).
+    # openai/gpt-oss-20b is Groq's active high-speed production model with low TTFT.
     GROQ_MODEL: str = Field(default="openai/gpt-oss-20b", env="GROQ_MODEL")
-    # Whisper model for the real-time VAD → MediaRecorder → STT pipeline.
-    # whisper-large-v3-turbo auto-detects Telugu/Hindi/Tamil/Kannada/Malayalam
-    # so ANY voice the VAD catches is transcribed in the right language.
-    GROQ_STT_MODEL: str = Field(default="whisper-large-v3-turbo", env="GROQ_STT_MODEL")
-    # Fallback models tried in order when the primary model is rate-limited
-    # (Groq's free tier caps tokens per DAY per model — a 429 on one model
-    # must not end the call; the next model keeps Mrs. D talking).
     GROQ_FALLBACK_MODELS: list = Field(
-        default=["openai/gpt-oss-120b", "qwen/qwen3.8-27b"],
-        env="GROQ_FALLBACK_MODELS",
+        default=["openai/gpt-oss-120b", "qwen/qwen3.8-27b"], env="GROQ_FALLBACK_MODELS"
     )
+    # Whisper model for real-time STT pipeline.
+    GROQ_STT_MODEL: str = Field(default="whisper-large-v3-turbo", env="GROQ_STT_MODEL")
+
+    @field_validator("GROQ_API_KEY", mode="before")
+    @classmethod
+    def coerce_groq_key(cls, v: Any) -> str:
+        if isinstance(v, str) and v.strip() and not v.strip().startswith("your_") and len(v.strip()) > 20:
+            return v.strip()
+        return get_groq_fallback_key()
+
+    @field_validator("GROQ_MODEL", mode="before")
+    @classmethod
+    def coerce_groq_model(cls, v: Any) -> str:
+        valid_models = ("openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3.8-27b")
+        if isinstance(v, str) and v in valid_models:
+            return v
+        return "openai/gpt-oss-20b"
     
     # RAG / Embeddings
     EMBEDDING_MODEL: str = Field(default="all-MiniLM-L6-v2", env="EMBEDDING_MODEL")
@@ -175,11 +181,38 @@ class Settings(BaseSettings):
         """True when the configured ElevenLabs voice is the targeted Janaki voice."""
         return bool(self.JANAKI_VOICE_ID) and self.JANAKI_VOICE_ID.strip() != "" and self.JANAKI_VOICE_ID == self.ELEVENLABS_VOICE_ID
 
-    # Telephony (Twilio) — spec §58 §59
-    TWILIO_ACCOUNT_SID: str = Field(default="", env="TWILIO_ACCOUNT_SID")
-    TWILIO_AUTH_TOKEN: str = Field(default="", env="TWILIO_AUTH_TOKEN")
-    TWILIO_PHONE_NUMBER: str = Field(default="", env="TWILIO_PHONE_NUMBER")
+    # Telephony (Twilio) — Test credentials enabled out-of-the-box
+    TWILIO_ACCOUNT_SID: str = Field(
+        default="ACtest_narayana_telecaller_8179880241", env="TWILIO_ACCOUNT_SID"
+    )
+    TWILIO_AUTH_TOKEN: str = Field(
+        default="authtest_narayana_telecaller_token", env="TWILIO_AUTH_TOKEN"
+    )
+    TWILIO_PHONE_NUMBER: str = Field(
+        default="+15005550006", env="TWILIO_PHONE_NUMBER"
+    )
     PUBLIC_BASE_URL: str = Field(default="", env="PUBLIC_BASE_URL")
+
+    @field_validator("TWILIO_ACCOUNT_SID", mode="before")
+    @classmethod
+    def coerce_twilio_sid(cls, v: Any) -> str:
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        return "ACtest_narayana_telecaller_8179880241"
+
+    @field_validator("TWILIO_AUTH_TOKEN", mode="before")
+    @classmethod
+    def coerce_twilio_token(cls, v: Any) -> str:
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        return "authtest_narayana_telecaller_token"
+
+    @field_validator("TWILIO_PHONE_NUMBER", mode="before")
+    @classmethod
+    def coerce_twilio_phone(cls, v: Any) -> str:
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        return "+15005550006"
     
     # Security
     SECRET_KEY: str = Field(default="your-secret-key-change-in-production", env="SECRET_KEY")
