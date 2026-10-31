@@ -8,7 +8,7 @@ caller's language with a warm, human admissions-counsellor style.
 import asyncio
 from typing import List, Dict, AsyncGenerator
 from groq import AsyncGroq, APIStatusError, APIConnectionError
-from utils.config import settings
+from utils.config import settings, get_groq_fallback_key
 from utils.logger import get_logger
 from services.prompt_service import get_system_prompt
 
@@ -30,9 +30,8 @@ _LANG_NAMES = {
 def _get_client() -> AsyncGroq:
     global _client
     if _client is None:
-        if not settings.GROQ_API_KEY:
-            raise ValueError("GROQ_API_KEY is not set in .env")
-        _client = AsyncGroq(api_key=settings.GROQ_API_KEY)
+        key = (settings.GROQ_API_KEY or get_groq_fallback_key()).strip()
+        _client = AsyncGroq(api_key=key)
     return _client
 
 

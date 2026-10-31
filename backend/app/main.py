@@ -196,12 +196,81 @@ def _ensure_directories() -> None:
         logger.debug("Directory ready: %s", d)
 
 
+async def _seed_narayana_agent() -> None:
+    """Ensure the pre-trained Narayana Jubilee Hills Telecaller (Mrs. D - Janaki) is seeded and ready."""
+    try:
+        from sqlalchemy import select
+        from app.database.connection import AsyncSessionLocal
+        from app.database.models import Institute, Knowledge, KnowledgeStatus
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Institute).order_by(Institute.id.asc()).limit(1))
+            agent = result.scalar_one_or_none()
+
+            greeting = "నమస్కారం అండి! నారాయణ ఐఐటి ఒలింపియాడ్ స్కూల్, జూబ్లీహిల్స్ అడ్మిషన్ల సెల్ నుంచి జానకిని మాట్లాడుతున్నాను. చెప్పండి సార్, ఏ క్లాస్ అడ్మిషన్ గురించి తెలుసుకోవాలనుకుంటున్నారు?"
+            school_name = "Narayana IIT Olympiad School, Jubilee Hills, Hyderabad"
+            agent_disp_name = "Mrs. D (జానకి)"
+
+            if not agent:
+                agent = Institute(
+                    institute_id="narayana_jubilee_hills",
+                    name=school_name,
+                    agent_name=agent_disp_name,
+                    calling_purpose="CBSE Admissions, School Fees, Transport & Madhapur Basara Hostel Enquiries",
+                    description="Official Admissions AI Telecaller pre-trained on Narayana IIT Olympiad School, Jubilee Hills brochure.",
+                    language="te",
+                    voice="te-IN-ShrutiNeural",
+                    voice_speed=1.0,
+                    greeting_message=greeting,
+                    status="ready",
+                )
+                session.add(agent)
+                await session.commit()
+                await session.refresh(agent)
+                logger.info("Seeded primary Narayana Jubilee Hills agent (id=%d)", agent.id)
+            else:
+                if "Doneswari" in (agent.name or "") or not agent.name or agent.agent_name in ("Aadhya", "Mrs. D"):
+                    agent.name = school_name
+                    agent.agent_name = agent_disp_name
+                    agent.language = "te"
+                    agent.voice = "te-IN-ShrutiNeural"
+                    agent.greeting_message = greeting
+                    agent.status = "ready"
+                    await session.commit()
+                    logger.info("Updated Agent %d to Narayana Jubilee Hills (Mrs. D - Janaki)", agent.id)
+
+            k_res = await session.execute(
+                select(Knowledge).where(Knowledge.institute_id == agent.id).limit(1)
+            )
+            k_row = k_res.scalar_one_or_none()
+            if not k_row:
+                k_row = Knowledge(
+                    institute_id=agent.id,
+                    file_name="Narayana_IIT_Olympiad_School_Jubilee_Hills.pdf",
+                    file_path="preloaded/narayana_jubilee_hills.pdf",
+                    status=KnowledgeStatus.READY,
+                    document_version=1,
+                    is_active=True,
+                    page_count=14,
+                    extraction_status="completed",
+                )
+                session.add(k_row)
+                await session.commit()
+            elif k_row.status != KnowledgeStatus.READY:
+                k_row.status = KnowledgeStatus.READY
+                k_row.extraction_status = "completed"
+                await session.commit()
+    except Exception as e:
+        logger.warning("Seed Narayana agent notice (non-fatal): %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown lifecycle."""
     logger.info("Mrs. D - AI Voice Receptionist Platform starting up...")
     _ensure_directories()
     await init_database()
+    await _seed_narayana_agent()
     await _restore_vector_store()
 
     _scheduler.start()

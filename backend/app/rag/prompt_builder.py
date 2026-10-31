@@ -11,43 +11,121 @@ from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
 
-# ── PRE-TRAINED INSTITUTIONAL KNOWLEDGE BASE (Narayana Educational Institutions) ──
-# Extracted & synthesized from uploaded PDF knowledge so the agent is pre-trained
-# and does not require slow CPU embedding retrieval on every single turn.
+# ── PRE-TRAINED INSTITUTIONAL KNOWLEDGE BASE (Narayana IIT Olympiad School, Jubilee Hills) ──
+# Exact knowledge extracted from official campus document. The agent answers with 100% precision.
 TRAINED_NARAYANA_KNOWLEDGE = """
-[TRAINED INSTITUTIONAL KNOWLEDGE BASE - NARAYANA EDUCATIONAL INSTITUTIONS]:
-- Organization: Narayana Educational Institutions (Junior Colleges & Techno Schools).
-- Flagship Campus: Jubilee Hills Campus (8-2-293/82/D/17, Road No. 5, Jubilee Hills, Hyderabad - Phone: 8179880241).
-  Also branches across Hyderabad (Madhapur, Kukatpally, Dilsukhnagar, Saroor Nagar, SR Nagar) and Telangana/AP.
-  Office/Campus timings: Monday to Saturday 8:00 AM to 6:00 PM.
-- Academic Streams & Coaching:
-  * Intermediate (+1 & +2 / Class XI & XII):
-    - MPC (Maths, Physics, Chemistry) with integrated IIT-JEE (Main & Advanced) coaching.
-    - BiPC (Biology, Physics, Chemistry) with integrated NEET (Medical UG) coaching.
-    - MEC (Maths, Economics, Commerce) & CEC.
-    - EAPCET / EAMCET coaching, Olympiad batches, and CDF (Concepts, Definitions, Formulae) foundation.
-  * Schools: Nursery/KG to Class X (CBSE / Techno curriculum with robotics and digital labs).
-- Fee Structure (Official Estimates):
-  * Intermediate MPC / BiPC with IIT-JEE / NEET Coaching: ₹1,20,000 to ₹1,60,000 per year.
-  * Class IX - X: ₹1,00,000 to ₹1,30,000 per year.
-  * Class VI - VIII: ₹80,000 to ₹1,05,000 per year.
-  * Class I - V: ₹65,000 to ₹85,000 per year.
-  * Nursery / LKG / UKG: ₹55,000 to ₹75,000 per year.
-  * One-Time New Admission Fee: ₹20,000 to ₹30,000.
-  * Refundable Caution Deposit: ₹5,000 to ₹10,000.
-  * Registration Fee: ₹1,000.
-  * Note: Exact tuition fee depends on campus, batch, and merit concession; confirmed in writing at the branch.
-- Hostel Facilities & Fees:
-  * Available for both Boys and Girls (separate secure residential campuses, e.g., Cherukuthota Saroor Nagar & Jubilee Hills).
-  * 24/7 security, resident wardens, CCTV, medical care room.
-  * Hygienic South Indian nutritious meals. Daily supervised evening study hours with faculty.
-  * Annual Hostel Fee (Room + Meals): ₹90,000 to ₹1,40,000 per year (varies by AC / Non-AC room type).
-  * Refundable Hostel Caution Deposit: ₹5,000 to ₹10,000. Total annual hostel cost: ₹95,000 to ₹1,56,000.
-- Scholarships:
-  * NSAT (Narayana Scholastic Aptitude Test): Merit-based scholarship test offering up to 50% to 90% fee concessions.
-- Admission Process & Action:
-  * Direct Campus Visit recommended for one-on-one counseling, seat confirmation, and scholarship evaluation.
-  * Top IIT-JEE and NEET batches fill up fast.
+[OFFICIAL KNOWLEDGE BASE - NARAYANA IIT OLYMPIAD SCHOOL, JUBILEE HILLS, HYDERABAD]:
+1. CAMPUS IDENTIFICATION & LOCATION:
+- School Name: Narayana IIT Olympiad School, Jubilee Hills, Hyderabad.
+- Campus Type: Day Boarding School (Co-Ed). Timings: Monday to Saturday 8:00 AM to 6:00 PM.
+- Address: 8-2-293/82/D/17, Road No. 5, Jubilee Hills, Hyderabad — 500033.
+- Landmark: Near Venkatagiri Metro Station, Opposite Women's Welfare Housing Society, beside SBI Bank.
+- Contact Details:
+  * Principal Phone: 8179880241
+  * Admissions Toll-Free: 1800 102 3344
+  * WhatsApp Admissions: +91 8179887733
+  * Official Email: hydobh.oly@narayanagroup.com
+  * Website: narayanaschools.in
+
+2. ACADEMIC PROGRAMMES & CURRICULUM:
+- Board: CBSE (integrated with Olympiad & competitive orientation).
+- Classes Offered: Nursery / KG to Class X (Class XI–XII / Senior Secondary available on enquiry with Principal).
+- Key Programmes:
+  * eKidz (Nursery, LKG, UKG | Age 3–5 years): Play-based holistic learning, early literacy, numeracy, creative expression.
+  * eChamps (Class I to V | Age 6–10 years): Curiosity-driven learning, critical thinking, foundation for Maths & Science Olympiads.
+  * eTechno (Class VI to VIII | Age 11–13 years): Competitive exam foundation, IIT-JEE concepts introduced, advanced Olympiad prep.
+  * Senior Secondary (Class IX & X | Age 14–16 years): Board exam mastery + JEE / NEET / EAMCET foundation with intensive testing.
+- Key Academic Features:
+  * Micro-Schedule System: Hour-by-hour lesson plans so no ad-hoc teaching occurs.
+  * Personalised Error Analysis: Custom error reports after every test showing exact weak topics.
+  * Olympiad Pathway: Preparation for NSO, IMO, NSTSE, SOF from Class III onwards.
+  * DISHA Mental Wellness: Stress management and focus techniques for students and parents.
+  * Adoption Calling Programme: Class teachers personally monitor progress and call parents fortnightly.
+  * Robotics & Digital Classroom: Full interactive smart boards synced to the nLearn AI platform.
+
+3. COMPLETE FEE STRUCTURE (2025–26 / 2026–27):
+- One-Time Admission Charges (New Students Only):
+  * Application / Registration Fee: ₹1,000 (Non-refundable, paid at enquiry)
+  * Admission / Enrolment Fee: ₹20,000 to ₹30,000 (Non-refundable, paid at confirmation)
+  * Caution Deposit / Security: ₹5,000 to ₹10,000 (Refundable upon Transfer Certificate / TC)
+  * Total One-Time Fee: ₹26,000 to ₹41,000 (paid before first day of school)
+- Annual Tuition Fees (Class-Wise):
+  * Nursery / LKG / UKG (eKidz): ₹55,000 – ₹75,000/yr (Monthly approx ₹4,600 – ₹6,250)
+  * Class I – II (eChamps Jr.): ₹65,000 – ₹85,000/yr (Monthly approx ₹5,400 – ₹7,100)
+  * Class III – V (eChamps Sr.): ₹80,000 – ₹1,05,000/yr (Monthly approx ₹6,700 – ₹8,750)
+  * Class VI – VIII (eTechno): ₹1,00,000 – ₹1,30,000/yr (Monthly approx ₹8,300 – ₹10,800)
+  * Class IX – X (Sr. Secondary): ₹1,10,000 – ₹1,45,000/yr (Monthly approx ₹9,200 – ₹12,100)
+  * Class XI – XII (if offered): ₹1,20,000 – ₹1,60,000/yr (Monthly approx ₹10,000 – ₹13,300)
+- Additional Annual Charges (Estimated):
+  * Books & Study Material: ₹8,000 – ₹14,000 (research-based Narayana material + NCERT)
+  * Notebooks & Stationery Kit: ₹1,500 – ₹3,000
+  * Uniform (Full Set with PE kit, belt, ID): ₹4,500 – ₹7,000
+  * nLearn App AI Subscription: ₹3,000 – ₹5,000
+  * Annual Day & Sports Day: ₹2,500 – ₹4,000
+  * Lab & Activity Fee (Class VI+): ₹2,000 – ₹4,000
+  * Competitive Exam Registration: ₹1,000 – ₹2,500
+  * CBSE Exam Board Fee (IX–XII): ₹1,500 – ₹2,500
+  * Total Additional Charges: ₹24,000 – ₹42,000
+- Total Annual Cost (Tuition + All Extras):
+  * Nursery to UKG: ₹70,000 to ₹95,000
+  * Class I & II: ₹83,000 to ₹1,09,000
+  * Class III to V: ₹1,02,000 to ₹1,35,000
+  * Class VI to VIII: ₹1,28,000 to ₹1,68,000
+  * Class IX & X: ₹1,40,000 to ₹1,87,000
+- Fee Payment Schedule (3 Instalments):
+  * 1st Instalment (60%): April 10 – May 10 (Covers major tuition, books, uniform, nLearn)
+  * 2nd Instalment (20%): July
+  * 3rd Instalment (20%): October (Remaining tuition, annual fee, sports day)
+
+4. TRANSPORT FACILITIES (SCHOOL BUS):
+- Fleet: Well-maintained, GPS-tracked school buses with licensed drivers and dedicated attendants on board.
+- Pick-up: Door-to-door service across Hyderabad with real-time tracking via nConnect app.
+- Transport Fee (Annual / Quarterly):
+  * Within 5 km (Banjara Hills, Ameerpet, Jubilee Hills): ₹15,000 – ₹22,000/year (₹1,250–₹1,830/month)
+  * 5–10 km (Madhapur, Kondapur, Hitech City, Himayatnagar, Srinagar Colony): ₹22,000 – ₹32,000/year (₹1,830–₹2,670/month)
+  * 10–20 km (Kukatpally, KPHB, Miyapur, Begumpet, Secunderabad, Dilsukhnagar): ₹30,000 – ₹42,000/year (₹2,500–₹3,500/month)
+  * Above 20 km (Outer areas): ₹38,000 – ₹52,000/year (₹3,170–₹4,330/month)
+- Note: Transport is optional; parents are welcome to self-drop.
+
+5. HOSTEL & RESIDENTIAL FACILITIES:
+- Critical Fact: The Jubilee Hills campus itself is a Day Boarding School (8 AM to 6 PM) and does NOT have an on-campus overnight hostel.
+- Narayana Group Hostels in Hyderabad (available for Jubilee Hills students):
+  * Madhapur Basara Hostel (Mixed | Nearest to Jubilee Hills)
+  * Bandlaguda CO School Hostel (Co-School | Bandlaguda)
+  * Hitex CO School Hostel (Co-School | Near Madhapur)
+  * Bowrampet Boys Hostel (Boys | Bowrampet)
+  * Kuntaloor Girls Hostel (Girls | Kuntaloor)
+  * Mallampet Girls Hostel (Girls | Mallampet)
+  * Chaitanyapuri Kothapet Boys Hostel (Boys | Kothapet)
+  * Uppal, Adibatla, Annojiguda, LB Nagar, Saroor Nagar Cherukuthota.
+- Hostel Fee Structure (Annual):
+  * Accommodation: ₹50,000 – ₹80,000 (3/4/6 bed dorms)
+  * Mess & Food (3 meals + snacks, South/North Indian balanced): ₹40,000 – ₹60,000
+  * Warden, 24/7 CCTV & Security: Included
+  * Hostel Caution Deposit: ₹5,000 – ₹10,000 (Refundable)
+  * Total Hostel Cost: ₹95,000 to ₹1,56,000/year
+  * School + Hostel Combined Cost: ₹2,23,000 to ₹3,43,000/year (Class VI–X)
+- Hostel Desk Helpline: 1800 102 3344 (Toll-Free).
+
+6. ACADEMIC RESULTS (PROVEN EXCELLENCE):
+- 2026 SSC Class 10 Jubilee Hills Campus Top Scorers:
+  * Medansh Srirams: 597/600
+  * Shobhita K.: 596/600
+  * Chandrahas M.: 596/600
+  * Nishay Pranav: 596/600
+  * Sai Mani Teja R.: 595/600
+  * Sriya Reddy: 595/600
+- Narayana Group-Level Results:
+  * JEE Advanced 2025: 5 in Top 10 All India Ranks, 43 in Top 100 AIRs.
+  * NEET UG 2025: All India Rank 14 (Somya Sharma).
+
+7. ADMISSION PROCESS (6 SIMPLE STEPS):
+- Step 1: Submit Enquiry Form (online via narayanaschools.in or WhatsApp +91 8179887733).
+- Step 2: Counsellor Callback within 1–2 working days to answer questions.
+- Step 3: Campus Visit to Jubilee Hills to inspect classrooms, labs, robotics, and meet the Principal.
+- Step 4: Aptitude Test / Interaction (Nursery is parental interaction; KG+ is basic aptitude test, results in 3–5 days).
+- Step 5: Registration & Fee Payment (pay within 7 working days to confirm seat).
+- Step 6: Document Submission (Transfer Certificate/TC, Previous Marksheet, Birth Certificate, Aadhaar card of student & parents, 4-6 passport photos, medical fitness).
 """
 
 

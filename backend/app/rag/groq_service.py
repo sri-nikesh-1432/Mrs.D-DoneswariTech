@@ -8,7 +8,7 @@ import asyncio
 from typing import List, Dict, Optional, AsyncGenerator
 from groq import AsyncGroq
 
-from app.config.settings import settings
+from app.config.settings import settings, get_groq_fallback_key
 from app.logs.logger import get_logger
 from app.rag.retriever import retrieve_context, format_context_for_prompt, is_knowledge_ready
 from app.rag.prompt_builder import build_prompt  # noqa: F401 (re-exported for legacy importers)
@@ -203,21 +203,14 @@ async def stream_chat(
 
 
 def _get_client():
-    """Lazy-init the Groq client."""
+    """Lazy-init the Groq client with auto-fallback."""
     global _client
     if _client is None:
         logger.info(f"=== STEP 9: LLM INITIALIZATION ===")
-        
-        if not settings.GROQ_API_KEY or settings.GROQ_API_KEY == "":
-            logger.error("✗ GROQ_API_KEY is not configured")
-            logger.error("STEP 9 FAILED: Missing API key")
-            raise ValueError("GROQ_API_KEY is not configured. Set it in .env")
-        
-        logger.info("✓ GROQ_API_KEY is configured")
+        key = (settings.GROQ_API_KEY or get_groq_fallback_key()).strip()
         logger.info(f"Using model: {settings.GROQ_MODEL}")
-        
-        _client = AsyncGroq(api_key=settings.GROQ_API_KEY)
-        logger.info("✓ Groq client initialized")
+        _client = AsyncGroq(api_key=key)
+        logger.info("✓ Groq client initialized successfully")
         logger.info(f"=== STEP 9 COMPLETE: LLM INITIALIZATION SUCCESSFUL ===")
     return _client
 

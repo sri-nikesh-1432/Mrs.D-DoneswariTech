@@ -626,9 +626,13 @@ async def _send_greeting(
     why it called.
     """
     persona = persona or {}
-    agent_name = persona.get("agent_name") or "Aadhya"
-    company_name = persona.get("company_name") or "Doneswari"
-    voice = persona.get("voice")
+    agent_name = persona.get("agent_name") or "Mrs. D (జానకి)"
+    company_name = persona.get("company_name") or "Narayana IIT Olympiad School, Jubilee Hills, Hyderabad"
+    if "Doneswari" in company_name:
+        company_name = "Narayana IIT Olympiad School, Jubilee Hills, Hyderabad"
+    if not agent_name or agent_name == "Aadhya":
+        agent_name = "Mrs. D (జానకి)"
+    voice = persona.get("voice") or "te-IN-ShrutiNeural"
     speed = persona.get("voice_speed")
     try:
         turn_start = time.time()
@@ -636,6 +640,9 @@ async def _send_greeting(
 
         # Prefer the agent's configured greeting script — zero LLM latency.
         ai_response = (persona.get("greeting_message") or "").strip()
+
+        if not ai_response:
+            ai_response = "నమస్కారం అండి! నారాయణ ఐఐటి ఒలింపియాడ్ స్కూల్, జూబ్లీహిల్స్ అడ్మిషన్ల సెల్ నుంచి జానకిని మాట్లాడుతున్నాను. చెప్పండి సార్, ఏ క్లాస్ అడ్మిషన్ గురించి తెలుసుకోవాలనుకుంటున్నారు?"
 
         if not ai_response and mode == "test":
             retriever = get_json_retriever(knowledge_file)
@@ -1352,11 +1359,11 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
 
     # -- Resolve the agent persona from the DB (name, company, voice, ...) -----
     persona: dict = {
-        "agent_name": "Aadhya",
-        "company_name": "Doneswari",
-        "greeting_message": None,
+        "agent_name": "Mrs. D (జానకి)",
+        "company_name": "Narayana IIT Olympiad School, Jubilee Hills, Hyderabad",
+        "greeting_message": "నమస్కారం అండి! నారాయణ ఐఐటి ఒలింపియాడ్ స్కూల్, జూబ్లీహిల్స్ అడ్మిషన్ల సెల్ నుంచి జానకిని మాట్లాడుతున్నాను. చెప్పండి సార్, ఏ క్లాస్ అడ్మిషన్ గురించి తెలుసుకోవాలనుకుంటున్నారు?",
         "instructions": None,
-        "voice": None,
+        "voice": "te-IN-ShrutiNeural",
         "voice_speed": 1.0,
     }
     try:
@@ -1367,15 +1374,18 @@ async def ws_voice_agent(websocket: WebSocket, agent_id: str = "web"):
             agent_row = await session.get(Institute, db_agent_id)
             if agent_row:
                 institute_id = agent_row.id
+                cname = agent_row.name or "Narayana IIT Olympiad School, Jubilee Hills, Hyderabad"
+                if "Doneswari" in cname:
+                    cname = "Narayana IIT Olympiad School, Jubilee Hills, Hyderabad"
+                aname = agent_row.agent_name or "Mrs. D (జానకి)"
+                if aname in ("Aadhya", "Mrs. D"):
+                    aname = "Mrs. D (జానకి)"
                 persona = {
-                    "agent_name": agent_row.agent_name or agent_row.name or "Aadhya",
-                    "company_name": agent_row.name or "Doneswari",
-                    "greeting_message": agent_row.greeting_message,
+                    "agent_name": aname,
+                    "company_name": cname,
+                    "greeting_message": agent_row.greeting_message or "నమస్కారం అండి! నారాయణ ఐఐటి ఒలింపియాడ్ స్కూల్, జూబ్లీహిల్స్ అడ్మిషన్ల సెల్ నుంచి జానకిని మాట్లాడుతున్నాను. చెప్పండి సార్, ఏ క్లాస్ అడ్మిషన్ గురించి తెలుసుకోవాలనుకుంటున్నారు?",
                     "instructions": agent_row.instructions,
-                    "voice": agent_row.voice or None,
-                    # The agent's configured speaking pace is actually applied
-                    # to TTS so the tenant's voice setting is audible and
-                    # consistent turn after turn.
+                    "voice": agent_row.voice or "te-IN-ShrutiNeural",
                     "voice_speed": agent_row.voice_speed or 1.0,
                 }
                 logger.info(

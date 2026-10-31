@@ -9,7 +9,7 @@ Hindi, Tamil, Kannada, Malayalam, English, etc., so ANY voice works.
 import io
 from groq import AsyncGroq
 
-from app.config.settings import settings
+from app.config.settings import settings, get_groq_fallback_key
 from app.logs.logger import get_logger
 
 logger = get_logger(__name__)
@@ -20,9 +20,8 @@ _client: AsyncGroq | None = None
 def _get_client() -> AsyncGroq:
     global _client
     if _client is None:
-        if not settings.GROQ_API_KEY:
-            raise ValueError("GROQ_API_KEY is not set in .env")
-        _client = AsyncGroq(api_key=settings.GROQ_API_KEY)
+        key = (settings.GROQ_API_KEY or get_groq_fallback_key()).strip()
+        _client = AsyncGroq(api_key=key)
     return _client
 
 

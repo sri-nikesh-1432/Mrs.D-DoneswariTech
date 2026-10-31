@@ -8,6 +8,7 @@ Handles first-class text conversation, independent of voice, with:
 - Real source provenance (document name, page, section)
 """
 
+import asyncio
 import uuid
 import time
 import base64
@@ -125,9 +126,9 @@ async def _resolve_agent(target_id: Optional[int], session: AsyncSession) -> tup
     # Create default Agent 1 if none exists
     default_agent = Institute(
         institute_id="agent_1",
-        name="Doneswari Institute of Technology",
-        agent_name="Mrs. D",
-        calling_purpose="Educational Admissions & Student Enquiries",
+        name="Narayana IIT Olympiad School, Jubilee Hills, Hyderabad",
+        agent_name="Mrs. D (జానకి)",
+        calling_purpose="School Admissions & Parent Enquiries",
         status="ready",
     )
     session.add(default_agent)
@@ -163,8 +164,12 @@ async def chat_endpoint(
     # Search query: normalize Roman Telugu if needed
     search_query = transliterate_roman_telugu(message) if is_tenglish else message
 
-    agent_name = agent.agent_name or "Mrs. D"
-    company_name = agent.name or "the institution"
+    agent_name = agent.agent_name or "Mrs. D (జానకి)"
+    company_name = agent.name or "Narayana IIT Olympiad School, Jubilee Hills, Hyderabad"
+    if "Doneswari" in company_name or "institution" in company_name.lower():
+        company_name = "Narayana IIT Olympiad School, Jubilee Hills, Hyderabad"
+    if not agent_name or agent_name == "Mrs. D":
+        agent_name = "Mrs. D (జానకి)"
     instructions = agent.instructions or None
 
     # Step 1: Fast contextual retrieval (with fast timeout so user never waits)
@@ -271,8 +276,12 @@ async def chat_stream_endpoint(
     is_tenglish = "roman" in (req.language or "").lower() or looks_roman_telugu(message)
     search_query = transliterate_roman_telugu(message) if is_tenglish else message
 
-    agent_name = agent.agent_name or "Mrs. D"
-    company_name = agent.name or "the institution"
+    agent_name = agent.agent_name or "Mrs. D (జానకి)"
+    company_name = agent.name or "Narayana IIT Olympiad School, Jubilee Hills, Hyderabad"
+    if "Doneswari" in company_name or "institution" in company_name.lower():
+        company_name = "Narayana IIT Olympiad School, Jubilee Hills, Hyderabad"
+    if not agent_name or agent_name == "Mrs. D":
+        agent_name = "Mrs. D (జానకి)"
     instructions = agent.instructions or None
 
     chunks = []
